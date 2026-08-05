@@ -33,6 +33,7 @@ def test_home_serves_the_real_workflow() -> None:
     assert "/api/inspect" in response.text
     assert "Math.min(x.recommended_approval_usd,ceiling)" in response.text
     assert 'form.delete("uploads")' in response.text
+    assert 'this.disabled=true;q("#status").textContent=""' in response.text
 
 
 @pytest.mark.parametrize("ready", [False, True])
