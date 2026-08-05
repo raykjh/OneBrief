@@ -77,5 +77,10 @@ def test_producer_calculates_bounded_estimate() -> None:
     assert budget.minimum_cost_usd <= budget.recommended_cost_usd <= budget.maximum_cost_usd
     assert budget.recommended_approval_usd >= 0.01
     assert budget.status.value == "within_budget"
-    assert any(stage.stage == "revision_reserve" for stage in budget.stages)
+    revision = next(stage for stage in budget.stages if stage.stage == "revision")
+    verification = next(
+        stage for stage in budget.stages if stage.stage == "independent_verification"
+    )
+    assert verification.recommended_calls == revision.recommended_calls + 1
+    assert verification.maximum_calls == revision.maximum_calls + 1
 

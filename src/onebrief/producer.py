@@ -5,13 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import ceil
 
-from onebrief.schemas import (
-    BudgetEnvelope,
-    BudgetStatus,
-    IntakeRequest,
-    RequirementsAnalysis,
-    StageEstimate,
+from onebrief.execution_limits import (
+    ANALYST_OUTPUT_CAP,
+    REVISION_OUTPUT_CAP,
+    VERIFIER_OUTPUT_CAP,
+    WRITER_OUTPUT_CAP,
 )
+from onebrief.schemas import BudgetEnvelope, BudgetStatus, IntakeRequest, RequirementsAnalysis, StageEstimate
 
 PRICE_CARD_VERSION = "google-agent-platform-global-standard-2026-08-05"
 PRICE_SOURCE_URL = "https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing"
@@ -30,8 +30,6 @@ PRICES = {
 
 
 def approximate_tokens(text: str) -> int:
-    """Conservative multilingual approximation used before execution."""
-
     if not text:
         return 0
     return max(1, ceil(max(len(text) / 2.0, len(text.encode("utf-8")) / 4.0)))
@@ -80,44 +78,36 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
             *analysis.acceptance_criteria,
         ]
     )
-    contract_tokens = approximate_tokens(contract_text) + 1200
+    # Covers role prompts and response schemas omitted by Vertex countTokens.
+    contract_tokens = approximate_tokens(contract_text) + 2200
     base = source_tokens + contract_tokens
-    analysis_output = min(6000, max(1500, ceil(base * 0.22)))
-    draft_output = min(14000, max(3000, ceil(base * 0.45)))
-    revision_calls = intake.max_revision_rounds
+    revisions = intake.max_revision_rounds
+    recommended_revisions = min(1, revisions)
 
     stages = [
-        _stage("evidence_analysis", "gemini-3.5-flash", base, analysis_output, (1, 1, 1), 4),
+        _stage("evidence_analysis", "gemini-3.5-flash", base, ANALYST_OUTPUT_CAP, (1, 1, 1), 4),
         _stage(
             "long_form_draft",
             "gemini-3.5-flash",
-            base + analysis_output,
-            draft_output,
+            base + ANALYST_OUTPUT_CAP,
+            WRITER_OUTPUT_CAP,
             (1, 1, 1),
             6,
         ),
         _stage(
-            "standards_review",
-            "gemini-3.5-flash-lite",
-            base + draft_output,
-            1600,
-            (1, 1, 1),
-            2,
-        ),
-        _stage(
             "independent_verification",
             "gemini-3.5-flash",
-            base + draft_output,
-            2200,
-            (1, 1, 1),
+            base + ANALYST_OUTPUT_CAP + WRITER_OUTPUT_CAP,
+            VERIFIER_OUTPUT_CAP,
+            (1, 1 + recommended_revisions, 1 + revisions),
             3,
         ),
         _stage(
-            "revision_reserve",
+            "revision",
             "gemini-3.5-flash",
-            base + draft_output + 3800,
-            ceil(draft_output * 0.7),
-            (0, min(1, revision_calls), revision_calls),
+            base + ANALYST_OUTPUT_CAP + WRITER_OUTPUT_CAP + VERIFIER_OUTPUT_CAP,
+            REVISION_OUTPUT_CAP,
+            (0, recommended_revisions, revisions),
             5,
         ),
     ]
@@ -139,9 +129,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
         status = BudgetStatus.WITHIN_BUDGET
 
     def total_minutes(call_field: str) -> int:
-        return sum(
-            getattr(stage, call_field) * stage.estimated_minutes_per_call for stage in stages
-        )
+        return sum(getattr(stage, call_field) * stage.estimated_minutes_per_call for stage in stages)
 
     return BudgetEnvelope(
         price_card_version=PRICE_CARD_VERSION,
@@ -161,9 +149,10 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
         estimated_minutes_maximum=total_minutes("maximum_calls"),
         notes=[
             "Estimate covers work after requirements reinspection; intake calls already made are excluded.",
+            "Each revision round includes a new independent verification call.",
+            "Role prompts and response-schema input overhead are included conservatively.",
             "Recommended and maximum totals include 20% and 25% contingency respectively.",
-            "Actual execution must record provider-reported token usage and stop at the approved limit.",
-            "Google Cloud prices may change; refresh the versioned price card before production use.",
+            "Actual execution records provider-reported usage and stops at the approved limit.",
         ],
     )
 

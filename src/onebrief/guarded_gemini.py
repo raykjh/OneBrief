@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import os
+from math import ceil
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from google import genai
 from google.genai import types
+from pydantic import BaseModel
 
 from onebrief.budget_guard import BudgetGuardError, BudgetStore, RunStatus
+from onebrief.producer import approximate_tokens
+
+T = TypeVar("T", bound=BaseModel)
 
 
 class BudgetedGeminiClient:
@@ -21,24 +27,29 @@ class BudgetedGeminiClient:
             location=os.getenv("GOOGLE_CLOUD_LOCATION", "global"),
         )
 
-    def generate_text(
+    def _generate(
         self,
         *,
         stage: str,
         model: str,
         contents: str,
         max_output_tokens: int,
-        system_instruction: str | None = None,
-        temperature: float = 0.1,
-    ) -> str:
-        # Reject a closed/blocked run before even making the unbilled countTokens call.
+        system_instruction: str | None,
+        temperature: float,
+        response_schema: type[BaseModel] | None,
+    ) -> Any:
         status = self.store.read().status
         if status not in {RunStatus.APPROVED, RunStatus.RUNNING}:
             raise BudgetGuardError(f"run cannot start a call while {status.value}")
 
+        # Disable hidden reasoning tokens so max_output_tokens is an enforceable billed-output cap.
+        thinking = types.ThinkingConfig(thinking_budget=0)
         generation = types.GenerationConfig(
             max_output_tokens=max_output_tokens,
             temperature=temperature,
+            response_mime_type="application/json" if response_schema else None,
+            response_schema=response_schema,
+            thinking_config=thinking,
         )
         count = self.client.models.count_tokens(
             model=model,
@@ -48,7 +59,16 @@ class BudgetedGeminiClient:
                 generation_config=generation,
             ),
         )
-        input_cap = int(count.total_tokens or 0)
+        # Vertex countTokens does not include response-schema tokens. Add schema and
+        # system text locally, then keep 15% plus 256 tokens of conservative headroom.
+        schema_text = (
+            json.dumps(response_schema.model_json_schema(), ensure_ascii=False, sort_keys=True)
+            if response_schema
+            else ""
+        )
+        observed = int(count.total_tokens or 0)
+        local_overhead = approximate_tokens(schema_text) + approximate_tokens(system_instruction or "")
+        input_cap = ceil((observed + local_overhead) * 1.15) + 256
         reservation = self.store.reserve_call(
             stage=stage,
             model=model,
@@ -63,6 +83,9 @@ class BudgetedGeminiClient:
                     system_instruction=system_instruction,
                     max_output_tokens=max_output_tokens,
                     temperature=temperature,
+                    response_mime_type="application/json" if response_schema else None,
+                    response_schema=response_schema,
+                    thinking_config=thinking,
                 ),
             )
         except Exception as exc:
@@ -70,7 +93,7 @@ class BudgetedGeminiClient:
             raise
 
         usage: Any = response.usage_metadata
-        actual_input = int(getattr(usage, "prompt_token_count", 0) or input_cap)
+        actual_input = int(getattr(usage, "prompt_token_count", 0) or observed)
         candidate_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
         thought_tokens = int(getattr(usage, "thoughts_token_count", 0) or 0)
         actual_output = candidate_tokens + thought_tokens
@@ -82,5 +105,52 @@ class BudgetedGeminiClient:
             input_tokens=actual_input,
             output_tokens=actual_output,
         )
+        return response
+
+    def generate_text(
+        self,
+        *,
+        stage: str,
+        model: str,
+        contents: str,
+        max_output_tokens: int,
+        system_instruction: str | None = None,
+        temperature: float = 0.1,
+    ) -> str:
+        response = self._generate(
+            stage=stage,
+            model=model,
+            contents=contents,
+            max_output_tokens=max_output_tokens,
+            system_instruction=system_instruction,
+            temperature=temperature,
+            response_schema=None,
+        )
         return response.text or ""
+
+    def generate_json(
+        self,
+        *,
+        stage: str,
+        model: str,
+        contents: str,
+        schema: type[T],
+        max_output_tokens: int,
+        system_instruction: str,
+        temperature: float = 0.1,
+    ) -> T:
+        response = self._generate(
+            stage=stage,
+            model=model,
+            contents=contents,
+            max_output_tokens=max_output_tokens,
+            system_instruction=system_instruction,
+            temperature=temperature,
+            response_schema=schema,
+        )
+        if response.parsed is not None:
+            return schema.model_validate(response.parsed)
+        if not response.text:
+            raise ValueError(f"{stage} returned no structured response")
+        return schema.model_validate_json(response.text)
 
