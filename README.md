@@ -11,6 +11,9 @@ long-form deliverable with minimal user interruption.
 - semantic reinspection after upload
 - hard gate preventing cost estimation while mandatory information is missing
 - deterministic Producer with versioned Gemini pricing and bounded estimates
+- durable work orders with snapshotted inputs and immutable budget approval
+- detached background workers with exclusive job claiming
+- versioned result packages containing artifacts, evidence manifests, and cost audit data
 
 ## Local setup
 
@@ -38,3 +41,5 @@ After supplying the requested sources:
 
 See `docs/WORKFLOW.md` for the gate behavior and generated artifacts.
 
+See `docs/JOB_SYSTEM.md` for job creation, detached execution, status polling,
+and result package structure.

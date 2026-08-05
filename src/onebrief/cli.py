@@ -10,6 +10,7 @@ from pathlib import Path
 from onebrief.budget_guard import BudgetStore, micros_to_dollars
 from onebrief.execution_pipeline import ExecutionPipeline
 from onebrief.guarded_gemini import BudgetedGeminiClient
+from onebrief.jobs import JobStore, create_job, run_job, start_background_job
 from onebrief.producer import estimate_budget
 from onebrief.runner import analyze_requirements, reinspect_requirements
 from onebrief.schemas import BudgetEnvelope, IntakeRequest, RequirementsAnalysis, UploadManifest
@@ -94,6 +95,38 @@ def main() -> None:
     execute.add_argument("--run-dir", type=Path, required=True)
     execute.add_argument("--output-dir", type=Path, required=True)
 
+
+    job_create = subparsers.add_parser(
+        "job-create",
+        help="snapshot inputs and approved budget into one durable queued job",
+    )
+    job_create.add_argument("input", type=Path)
+    job_create.add_argument("requirements", type=Path)
+    job_create.add_argument("upload_manifest", type=Path)
+    job_create.add_argument("budget_estimate", type=Path)
+    job_create.add_argument("--jobs-dir", type=Path, required=True)
+    job_approval = job_create.add_mutually_exclusive_group(required=True)
+    job_approval.add_argument("--recommended", action="store_true")
+    job_approval.add_argument("--amount", type=float)
+
+    job_start = subparsers.add_parser(
+        "job-start",
+        help="start one queued job in a detached background worker",
+    )
+    job_start.add_argument("job_dir", type=Path)
+
+    job_worker = subparsers.add_parser(
+        "job-worker",
+        help="execute one queued job in the current process",
+    )
+    job_worker.add_argument("job_dir", type=Path)
+
+    job_status = subparsers.add_parser(
+        "job-status",
+        help="show durable job state and result package location",
+    )
+    job_status.add_argument("job_dir", type=Path)
+
     status = subparsers.add_parser("status", help="show approved, used, reserved, and remaining")
     status.add_argument("run_dir", type=Path)
 
@@ -174,6 +207,50 @@ def main() -> None:
         )
         print(checkpoint.model_dump_json(indent=2))
         print(json.dumps(_ledger_summary(BudgetStore(args.run_dir)), indent=2))
+        return
+
+
+    if args.command == "job-create":
+        intake, requirements, sources = _load_execution_inputs(
+            args.input,
+            args.requirements,
+            args.upload_manifest,
+        )
+        estimate = BudgetEnvelope.model_validate_json(
+            args.budget_estimate.read_text(encoding="utf-8")
+        )
+        amount = estimate.recommended_approval_usd if args.recommended else args.amount
+        job_dir = create_job(
+            jobs_dir=args.jobs_dir,
+            intake=intake,
+            requirements=requirements,
+            sources=sources,
+            estimate=estimate,
+            approved_usd=amount,
+        )
+        print(JobStore(job_dir).read().model_dump_json(indent=2))
+        print(f"job_dir={job_dir}")
+        return
+
+    if args.command == "job-start":
+        record = start_background_job(args.job_dir)
+        print(record.model_dump_json(indent=2))
+        return
+
+    if args.command == "job-worker":
+        record = run_job(args.job_dir)
+        print(record.model_dump_json(indent=2))
+        return
+
+    if args.command == "job-status":
+        record = JobStore(args.job_dir).read()
+        print(record.model_dump_json(indent=2))
+        checkpoint_path = args.job_dir / "work" / "execution_checkpoint.json"
+        if checkpoint_path.exists():
+            print("pipeline_checkpoint=")
+            print(checkpoint_path.read_text(encoding="utf-8").rstrip())
+        if record.result_package:
+            print(f"result_package={args.job_dir / record.result_package}")
         return
 
     if args.command == "status":
