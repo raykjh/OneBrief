@@ -6,6 +6,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
 
+from onebrief.temperament import TemperamentDecision
+
 
 class EvidenceFinding(BaseModel):
     finding_id: str
@@ -20,6 +22,7 @@ class AnalysisPackage(BaseModel):
     recommended_structure: list[str]
     constraints: list[str]
     risks: list[str]
+    temperament_decisions: list[TemperamentDecision] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_findings(self) -> "AnalysisPackage":
@@ -36,6 +39,7 @@ class DraftArtifact(BaseModel):
     body_markdown: str
     cited_finding_ids: list[str]
     drafting_decisions: list[str]
+    temperament_decisions: list[TemperamentDecision] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_draft(self) -> "DraftArtifact":
@@ -64,6 +68,7 @@ class VerificationReport(BaseModel):
     blocking_issues: list[str]
     revision_instructions: list[str]
     missing_information: list[str]
+    temperament_decisions: list[TemperamentDecision] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_verdict(self) -> "VerificationReport":
@@ -81,6 +86,7 @@ class RevisionArtifact(BaseModel):
     revised_body_markdown: str
     addressed_issues: list[str]
     cited_finding_ids: list[str]
+    temperament_decisions: list[TemperamentDecision] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_revision(self) -> "RevisionArtifact":

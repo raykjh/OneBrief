@@ -15,6 +15,14 @@ from onebrief.execution_limits import (
 )
 from onebrief.execution_schemas import AnalysisPackage, DraftArtifact, RevisionArtifact, VerificationReport
 
+from onebrief.temperament import (
+    ANALYST_PROFILE,
+    REVISION_PROFILE,
+    VERIFIER_PROFILE,
+    WRITER_PROFILE,
+    enforce_temperament_audit,
+)
+
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -43,20 +51,23 @@ class AnalystAgent:
         self.gateway = gateway
 
     def run(self, contract: dict[str, Any], sources: list[dict[str, Any]]) -> AnalysisPackage:
-        return self.gateway.generate_json(
+        result = self.gateway.generate_json(
             stage=self.stage,
             model="gemini-3.5-flash",
             contents=_json({"work_contract": contract, "authoritative_sources": sources}),
             schema=AnalysisPackage,
             max_output_tokens=ANALYST_OUTPUT_CAP,
             system_instruction=(
-                "You are OneBrief's evidence analyst: deep, conservative, autonomous, and explicit. "
-                "Use only supplied authoritative sources. Extract decision-relevant findings, assign "
+                "You are OneBrief's evidence analyst. Use only supplied authoritative sources. "
+                "Extract decision-relevant findings, assign "
                 "stable F01-style IDs, preserve conflicts, and design a structure for the requested "
                 "deliverable. Do not draft the final artifact or invent missing facts. Write in the "
                 "goal's language and return only the required structured object."
+                + " "
+                + ANALYST_PROFILE.instruction()
             ),
         )
+        return enforce_temperament_audit(result, ANALYST_PROFILE)
 
 
 class WriterAgent:
@@ -66,21 +77,23 @@ class WriterAgent:
         self.gateway = gateway
 
     def run(self, contract: dict[str, Any], analysis: AnalysisPackage) -> DraftArtifact:
-        return self.gateway.generate_json(
+        result = self.gateway.generate_json(
             stage=self.stage,
             model="gemini-3.5-flash",
             contents=_json({"work_contract": contract, "analysis_package": analysis.model_dump(mode="json")}),
             schema=DraftArtifact,
             max_output_tokens=WRITER_OUTPUT_CAP,
             system_instruction=(
-                "You are OneBrief's long-form writer: deep, creative only inside the contract, "
-                "autonomous, and focused. Draft the complete requested artifact from the analysis "
+                "You are OneBrief's long-form writer. Draft the complete requested artifact from the analysis "
                 "package. Cover every requested item, but keep wording concise enough for the output "
                 "cap. Every material claim must be traceable to cited finding IDs. Never change the "
                 "goal, invent a source, or make a high-impact decision for a human. Write in the goal's "
                 "language and return only the required structured object."
+                + " "
+                + WRITER_PROFILE.instruction()
             ),
         )
+        return enforce_temperament_audit(result, WRITER_PROFILE)
 
 
 class VerifierAgent:
@@ -96,7 +109,7 @@ class VerifierAgent:
         draft: DraftArtifact,
         round_number: int,
     ) -> VerificationReport:
-        return self.gateway.generate_json(
+        result = self.gateway.generate_json(
             stage=f"{self.stage}_r{round_number}",
             model="gemini-3.5-flash",
             contents=_json(
@@ -109,15 +122,18 @@ class VerifierAgent:
             schema=VerificationReport,
             max_output_tokens=VERIFIER_OUTPUT_CAP,
             system_instruction=(
-                "You are OneBrief's independent verifier: deep, conservative, reporting-oriented, "
-                "and focused. You did not write the draft. Test every acceptance criterion, factual "
+                "You are OneBrief's independent verifier. You did not write the draft. Test every "
+                "acceptance criterion, factual "
                 "grounding, citation coverage, internal consistency, completeness, and human-authority "
                 "boundary. PASS only when no blocking issue remains. Use REVISE for correctable issues "
                 "and NEEDS_INFORMATION only when supplied evidence cannot support a required conclusion. "
                 "Give exact revision instructions. Write every user-facing field in the goal's language. "
                 "Return only the structured object."
+                + " "
+                + VERIFIER_PROFILE.instruction()
             ),
         )
+        return enforce_temperament_audit(result, VERIFIER_PROFILE)
 
 
 class RevisionAgent:
@@ -134,7 +150,7 @@ class RevisionAgent:
         report: VerificationReport,
         round_number: int,
     ) -> RevisionArtifact:
-        return self.gateway.generate_json(
+        result = self.gateway.generate_json(
             stage=f"{self.stage}_r{round_number}",
             model="gemini-3.5-flash",
             contents=_json(
@@ -148,10 +164,13 @@ class RevisionAgent:
             schema=RevisionArtifact,
             max_output_tokens=REVISION_OUTPUT_CAP,
             system_instruction=(
-                "You are OneBrief's revision specialist: deep, conservative, autonomous, and focused. "
+                "You are OneBrief's revision specialist. "
                 "Apply every blocking revision instruction while preserving correct grounded content. "
                 "Do not hide unresolved issues or broaden scope. Keep material claims linked to existing "
                 "finding IDs. Write in the goal's language and return only the structured object."
+                + " "
+                + REVISION_PROFILE.instruction()
             ),
         )
+        return enforce_temperament_audit(result, REVISION_PROFILE)
 

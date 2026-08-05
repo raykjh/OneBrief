@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -125,6 +126,16 @@ def test_revision_is_always_reverified_through_same_gateway(tmp_path: Path) -> N
                 ),
                 addressed_issues=["Added the approval request procedure."],
                 cited_finding_ids=["F01"],
+                temperament_decisions=[
+                    {
+                        "agent": "reviser",
+                        "agent_type": "TFL",
+                        "options": ["targeted correction", "full rewrite"],
+                        "selected": "targeted correction",
+                        "deciding_axis": "scope",
+                        "reason": "Both met the contract; Local favored the smaller correction.",
+                    }
+                ],
             ),
             _verification("PASS"),
         ]
@@ -144,6 +155,11 @@ def test_revision_is_always_reverified_through_same_gateway(tmp_path: Path) -> N
         "independent_verification_r1",
     ]
     assert BudgetStore(run_dir).read().status == RunStatus.COMPLETE
+    audit = json.loads(
+        (tmp_path / "output" / "temperament_decisions.json").read_text(encoding="utf-8")
+    )
+    assert len(audit) == 1
+    assert audit[0]["agent_type"] == "TFL"
 
 
 def test_budget_block_writes_resumable_checkpoint(tmp_path: Path) -> None:
@@ -188,3 +204,5 @@ def test_resume_reuses_completed_analysis_without_a_new_model_call(tmp_path: Pat
         "independent_verification_r0",
     ]
     final_text = (output_dir / "final.md").read_text(encoding="utf-8")
+    assert "Remote Work Guide" in final_text
+    assert json.loads((output_dir / "temperament_decisions.json").read_text(encoding="utf-8")) == []

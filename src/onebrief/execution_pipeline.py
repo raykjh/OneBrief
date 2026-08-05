@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import TypeVar
@@ -45,6 +46,28 @@ class ExecutionPipeline:
         if not path.exists():
             return None
         return schema.model_validate_json(path.read_text(encoding="utf-8"))
+
+    def _temperament_audit(self, output_dir: Path) -> list[dict[str, object]]:
+        """Collect only APT-3 decisions that actually broke an equal-choice tie."""
+        decisions: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for path in sorted(output_dir.glob("*.json")):
+            if path.name in {"execution_checkpoint.json", "temperament_decisions.json"}:
+                continue
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            for decision in payload.get("temperament_decisions", []):
+                if not isinstance(decision, dict):
+                    continue
+                key = json.dumps(decision, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                if key not in seen:
+                    seen.add(key)
+                    decisions.append(decision)
+        return decisions
 
     def _checkpoint(
         self,
@@ -142,6 +165,10 @@ class ExecutionPipeline:
                     body_markdown=revision.revised_body_markdown,
                     cited_finding_ids=revision.cited_finding_ids,
                     drafting_decisions=[*draft.drafting_decisions, *revision.addressed_issues],
+                    temperament_decisions=[
+                        *draft.temperament_decisions,
+                        *revision.temperament_decisions,
+                    ],
                 )
                 completed.append(revision_stage)
 
@@ -175,6 +202,10 @@ class ExecutionPipeline:
             final_text = body if body.startswith("# ") else f"# {draft.title}\n\n{body}"
             self._write(output_dir / "final.md", final_text)
             self._write(output_dir / "final_verification.json", report.model_dump_json(indent=2))
+            self._write(
+                output_dir / "temperament_decisions.json",
+                json.dumps(self._temperament_audit(output_dir), ensure_ascii=False, indent=2),
+            )
             BudgetStore(self.run_dir).complete()
             self._checkpoint(
                 output_dir,
