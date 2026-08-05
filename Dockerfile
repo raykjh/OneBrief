@@ -1,0 +1,19 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN useradd --create-home --uid 10001 onebrief
+
+WORKDIR /app
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+RUN python -m pip install --upgrade pip && \
+    python -m pip install .
+
+USER 10001:10001
+
+ENTRYPOINT ["onebrief", "cloud-worker"]

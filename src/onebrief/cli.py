@@ -5,12 +5,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 from pathlib import Path
 
 from onebrief.budget_guard import BudgetStore, micros_to_dollars
+from onebrief.cloud_jobs import (
+    GCSJobStore,
+    run_cloud_worker,
+    submit_cloud_job,
+)
 from onebrief.execution_pipeline import ExecutionPipeline
 from onebrief.guarded_gemini import BudgetedGeminiClient
-from onebrief.jobs import JobStore, create_job, run_job, start_background_job
+from onebrief.jobs import JobStatus, JobStore, create_job, run_job, start_background_job
 from onebrief.producer import estimate_budget
 from onebrief.runner import analyze_requirements, reinspect_requirements
 from onebrief.schemas import BudgetEnvelope, IntakeRequest, RequirementsAnalysis, UploadManifest
@@ -126,6 +132,36 @@ def main() -> None:
         help="show durable job state and result package location",
     )
     job_status.add_argument("job_dir", type=Path)
+
+
+    cloud_submit = subparsers.add_parser(
+        "cloud-submit",
+        help="upload one queued job to GCS and start the Cloud Run Job asynchronously",
+    )
+    cloud_submit.add_argument("job_dir", type=Path)
+    cloud_submit.add_argument("--bucket", required=True)
+    cloud_submit.add_argument("--project", required=True)
+    cloud_submit.add_argument("--region", default="asia-northeast3")
+    cloud_submit.add_argument("--cloud-run-job", default="onebrief-worker")
+
+    cloud_status = subparsers.add_parser(
+        "cloud-status",
+        help="read the durable job state directly from Cloud Storage",
+    )
+    cloud_status.add_argument("job_uri")
+
+    cloud_download = subparsers.add_parser(
+        "cloud-download",
+        help="download a completed result package from Cloud Storage",
+    )
+    cloud_download.add_argument("job_uri")
+    cloud_download.add_argument("--output-dir", type=Path, required=True)
+
+    cloud_worker = subparsers.add_parser(
+        "cloud-worker",
+        help="Cloud Run Job entry point; downloads, executes, and uploads one job",
+    )
+    cloud_worker.add_argument("--job-uri")
 
     status = subparsers.add_parser("status", help="show approved, used, reserved, and remaining")
     status.add_argument("run_dir", type=Path)
@@ -251,6 +287,38 @@ def main() -> None:
             print(checkpoint_path.read_text(encoding="utf-8").rstrip())
         if record.result_package:
             print(f"result_package={args.job_dir / record.result_package}")
+        return
+
+
+    if args.command == "cloud-submit":
+        receipt = submit_cloud_job(
+            args.job_dir,
+            bucket=args.bucket,
+            project=args.project,
+            region=args.region,
+            cloud_run_job=args.cloud_run_job,
+        )
+        print(receipt.model_dump_json(indent=2))
+        return
+
+    if args.command == "cloud-status":
+        record = GCSJobStore(args.job_uri).read_job()
+        print(record.model_dump_json(indent=2))
+        return
+
+    if args.command == "cloud-download":
+        result = GCSJobStore(args.job_uri).download_result(args.output_dir)
+        print(f"result_package={result}")
+        return
+
+    if args.command == "cloud-worker":
+        job_uri = args.job_uri or os.environ.get("ONEBRIEF_JOB_URI")
+        if not job_uri:
+            raise ValueError("cloud-worker requires --job-uri or ONEBRIEF_JOB_URI")
+        record = run_cloud_worker(job_uri)
+        print(record.model_dump_json(indent=2))
+        if record.status == JobStatus.FAILED:
+            raise SystemExit(1)
         return
 
     if args.command == "status":

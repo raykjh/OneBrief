@@ -11,6 +11,8 @@ requires-python = ">=3.12"
 dependencies = [
   "filelock>=3.18,<4",
   "google-adk==2.6.2",
+  "google-cloud-run>=0.16,<1",
+  "google-cloud-storage>=3.4,<4",
   "pydantic>=2.10,<3",
 ]
 

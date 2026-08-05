@@ -14,6 +14,8 @@ long-form deliverable with minimal user interruption.
 - durable work orders with snapshotted inputs and immutable budget approval
 - detached background workers with exclusive job claiming
 - versioned result packages containing artifacts, evidence manifests, and cost audit data
+- asynchronous Cloud Run Job execution with a dedicated service identity
+- Cloud Storage job transport and verified result-package delivery
 
 ## Local setup
 
@@ -43,3 +45,6 @@ See `docs/WORKFLOW.md` for the gate behavior and generated artifacts.
 
 See `docs/JOB_SYSTEM.md` for job creation, detached execution, status polling,
 and result package structure.
+
+See `docs/CLOUD_RUN_JOBS.md` for cloud deployment, submission, observation, and
+result retrieval.
