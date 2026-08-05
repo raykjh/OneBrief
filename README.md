@@ -3,21 +3,19 @@
 OneBrief turns one goal and an authoritative source package into a validated
 long-form deliverable with minimal user interruption.
 
-## Current milestone
+## Implemented milestones
 
-The first agent, **Requirements Analyst**, is implemented with Google ADK and
-Gemini 3.5 Flash on Vertex AI. It:
-
-- normalizes the goal;
-- separates missing mandatory information from optional improvements;
-- produces one consolidated set of questions;
-- defines deliverables and measurable acceptance criteria; and
-- blocks budget estimation until mandatory gaps are resolved.
+- Requirements Analyst built with Google ADK and Gemini 3.5 Flash
+- mandatory versus optional information classification
+- local text-source upload with SHA-256 source manifests
+- semantic reinspection after upload
+- hard gate preventing cost estimation while mandatory information is missing
+- deterministic Producer with versioned Gemini pricing and bounded estimates
 
 ## Local setup
 
-Use Python 3.12 and Application Default Credentials for the Google account that
-can access `onebrief-agent-20260805`.
+Use Python 3.12 and Application Default Credentials for the Google account that can
+access `onebrief-agent-20260805`.
 
 ```powershell
 py -3.12 -m venv .venv
@@ -28,7 +26,15 @@ $env:GOOGLE_CLOUD_LOCATION="global"
 .venv\Scripts\onebrief analyze samples\intake_missing_information.json
 ```
 
-The example intentionally omits a company's private hiring rules and candidate
-materials. A correct run must request those mandatory inputs in one batch and
-set `ready_for_estimate` to `false`.
+After supplying the requested sources:
+
+```powershell
+.venv\Scripts\onebrief prepare `
+  samples\intake_missing_information.json `
+  output\requirements_analysis_ko.json `
+  samples\hiring_uploads.json `
+  --output-dir output\prepared_hiring
+```
+
+See `docs/WORKFLOW.md` for the gate behavior and generated artifacts.
 

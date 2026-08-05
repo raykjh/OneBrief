@@ -1,0 +1,17 @@
+{
+  "sources": [
+    {
+      "path": "hiring_criteria.md",
+      "requirement_keys": ["internal_evaluation_criteria"],
+      "priority": "mandatory",
+      "summary": "가상 회사의 직무 관련 평가 기준과 추천 인원"
+    },
+    {
+      "path": "fictional_candidates.csv",
+      "requirement_keys": ["applicant_data"],
+      "priority": "mandatory",
+      "summary": "개인정보가 없는 가상 지원자 30명의 직무 관련 정보"
+    }
+  ]
+}
+

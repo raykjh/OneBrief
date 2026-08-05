@@ -1,4 +1,4 @@
-"""Typed contracts shared by OneBrief agents."""
+"""Typed contracts shared by OneBrief agents and deterministic gates."""
 
 from __future__ import annotations
 
@@ -9,33 +9,36 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class SourcePriority(StrEnum):
-    """How strongly a supplied source governs the work."""
-
     MANDATORY = "mandatory"
     OPTIONAL = "optional"
 
 
 class InternalSource(BaseModel):
-    """A private or authoritative source supplied by the user."""
+    """Private or authoritative evidence supplied by the user."""
 
     name: Annotated[str, Field(min_length=1, max_length=200)]
     priority: SourcePriority
+    requirement_keys: list[Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")]] = Field(
+        default_factory=list,
+        max_length=10,
+    )
     summary: Annotated[str, Field(max_length=2000)] = ""
+    content: Annotated[str, Field(max_length=500_000)] = ""
+    media_type: Annotated[str, Field(max_length=100)] = "text/plain"
+    size_bytes: Annotated[int, Field(ge=0)] = 0
+    sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")] | None = None
 
 
 class IntakeRequest(BaseModel):
-    """The smallest user intake OneBrief needs to begin analysis."""
-
     goal: Annotated[str, Field(min_length=3, max_length=8000)]
     desired_output: Annotated[str | None, Field(max_length=2000)] = None
-    internal_sources: list[InternalSource] = Field(default_factory=list)
+    internal_sources: list[InternalSource] = Field(default_factory=list, max_length=50)
     public_research_allowed: bool = False
     budget_limit_usd: Annotated[float | None, Field(gt=0)] = None
+    max_revision_rounds: Annotated[int, Field(ge=0, le=2)] = 2
 
 
 class InformationRequirement(BaseModel):
-    """One missing fact or source that changes the result materially."""
-
     key: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")]
     request: Annotated[str, Field(min_length=3, max_length=500)]
     reason: Annotated[str, Field(min_length=3, max_length=500)]
@@ -46,8 +49,6 @@ class InformationRequirement(BaseModel):
 
 
 class RequirementsAnalysis(BaseModel):
-    """Strict output contract for the Requirements Analyst."""
-
     supported: bool
     support_reason: Annotated[str, Field(min_length=3, max_length=500)]
     normalized_goal: Annotated[str, Field(min_length=3, max_length=1000)]
@@ -76,4 +77,67 @@ class RequirementsAnalysis(BaseModel):
         if self.mandatory_information and not self.consolidated_questions:
             raise ValueError("mandatory gaps must be surfaced in one question set")
         return self
+
+
+class UploadEntry(BaseModel):
+    path: Annotated[str, Field(min_length=1, max_length=1000)]
+    requirement_keys: list[Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")]] = Field(
+        min_length=1,
+        max_length=10,
+    )
+    priority: SourcePriority = SourcePriority.MANDATORY
+    summary: Annotated[str, Field(max_length=2000)] = ""
+
+
+class UploadManifest(BaseModel):
+    sources: list[UploadEntry] = Field(min_length=1, max_length=50)
+
+
+class SourceRecord(BaseModel):
+    name: str
+    requirement_keys: list[str]
+    priority: SourcePriority
+    media_type: str
+    size_bytes: int
+    sha256: str
+
+
+class BudgetStatus(StrEnum):
+    AWAITING_APPROVAL = "awaiting_approval"
+    WITHIN_BUDGET = "within_budget"
+    LIMITED_BUDGET = "limited_budget"
+    NEEDS_BUDGET = "needs_budget"
+
+
+class StageEstimate(BaseModel):
+    stage: str
+    model: str
+    input_tokens_per_call: int
+    output_tokens_per_call: int
+    minimum_calls: int
+    recommended_calls: int
+    maximum_calls: int
+    minimum_cost_usd: float
+    recommended_cost_usd: float
+    maximum_cost_usd: float
+    estimated_minutes_per_call: int
+
+
+class BudgetEnvelope(BaseModel):
+    price_card_version: str
+    price_source_url: str
+    endpoint: str
+    estimated_source_tokens: int
+    estimated_contract_tokens: int
+    stages: list[StageEstimate]
+    minimum_cost_usd: float
+    recommended_cost_usd: float
+    maximum_cost_usd: float
+    recommended_approval_usd: float
+    budget_limit_usd: float | None
+    status: BudgetStatus
+    estimated_minutes_minimum: int
+    estimated_minutes_recommended: int
+    estimated_minutes_maximum: int
+    notes: list[str]
 
