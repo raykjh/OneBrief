@@ -16,6 +16,9 @@ long-form deliverable with minimal user interruption.
 - versioned result packages containing artifacts, evidence manifests, and cost audit data
 - asynchronous Cloud Run Job execution with a dedicated service identity
 - Cloud Storage job transport and verified result-package delivery
+- one bounded Gemini 2.5 Flash Google Search grounding step with preserved source URLs
+- deterministic Markdown-table to `.xlsx` export with a separate public-source sheet
+- fixed grounded-search fee reservation inside the same immutable user budget
 
 ## Local setup
 

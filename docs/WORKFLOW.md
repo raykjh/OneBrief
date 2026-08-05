@@ -10,6 +10,8 @@
    not count as a score conversion table or formula.
 6. The deterministic Producer runs only when `ready_for_estimate` is `true`.
 7. The user approves the recommended amount before any long-form execution begins.
+8. When public research is approved, one bounded Google-grounded prompt runs and its source URLs are snapshotted.
+9. Completed results include `result.xlsx`; tables become worksheets and grounded URLs become a source sheet.
 
 Merely matching a filename or `requirement_key` never passes the gate. Empty,
 unrelated, incomplete, or contradictory material remains `NEEDS_INFORMATION`.

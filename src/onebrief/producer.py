@@ -7,6 +7,7 @@ from math import ceil
 
 from onebrief.execution_limits import (
     ANALYST_OUTPUT_CAP,
+    PUBLIC_RESEARCH_OUTPUT_CAP,
     REVISION_OUTPUT_CAP,
     VERIFIER_OUTPUT_CAP,
     WRITER_OUTPUT_CAP,
@@ -14,7 +15,7 @@ from onebrief.execution_limits import (
 from onebrief.requirements_gate import require_ready_for_estimate
 from onebrief.schemas import BudgetEnvelope, BudgetStatus, IntakeRequest, RequirementsAnalysis, StageEstimate
 
-PRICE_CARD_VERSION = "google-agent-platform-global-standard-2026-08-05"
+PRICE_CARD_VERSION = "google-agent-platform-global-standard-search-2026-08-05"
 PRICE_SOURCE_URL = "https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing"
 
 
@@ -27,6 +28,7 @@ class ModelPrice:
 PRICES = {
     "gemini-3.5-flash": ModelPrice(1.50, 9.00),
     "gemini-3.5-flash-lite": ModelPrice(0.30, 2.50),
+    "gemini-2.5-flash": ModelPrice(0.30, 2.50),
 }
 
 
@@ -48,8 +50,9 @@ def _stage(
     output_tokens: int,
     calls: tuple[int, int, int],
     minutes: int,
+    fixed_cost_usd: float = 0.0,
 ) -> StageEstimate:
-    per_call = _call_cost(model, input_tokens, output_tokens)
+    per_call = _call_cost(model, input_tokens, output_tokens) + fixed_cost_usd
     return StageEstimate(
         stage=name,
         model=model,
@@ -62,6 +65,7 @@ def _stage(
         recommended_cost_usd=round(per_call * calls[1], 6),
         maximum_cost_usd=round(per_call * calls[2], 6),
         estimated_minutes_per_call=minutes,
+        fixed_cost_usd_per_call=fixed_cost_usd,
     )
 
 
@@ -80,11 +84,21 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
     )
     # Covers role prompts and response schemas omitted by Vertex countTokens.
     contract_tokens = approximate_tokens(contract_text) + 2200
-    base = source_tokens + contract_tokens
+    anticipated_research_tokens = PUBLIC_RESEARCH_OUTPUT_CAP if intake.public_research_allowed else 0
+    base = source_tokens + contract_tokens + anticipated_research_tokens
     revisions = intake.max_revision_rounds
     recommended_revisions = min(1, revisions)
 
-    stages = [
+    stages = []
+    if intake.public_research_allowed:
+        stages.append(
+            _stage(
+                "public_research", "gemini-2.5-flash",
+                contract_tokens + 800, PUBLIC_RESEARCH_OUTPUT_CAP,
+                (1, 1, 1), 4, fixed_cost_usd=0.035,
+            )
+        )
+    stages.extend([
         _stage("evidence_analysis", "gemini-3.5-flash", base, ANALYST_OUTPUT_CAP, (1, 1, 1), 4),
         _stage(
             "long_form_draft",
@@ -110,7 +124,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
             (0, recommended_revisions, revisions),
             5,
         ),
-    ]
+    ])
     raw_minimum = sum(stage.minimum_cost_usd for stage in stages)
     raw_recommended = sum(stage.recommended_cost_usd for stage in stages)
     raw_maximum = sum(stage.maximum_cost_usd for stage in stages)
@@ -152,6 +166,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
             "Each revision round includes a new independent verification call.",
             "Role prompts and response-schema input overhead are included conservatively.",
             "Recommended and maximum totals include 20% and 25% contingency respectively.",
+            "Public research reserves one Gemini 2.5 grounded prompt at the $0.035 worst-case rate.",
             "Actual execution records provider-reported usage and stops at the approved limit.",
         ],
     )

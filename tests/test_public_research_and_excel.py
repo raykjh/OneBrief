@@ -1,0 +1,104 @@
+import zipfile
+from pathlib import Path
+
+from onebrief.budget_guard import BudgetStore
+from onebrief.jobs import create_job
+from onebrief.producer import estimate_budget
+from onebrief.public_research import PublicResearchResult
+from onebrief.schemas import IntakeRequest, RequirementsAnalysis
+from onebrief.workbook_export import export_workbook, markdown_tables
+
+
+def _requirements() -> RequirementsAnalysis:
+    return RequirementsAnalysis(
+        supported=True,
+        support_reason="Current public facts can be researched.",
+        normalized_goal="Research current candidates and create an Excel list.",
+        deliverables=["Candidate list", "Excel workbook"],
+        mandatory_information=[],
+        optional_information=[],
+        acceptance_criteria=["Every candidate includes a source and checked date."],
+        assumptions=[],
+        consolidated_questions=[],
+        ready_for_estimate=True,
+    )
+
+
+def _intake() -> IntakeRequest:
+    return IntakeRequest(
+        goal="Find current public candidates.",
+        desired_output="Excel list",
+        public_research_allowed=True,
+        budget_limit_usd=0.5,
+        max_revision_rounds=0,
+    )
+
+
+def test_public_research_is_estimated_and_source_less_job_is_allowed(tmp_path: Path) -> None:
+    intake = _intake()
+    estimate = estimate_budget(intake, _requirements())
+    research = estimate.stages[0]
+    assert research.stage == "public_research"
+    assert research.model == "gemini-2.5-flash"
+    assert research.fixed_cost_usd_per_call == 0.035
+    job = create_job(
+        jobs_dir=tmp_path / "jobs",
+        intake=intake,
+        requirements=_requirements(),
+        sources=[],
+        estimate=estimate,
+        approved_usd=estimate.recommended_approval_usd,
+    )
+    assert (job / "inputs" / "sources.json").read_text(encoding="utf-8").strip() == "[]"
+
+
+def test_grounded_prompt_fixed_fee_is_reserved_and_settled(tmp_path: Path) -> None:
+    intake = _intake()
+    estimate = estimate_budget(intake, _requirements())
+    store = BudgetStore(tmp_path)
+    store.approve(estimate, 0.5)
+    call = store.reserve_call(
+        stage="public_research",
+        model="gemini-2.5-flash",
+        input_token_cap=100,
+        output_token_cap=100,
+        fixed_cost_usd=0.035,
+    )
+    assert call.fixed_cost_cap_micros == 35_000
+    ledger = store.settle_call(
+        call.call_id,
+        input_tokens=50,
+        output_tokens=50,
+        fixed_cost_usd=0.035,
+    )
+    assert ledger.actual_usd_micros >= 35_000
+    assert ledger.actual_usd_micros <= ledger.approval.approved_usd_micros
+
+
+def test_markdown_table_becomes_real_xlsx_with_sources(tmp_path: Path) -> None:
+    markdown = """# 결과
+
+| 단지 | 전용면적 | 가격 | 출처 |
+|---|---:|---:|---|
+| 예시단지 | 84㎡ | 9억원 | https://example.com/listing |
+"""
+    research = PublicResearchResult(
+        query="test",
+        answer_markdown=markdown,
+        sources=[
+            {
+                "source_id": "W01",
+                "title": "Example listing",
+                "url": "https://example.com/listing",
+                "domain": "example.com",
+            }
+        ],
+    )
+    assert markdown_tables(markdown)[0][1][0] == "예시단지"
+    output = tmp_path / "result.xlsx"
+    export_workbook(markdown, output, research)
+    assert output.read_bytes().startswith(b"PK")
+    with zipfile.ZipFile(output) as archive:
+        workbook_xml = archive.read("xl/workbook.xml").decode("utf-8")
+        assert "결과" in workbook_xml
+        assert "공개출처" in workbook_xml

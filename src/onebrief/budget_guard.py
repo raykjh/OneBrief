@@ -68,6 +68,7 @@ class CostEntry(BaseModel):
     input_token_cap: int = Field(ge=0)
     output_token_cap: int = Field(ge=0)
     reserved_usd_micros: int = Field(ge=0)
+    fixed_cost_cap_micros: int = Field(default=0, ge=0)
     actual_usd_micros: int = Field(ge=0)
     actual_input_tokens: int = Field(ge=0)
     actual_output_tokens: int = Field(ge=0)
@@ -130,7 +131,12 @@ def estimate_hash(estimate: BudgetEnvelope) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def quote_call_micros(model: str, input_tokens: int, output_tokens: int) -> int:
+def quote_call_micros(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    fixed_cost_usd: float = 0.0,
+) -> int:
     if model not in PRICES:
         raise ValueError(f"model has no approved price card: {model}")
     if input_tokens < 0 or output_tokens <= 0:
@@ -142,16 +148,21 @@ def quote_call_micros(model: str, input_tokens: int, output_tokens: int) -> int:
         + Decimal(output_tokens) * Decimal(str(price.output_per_million))
     )
     protected = raw * RESERVATION_SAFETY_FACTOR
-    return int(protected.to_integral_value(rounding=ROUND_CEILING))
+    return int(protected.to_integral_value(rounding=ROUND_CEILING)) + dollars_to_micros(fixed_cost_usd)
 
 
-def actual_call_micros(model: str, input_tokens: int, output_tokens: int) -> int:
+def actual_call_micros(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    fixed_cost_usd: float = 0.0,
+) -> int:
     price = PRICES[model]
     raw = (
         Decimal(input_tokens) * Decimal(str(price.input_per_million))
         + Decimal(output_tokens) * Decimal(str(price.output_per_million))
     )
-    return int(raw.to_integral_value(rounding=ROUND_CEILING))
+    return int(raw.to_integral_value(rounding=ROUND_CEILING)) + dollars_to_micros(fixed_cost_usd)
 
 
 class BudgetStore:
@@ -165,6 +176,9 @@ class BudgetStore:
 
     def _integrity(self, ledger: CostLedger) -> str:
         payload = ledger.model_dump(mode="json", exclude={"integrity_sha256"})
+        for entry in payload["entries"]:
+            if not entry.get("fixed_cost_cap_micros"):
+                entry.pop("fixed_cost_cap_micros", None)
         canonical = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -238,8 +252,11 @@ class BudgetStore:
         model: str,
         input_token_cap: int,
         output_token_cap: int,
+        fixed_cost_usd: float = 0.0,
     ) -> CostEntry:
-        reserve = quote_call_micros(model, input_token_cap, output_token_cap)
+        reserve = quote_call_micros(
+            model, input_token_cap, output_token_cap, fixed_cost_usd
+        )
         with self.lock:
             ledger = self._load_unlocked()
             if ledger.status not in {RunStatus.APPROVED, RunStatus.RUNNING}:
@@ -255,6 +272,7 @@ class BudgetStore:
                     input_token_cap=input_token_cap,
                     output_token_cap=output_token_cap,
                     reserved_usd_micros=0,
+                    fixed_cost_cap_micros=dollars_to_micros(fixed_cost_usd),
                     actual_usd_micros=0,
                     actual_input_tokens=0,
                     actual_output_tokens=0,
@@ -278,6 +296,7 @@ class BudgetStore:
                 output_token_cap=output_token_cap,
                 reserved_usd_micros=reserve,
                 actual_usd_micros=0,
+                fixed_cost_cap_micros=dollars_to_micros(fixed_cost_usd),
                 actual_input_tokens=0,
                 actual_output_tokens=0,
                 created_at=now,
@@ -288,7 +307,14 @@ class BudgetStore:
             self._save_unlocked(ledger)
             return entry
 
-    def settle_call(self, call_id: str, *, input_tokens: int, output_tokens: int) -> CostLedger:
+    def settle_call(
+        self,
+        call_id: str,
+        *,
+        input_tokens: int,
+        output_tokens: int,
+        fixed_cost_usd: float = 0.0,
+    ) -> CostLedger:
         with self.lock:
             ledger = self._load_unlocked()
             entry = next((item for item in ledger.entries if item.call_id == call_id), None)
@@ -298,7 +324,14 @@ class BudgetStore:
                 ledger.status = RunStatus.FAILED
                 self._save_unlocked(ledger)
                 raise IntegrityError("provider usage exceeded the reserved token caps")
-            actual = actual_call_micros(entry.model, input_tokens, output_tokens)
+            actual_fixed = dollars_to_micros(fixed_cost_usd)
+            if actual_fixed > entry.fixed_cost_cap_micros:
+                ledger.status = RunStatus.FAILED
+                self._save_unlocked(ledger)
+                raise IntegrityError("actual fixed cost exceeded the reserved cap")
+            actual = actual_call_micros(
+                entry.model, input_tokens, output_tokens, fixed_cost_usd
+            )
             if actual > entry.reserved_usd_micros:
                 ledger.status = RunStatus.FAILED
                 self._save_unlocked(ledger)

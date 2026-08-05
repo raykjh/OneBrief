@@ -26,8 +26,11 @@ from onebrief.execution_schemas import (
     Verdict,
 )
 from onebrief.guarded_gemini import BudgetedGeminiClient
+from onebrief.grounded_search import run_grounded_research
 from onebrief.requirements_gate import require_ready_for_estimate
 from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis
+from onebrief.public_research import PublicResearchResult
+from onebrief.workbook_export import export_workbook
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -127,6 +130,35 @@ class ExecutionPipeline:
         completed: list[str] = []
         revision_round = 0
         try:
+            public_research: PublicResearchResult | None = None
+            if intake.public_research_allowed:
+                research_path = output_dir / "public_research.json"
+                public_research = self._load(research_path, PublicResearchResult)
+                if public_research is None:
+                    self._checkpoint(output_dir, PipelineStatus.RUNNING, "public_research", completed, 0)
+                    public_research = run_grounded_research(
+                        self.gateway, goal=intake.goal, desired_output=intake.desired_output
+                    )
+                    self._write(research_path, public_research.model_dump_json(indent=2))
+                    self._write(output_dir / "public_research.md", public_research.answer_markdown)
+                    if public_research.search_suggestions_html:
+                        self._write(
+                            output_dir / "google_search_suggestions.html",
+                            public_research.search_suggestions_html,
+                        )
+                sources = [*sources, public_research.as_internal_source()]
+                source_payload = [
+                    {
+                        "name": source.name,
+                        "priority": source.priority.value,
+                        "requirement_keys": source.requirement_keys,
+                        "content": source.content,
+                        "sha256": source.sha256,
+                    }
+                    for source in sources
+                ]
+                completed.append("public_research")
+
             analysis_path = output_dir / "analysis.json"
             analysis = self._load(analysis_path, AnalysisPackage)
             if analysis is None:
@@ -233,6 +265,7 @@ class ExecutionPipeline:
             body = draft.body_markdown.strip()
             final_text = body if body.startswith("# ") else f"# {draft.title}\n\n{body}"
             self._write(output_dir / "final.md", final_text)
+            export_workbook(final_text, output_dir / "result.xlsx", public_research)
             self._write(output_dir / "final_verification.json", report.model_dump_json(indent=2))
             self._write(
                 output_dir / "temperament_decisions.json",

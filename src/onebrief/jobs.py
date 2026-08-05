@@ -198,8 +198,8 @@ def create_job(
     requirements = require_ready_for_estimate(
         intake.model_copy(update={"internal_sources": sources}), requirements, sources
     )
-    if not sources:
-        raise ValueError("job creation requires at least one authoritative source")
+    if not sources and not intake.public_research_allowed:
+        raise ValueError("job creation requires an authoritative source or approved public research")
     jobs_dir = jobs_dir.resolve()
     jobs_dir.mkdir(parents=True, exist_ok=True)
     job_id = str(uuid4())

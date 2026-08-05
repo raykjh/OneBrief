@@ -97,7 +97,9 @@ class WriterAgent:
             system_instruction=(
                 "You are OneBrief's long-form writer. Draft the complete requested artifact from the analysis "
                 "package. Cover every requested item, but keep wording concise enough for the output "
-                "cap. Every material claim must be traceable to cited finding IDs. Never change the "
+                "cap. If the requested output is Excel or a candidate list, include one clean Markdown "
+                "table with one candidate per row so it can be exported deterministically. Every material "
+                "claim must be traceable to cited finding IDs. Never change the "
                 "goal, invent a source, or make a high-impact decision for a human. Write in the goal's "
                 "language and return only the required structured object."
                 + " "

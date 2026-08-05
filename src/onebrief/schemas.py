@@ -121,6 +121,7 @@ class StageEstimate(BaseModel):
     recommended_cost_usd: float
     maximum_cost_usd: float
     estimated_minutes_per_call: int
+    fixed_cost_usd_per_call: float = 0.0
 
 
 class BudgetEnvelope(BaseModel):

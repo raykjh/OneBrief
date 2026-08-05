@@ -17,7 +17,7 @@ from onebrief.schemas import BudgetEnvelope, BudgetStatus, StageEstimate
 
 def _estimate(recommended: float = 0.10) -> BudgetEnvelope:
     return BudgetEnvelope(
-        price_card_version="google-agent-platform-global-standard-2026-08-05",
+        price_card_version="google-agent-platform-global-standard-search-2026-08-05",
         price_source_url="https://example.test/pricing",
         endpoint="global-standard",
         estimated_source_tokens=100,
