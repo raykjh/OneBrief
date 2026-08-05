@@ -40,6 +40,22 @@ async def _run_requirements(payload: dict[str, Any]) -> RequirementsAnalysis:
     return RequirementsAnalysis.model_validate(json.loads(final_text))
 
 
+async def inspect_requirements(intake: IntakeRequest) -> RequirementsAnalysis:
+    """Inspect a goal and its supplied sources in one bounded preflight call."""
+    result = await _run_requirements(
+        {
+            "mode": "single_pass_with_sources",
+            "intake_with_uploaded_sources": intake.model_dump(mode="json"),
+            "instruction": (
+                "Build the work contract from the goal and authoritative uploads in one pass. "
+                "Inspect source contents, not only names or requirement keys. Return every "
+                "remaining mandatory question together; do not start the requested work."
+            ),
+        }
+    )
+    return apply_requirements_gate(intake, result)
+
+
 async def analyze_requirements(intake: IntakeRequest) -> RequirementsAnalysis:
     result = await _run_requirements(
         {"mode": "initial_analysis", "intake": intake.model_dump(mode="json")}
