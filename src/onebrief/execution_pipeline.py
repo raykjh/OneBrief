@@ -11,6 +11,10 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from onebrief.budget_guard import BudgetExceeded, BudgetStore
+from onebrief.deterministic_verification import (
+    apply_deterministic_override,
+    validate_draft_grounding,
+)
 from onebrief.execution_agents import AnalystAgent, RevisionAgent, VerifierAgent, WriterAgent
 from onebrief.execution_schemas import (
     AnalysisPackage,
@@ -133,15 +137,27 @@ class ExecutionPipeline:
             draft = self._load(draft_path, DraftArtifact)
             if draft is None:
                 self._checkpoint(output_dir, PipelineStatus.RUNNING, "long_form_draft", completed, 0)
-                draft = self.writer.run(contract, analysis)
+                draft = self.writer.run(contract, analysis, source_payload)
                 self._write(draft_path, draft.model_dump_json(indent=2))
             completed.append("long_form_draft")
 
             verification_path = output_dir / "verification_r0.json"
+            grounding_path = output_dir / "deterministic_verification_r0.json"
+            model_verification_path = output_dir / "model_verification_r0.json"
             report = self._load(verification_path, VerificationReport)
-            if report is None:
+            if report is None or not grounding_path.exists():
                 self._checkpoint(output_dir, PipelineStatus.RUNNING, "verification_r0", completed, 0)
-                report = self.verifier.run(contract, analysis, draft, 0)
+                model_report = self._load(model_verification_path, VerificationReport)
+                if model_report is None:
+                    model_report = report or self.verifier.run(
+                        contract, analysis, draft, 0, source_payload
+                    )
+                    self._write(
+                        model_verification_path, model_report.model_dump_json(indent=2)
+                    )
+                grounding = validate_draft_grounding(sources, draft)
+                self._write(grounding_path, grounding.model_dump_json(indent=2))
+                report = apply_deterministic_override(model_report, grounding)
                 self._write(verification_path, report.model_dump_json(indent=2))
             completed.append("verification_r0")
 
@@ -158,7 +174,9 @@ class ExecutionPipeline:
                         completed,
                         revision_round,
                     )
-                    revision = self.reviser.run(contract, analysis, draft, report, revision_round)
+                    revision = self.reviser.run(
+                        contract, analysis, draft, report, revision_round, source_payload
+                    )
                     self._write(revision_path, revision.model_dump_json(indent=2))
                 draft = DraftArtifact(
                     title=revision.title,
@@ -174,8 +192,10 @@ class ExecutionPipeline:
 
                 verification_stage = f"verification_r{revision_round}"
                 verification_path = output_dir / f"verification_r{revision_round}.json"
+                grounding_path = output_dir / f"deterministic_verification_r{revision_round}.json"
+                model_verification_path = output_dir / f"model_verification_r{revision_round}.json"
                 next_report = self._load(verification_path, VerificationReport)
-                if next_report is None:
+                if next_report is None or not grounding_path.exists():
                     self._checkpoint(
                         output_dir,
                         PipelineStatus.RUNNING,
@@ -183,7 +203,17 @@ class ExecutionPipeline:
                         completed,
                         revision_round,
                     )
-                    next_report = self.verifier.run(contract, analysis, draft, revision_round)
+                    model_report = self._load(model_verification_path, VerificationReport)
+                    if model_report is None:
+                        model_report = next_report or self.verifier.run(
+                            contract, analysis, draft, revision_round, source_payload
+                        )
+                        self._write(
+                            model_verification_path, model_report.model_dump_json(indent=2)
+                        )
+                    grounding = validate_draft_grounding(sources, draft)
+                    self._write(grounding_path, grounding.model_dump_json(indent=2))
+                    next_report = apply_deterministic_override(model_report, grounding)
                     self._write(verification_path, next_report.model_dump_json(indent=2))
                 report = next_report
                 completed.append(verification_stage)

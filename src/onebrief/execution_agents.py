@@ -76,11 +76,22 @@ class WriterAgent:
     def __init__(self, gateway: StructuredGateway):
         self.gateway = gateway
 
-    def run(self, contract: dict[str, Any], analysis: AnalysisPackage) -> DraftArtifact:
+    def run(
+        self,
+        contract: dict[str, Any],
+        analysis: AnalysisPackage,
+        sources: list[dict[str, Any]] | None = None,
+    ) -> DraftArtifact:
         result = self.gateway.generate_json(
             stage=self.stage,
             model="gemini-3.5-flash",
-            contents=_json({"work_contract": contract, "analysis_package": analysis.model_dump(mode="json")}),
+            contents=_json(
+                {
+                    "work_contract": contract,
+                    "analysis_package": analysis.model_dump(mode="json"),
+                    "authoritative_sources": sources or [],
+                }
+            ),
             schema=DraftArtifact,
             max_output_tokens=WRITER_OUTPUT_CAP,
             system_instruction=(
@@ -108,6 +119,7 @@ class VerifierAgent:
         analysis: AnalysisPackage,
         draft: DraftArtifact,
         round_number: int,
+        sources: list[dict[str, Any]] | None = None,
     ) -> VerificationReport:
         result = self.gateway.generate_json(
             stage=f"{self.stage}_r{round_number}",
@@ -117,6 +129,7 @@ class VerifierAgent:
                     "work_contract": contract,
                     "analysis_package": analysis.model_dump(mode="json"),
                     "draft": draft.model_dump(mode="json"),
+                    "authoritative_sources": sources or [],
                 }
             ),
             schema=VerificationReport,
@@ -149,6 +162,7 @@ class RevisionAgent:
         draft: DraftArtifact,
         report: VerificationReport,
         round_number: int,
+        sources: list[dict[str, Any]] | None = None,
     ) -> RevisionArtifact:
         result = self.gateway.generate_json(
             stage=f"{self.stage}_r{round_number}",
@@ -159,6 +173,7 @@ class RevisionAgent:
                     "analysis_package": analysis.model_dump(mode="json"),
                     "current_draft": draft.model_dump(mode="json"),
                     "verification_report": report.model_dump(mode="json"),
+                    "authoritative_sources": sources or [],
                 }
             ),
             schema=RevisionArtifact,
