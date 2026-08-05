@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "onebrief"
+version = "0.1.0"
+description = "A budget-aware autonomous team for long-form knowledge work."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "google-adk==2.6.2",
+  "pydantic>=2.10,<3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<9"]
+
+[project.scripts]
+onebrief = "onebrief.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/onebrief"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+

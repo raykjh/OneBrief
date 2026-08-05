@@ -1,0 +1,8 @@
+{
+  "goal": "회사 내부 기준에 따라 지원자 30명을 평가하고 최종 면접 대상자를 추천해줘.",
+  "desired_output": "근거가 포함된 순위표와 최종 면접 대상자 추천 보고서",
+  "internal_sources": [],
+  "public_research_allowed": false,
+  "budget_limit_usd": 1.0
+}
+
