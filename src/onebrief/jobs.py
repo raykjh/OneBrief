@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from onebrief.budget_guard import BudgetExceeded, BudgetStore
 from onebrief.execution_pipeline import ExecutionPipeline
 from onebrief.execution_schemas import PipelineStatus
+from onebrief.requirements_gate import require_ready_for_estimate
 from onebrief.schemas import BudgetEnvelope, IntakeRequest, InternalSource, RequirementsAnalysis
 from onebrief.source_loader import source_records
 
@@ -194,8 +195,9 @@ def create_job(
     approved_usd: float,
 ) -> Path:
     """Create an atomic, self-contained work order with immutable budget approval."""
-    if not requirements.ready_for_estimate:
-        raise ValueError("job creation requires a passed requirements reinspection")
+    requirements = require_ready_for_estimate(
+        intake.model_copy(update={"internal_sources": sources}), requirements, sources
+    )
     if not sources:
         raise ValueError("job creation requires at least one authoritative source")
     jobs_dir = jobs_dir.resolve()

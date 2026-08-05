@@ -26,6 +26,7 @@ from onebrief.execution_schemas import (
     Verdict,
 )
 from onebrief.guarded_gemini import BudgetedGeminiClient
+from onebrief.requirements_gate import require_ready_for_estimate
 from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis
 
 T = TypeVar("T", bound=BaseModel)
@@ -101,8 +102,9 @@ class ExecutionPipeline:
         sources: list[InternalSource],
         output_dir: Path,
     ) -> ExecutionCheckpoint:
-        if not requirements.ready_for_estimate:
-            raise ValueError("execution requires a passed requirements reinspection")
+        requirements = require_ready_for_estimate(
+            intake.model_copy(update={"internal_sources": sources}), requirements, sources
+        )
         contract = {
             "goal": intake.goal,
             "desired_output": intake.desired_output,

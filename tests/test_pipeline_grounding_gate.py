@@ -34,6 +34,14 @@ def test_deterministic_grounding_gate_overrides_model_pass(tmp_path: Path) -> No
         content="record_id,years,level\nA1,3,strong\n",
         media_type="text/csv",
     )
+    rules = InternalSource(
+        name="rules.md",
+        priority=SourcePriority.MANDATORY,
+        requirement_keys=["evaluation_rules"],
+        content=("years at least 5 years: 40 points\nyears less than 5 years: 20 points\n"
+                 "level strong: 30 points\n"),
+    )
+    sources = [source, rules]
     requirements = RequirementsAnalysis(
         supported=True,
         support_reason="Inputs are present.",
@@ -47,7 +55,7 @@ def test_deterministic_grounding_gate_overrides_model_pass(tmp_path: Path) -> No
         ready_for_estimate=True,
     )
     intake = IntakeRequest(goal="Create a grounded evaluation.", max_revision_rounds=2)
-    estimate = estimate_budget(intake.model_copy(update={"internal_sources": [source]}), requirements)
+    estimate = estimate_budget(intake.model_copy(update={"internal_sources": sources}), requirements)
     run_dir = tmp_path / "run"
     BudgetStore(run_dir).approve(estimate, estimate.maximum_cost_usd)
 
@@ -68,7 +76,7 @@ def test_deterministic_grounding_gate_overrides_model_pass(tmp_path: Path) -> No
     draft = DraftArtifact(
         title="Evaluation",
         body_markdown=(
-            "# Evaluation\n\n- at least 5 years: 40 points\n\n"
+            "# Evaluation\n\n- at least 4 years: 40 points\n\n"
             "| record_id | years | level | score |\n"
             "|---|---:|---|---:|\n"
             "| A1 | 6 years | strong | 40 points |"
@@ -91,7 +99,7 @@ def test_deterministic_grounding_gate_overrides_model_pass(tmp_path: Path) -> No
     result = ExecutionPipeline(run_dir, gateway=gateway).run(
         intake=intake,
         requirements=requirements,
-        sources=[source],
+        sources=sources,
         output_dir=output_dir,
     )
 

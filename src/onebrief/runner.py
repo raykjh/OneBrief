@@ -12,6 +12,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from onebrief.agents import requirements_analyst
+from onebrief.requirements_gate import apply_requirements_gate
 from onebrief.schemas import IntakeRequest, RequirementsAnalysis
 
 APP_NAME = "onebrief"
@@ -40,7 +41,10 @@ async def _run_requirements(payload: dict[str, Any]) -> RequirementsAnalysis:
 
 
 async def analyze_requirements(intake: IntakeRequest) -> RequirementsAnalysis:
-    return await _run_requirements({"mode": "initial_analysis", "intake": intake.model_dump(mode="json")})
+    result = await _run_requirements(
+        {"mode": "initial_analysis", "intake": intake.model_dump(mode="json")}
+    )
+    return apply_requirements_gate(intake, result)
 
 
 async def reinspect_requirements(
@@ -57,7 +61,7 @@ async def reinspect_requirements(
             item.model_dump(mode="json") for item in previous.optional_information
         ],
     }
-    return await _run_requirements(
+    result = await _run_requirements(
         {
             "mode": "reinspection_after_upload",
             "previous_gaps_only": previous_gaps,
@@ -70,4 +74,5 @@ async def reinspect_requirements(
             ),
         }
     )
+    return apply_requirements_gate(intake, result)
 

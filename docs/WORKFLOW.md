@@ -6,11 +6,17 @@
 2. The user supplies every mandatory item through an upload manifest.
 3. OneBrief hashes and records each source, then sends its actual text for reinspection.
 4. Gemini resolves a gap only when the uploaded content is semantically sufficient.
-5. The deterministic Producer runs only when `ready_for_estimate` is `true`.
-6. The user approves the recommended amount before any long-form execution begins.
+5. A deterministic completeness gate checks structured evaluation inputs. Weights do
+   not count as a score conversion table or formula.
+6. The deterministic Producer runs only when `ready_for_estimate` is `true`.
+7. The user approves the recommended amount before any long-form execution begins.
 
 Merely matching a filename or `requirement_key` never passes the gate. Empty,
 unrelated, incomplete, or contradictory material remains `NEEDS_INFORMATION`.
+For scoring or ranking work backed by CSV data, numeric fields require approved
+thresholds or a formula and every categorical value requires an explicit score mapping.
+If those rules are missing, reinspection becomes `ready_for_estimate=false`; stale
+requirements, old estimates, job creation, and direct execution cannot bypass the gate.
 
 ## Outputs
 
@@ -22,8 +28,8 @@ Source contents are not copied into the output directory.
 
 ## Producer estimate
 
-The estimate includes evidence analysis, drafting, standards review, independent
-verification, and up to two revision rounds. It reports minimum, recommended, and
+The estimate includes evidence analysis, drafting, independent verification, and up to
+two revision rounds. It reports minimum, recommended, and
 maximum token/cost/time bounds. The recommended and maximum estimates include 20%
 and 25% contingency.
 

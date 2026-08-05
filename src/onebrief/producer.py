@@ -11,6 +11,7 @@ from onebrief.execution_limits import (
     VERIFIER_OUTPUT_CAP,
     WRITER_OUTPUT_CAP,
 )
+from onebrief.requirements_gate import require_ready_for_estimate
 from onebrief.schemas import BudgetEnvelope, BudgetStatus, IntakeRequest, RequirementsAnalysis, StageEstimate
 
 PRICE_CARD_VERSION = "google-agent-platform-global-standard-2026-08-05"
@@ -65,8 +66,7 @@ def _stage(
 
 
 def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> BudgetEnvelope:
-    if not analysis.ready_for_estimate:
-        raise ValueError("requirements must pass reinspection before budget estimation")
+    analysis = require_ready_for_estimate(intake, analysis)
 
     source_tokens = sum(approximate_tokens(source.content or source.summary) for source in intake.internal_sources)
     contract_text = "\n".join(

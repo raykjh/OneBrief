@@ -37,6 +37,9 @@ Rules:
 9. If a public fact can be researched later and public research is allowed, do not
    ask the user for it as mandatory internal information.
 10. Produce measurable acceptance criteria and explicit deliverables.
+    For scoring or ranking from raw fields, weights alone are insufficient. Require an
+    approved conversion table or formula, aggregation method, and tie rule before
+    marking the intake ready.
 11. Mark ready_for_estimate true only when supported and no mandatory gap remains.
 12. Mark unsupported for impersonation, deception, illegal harm, irreversible
     authority, or professional judgments that must remain with a qualified human.
