@@ -31,6 +31,7 @@ def test_home_serves_the_real_workflow() -> None:
     assert response.status_code == 200
     assert "OneBrief" in response.text
     assert "/api/inspect" in response.text
+    assert "Math.min(x.recommended_approval_usd,ceiling)" in response.text
 
 
 @pytest.mark.parametrize("ready", [False, True])
