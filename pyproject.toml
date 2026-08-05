@@ -9,6 +9,7 @@ description = "A budget-aware autonomous team for long-form knowledge work."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "filelock>=3.18,<4",
   "google-adk==2.6.2",
   "pydantic>=2.10,<3",
 ]
@@ -17,7 +18,7 @@ dependencies = [
 dev = ["pytest>=8.3,<9"]
 
 [project.scripts]
-onebrief = "onebrief.cli:main"
+onebrief = "onebrief.entrypoint:entrypoint"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/onebrief"]

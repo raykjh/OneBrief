@@ -1,0 +1,47 @@
+# Approval and Hard Budget Guard
+
+## Safety contract
+
+An execution run begins with one immutable approval tied to the SHA-256 of a specific
+budget estimate. Every Gemini generation must use `BudgetedGeminiClient`.
+
+Before the provider is called, the gateway:
+
+1. asks Vertex AI to count the complete input tokens;
+2. combines that count with the configured maximum output tokens;
+3. prices the worst case with the approved versioned price card;
+4. adds a 5% reservation safety margin;
+5. atomically reserves that amount in the run ledger; and
+6. blocks the call when actual spend plus concurrent reservations would exceed the
+   approved amount.
+
+After a successful response, provider-reported input, response, and thinking tokens
+replace the reservation with actual model cost. Failed calls release their reservation.
+
+## State transitions
+
+```text
+APPROVED -> RUNNING -> COMPLETE
+                 \-> NEEDS_BUDGET
+                 \-> FAILED
+```
+
+`NEEDS_BUDGET` never increases its own allowance. A new explicit approval workflow is
+required. Approvals cannot be overwritten in place.
+
+## Integrity and concurrency
+
+- Dollar arithmetic is stored as integer microdollars.
+- A file lock serializes all ledger mutations, including parallel calls.
+- Every ledger revision has a canonical SHA-256 integrity value.
+- The approval is duplicated in the ledger and compared with the standalone approval.
+- Files are replaced atomically so interruption cannot leave half-written JSON.
+
+## Scope of the guarantee
+
+The hard cap covers Gemini model calls made through this gateway under the recorded
+price-card version and token caps. It cannot cap unrelated Google Cloud services,
+taxes, currency conversion, a provider price change, or calls that bypass the gateway.
+Production deployment must therefore deny direct model credentials to worker code and
+route all execution calls through this gateway service.
+
