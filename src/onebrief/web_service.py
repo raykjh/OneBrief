@@ -390,6 +390,58 @@ async def session_status(
         raise HTTPException(502, f"Service operation failed: {type(exc).__name__}") from exc
 
 
+@app.get("/api/sessions/{session_id}/graph")
+async def session_graph(
+    session_id: str,
+    store: WebSessionStore = Depends(get_session_store),
+) -> dict[str, object]:
+    """Return the selected team DAG and its durable node execution history."""
+    try:
+        link = store.read_execution(session_id)
+        repository = GCSJobStore(link.job_uri)
+        record = await asyncio.to_thread(repository.read_job)
+        base = f"work/workspace/projects/{record.job_id}/02_plan_and_teams"
+        try:
+            graph = await asyncio.to_thread(repository.read_json, f"{base}/execution_graph.json")
+            state = await asyncio.to_thread(repository.read_json, "work/execution_graph_state.json")
+        except FileNotFoundError:
+            return {
+                "session_id": session_id,
+                "job_status": record.status.value,
+                "current_stage": record.current_stage,
+                "nodes": [],
+                "message": "The project owner is still selecting the team and execution order.",
+            }
+        state_nodes = state.get("nodes", {})
+        nodes = []
+        for node in graph.get("nodes", []):
+            node_id = str(node.get("node_id", ""))
+            run = state_nodes.get(node_id, {}) if isinstance(state_nodes, dict) else {}
+            nodes.append({
+                "node_id": node_id,
+                "stage": node.get("stage", node_id),
+                "agent_type": node.get("agent_type", ""),
+                "owner_instance_id": node.get("owner_instance_id", ""),
+                "depends_on": node.get("depends_on", []),
+                "activation_reason": node.get("activation_reason", ""),
+                "status": run.get("status", "pending"),
+                "attempt": run.get("attempt", 0),
+                "message": run.get("message", ""),
+                "output_paths": run.get("output_paths", []),
+            })
+        return {
+            "session_id": session_id,
+            "job_status": record.status.value,
+            "current_stage": record.current_stage,
+            "nodes": nodes,
+            "message": record.message,
+        }
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"Service operation failed: {type(exc).__name__}") from exc
+
+
 @app.get("/api/sessions/{session_id}/result")
 async def session_result(
     session_id: str,

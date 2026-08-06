@@ -31,6 +31,21 @@ _FORMULA = re.compile(r"공식|계산식|정규화|formula|weighted\s+sum|normal
 _HANGUL = re.compile(r"[가-힣]")
 
 
+_CREATIVE_TASK = re.compile(
+    r"각본|시나리오|영화|소설|이야기|screenplay|script|story|novel",
+    re.IGNORECASE,
+)
+_CREATIVE_DEFAULTABLE_GAP = re.compile(
+    r"줄거리|시놉시스|사건|주인공|등장인물|인물|캐릭터|장르|톤|분위기|결말|분량|러닝타임|"
+    r"premise|plot|synopsis|incident|protagonist|character|cast|genre|tone|mood|ending|length|runtime",
+    re.IGNORECASE,
+)
+_PRESERVE_EXISTING = re.compile(
+    r"기존\s*(?:작품|각본|시나리오|줄거리|인물)|특정\s*(?:작품|인물)|각색|리메이크|"
+    r"existing\s+(?:work|script|plot|character)|adapt|remake",
+    re.IGNORECASE,
+)
+
 @dataclass(frozen=True)
 class ScoringGap:
     fields: tuple[str, ...]
@@ -161,11 +176,50 @@ def _gap_requirement(gap: ScoringGap, korean: bool) -> tuple[InformationRequirem
     )
 
 
+def _apply_creative_defaults(
+    intake: IntakeRequest,
+    analysis: RequirementsAnalysis,
+) -> RequirementsAnalysis:
+    if (
+        not intake.internal_sources
+        or not _CREATIVE_TASK.search(intake.goal)
+        or _PRESERVE_EXISTING.search(intake.goal)
+        or not analysis.mandatory_information
+    ):
+        return analysis
+    defaultable = [
+        item
+        for item in analysis.mandatory_information
+        if _CREATIVE_DEFAULTABLE_GAP.search(
+            " ".join([item.key, item.request, item.reason, *item.acceptable_evidence])
+        )
+    ]
+    if len(defaultable) != len(analysis.mandatory_information):
+        return analysis
+    optional_by_key = {item.key: item for item in analysis.optional_information}
+    optional_by_key.update({item.key: item for item in defaultable})
+    assumption = (
+        "줄거리, 주요 인물, 장르, 톤, 결말 방향 및 목표 분량은 제공된 정본 안에서 "
+        "일관된 창작 기본값으로 선택하고 결과물에 명시한다."
+    )
+    assumptions = list(dict.fromkeys([*analysis.assumptions, assumption]))
+    return analysis.model_copy(
+        update={
+            "mandatory_information": [],
+            "optional_information": list(optional_by_key.values())[:10],
+            "consolidated_questions": [],
+            "assumptions": assumptions[:10],
+            "ready_for_estimate": analysis.supported,
+        }
+    )
+
+
 def apply_requirements_gate(
     intake: IntakeRequest,
     analysis: RequirementsAnalysis,
     sources: list[InternalSource] | None = None,
 ) -> RequirementsAnalysis:
+    analysis = _apply_creative_defaults(intake, analysis)
     gap = find_scoring_gap(intake, analysis, sources)
     if gap is None:
         return analysis

@@ -14,6 +14,7 @@ from onebrief.execution_limits import (
 )
 from onebrief.requirements_gate import require_ready_for_estimate
 from onebrief.schemas import BudgetEnvelope, BudgetStatus, IntakeRequest, RequirementsAnalysis, StageEstimate
+from onebrief.team_planning import TEAM_PLANNING_OUTPUT_CAP
 
 PRICE_CARD_VERSION = "google-agent-platform-global-standard-search-2026-08-05"
 PRICE_SOURCE_URL = "https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing"
@@ -89,13 +90,31 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
     revisions = intake.max_revision_rounds
     recommended_revisions = min(1, revisions)
 
-    stages = []
+    stages = [
+        _stage(
+            "team_planning", "gemini-3.5-flash",
+            contract_tokens + 4500, TEAM_PLANNING_OUTPUT_CAP,
+            (1, 1, 1), 2,
+        )
+    ]
     if intake.public_research_allowed:
         stages.append(
             _stage(
                 "public_research", "gemini-2.5-flash",
                 contract_tokens + 800, PUBLIC_RESEARCH_OUTPUT_CAP,
                 (1, 1, 1), 4, fixed_cost_usd=0.035,
+            )
+        )
+    for optional_stage in (
+        "project_architecture",
+        "creative_direction",
+        "artifact_integration",
+        "policy_guard",
+    ):
+        stages.append(
+            _stage(
+                optional_stage, "gemini-3.5-flash",
+                base + 1800, 1800, (0, 1, 1), 2,
             )
         )
     stages.extend([
@@ -123,6 +142,14 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
             REVISION_OUTPUT_CAP,
             (0, recommended_revisions, revisions),
             5,
+        ),
+        _stage(
+            "final_approval",
+            "gemini-3.5-flash",
+            base + ANALYST_OUTPUT_CAP + WRITER_OUTPUT_CAP + VERIFIER_OUTPUT_CAP,
+            1200,
+            (1, 1, 1),
+            2,
         ),
     ])
     raw_minimum = sum(stage.minimum_cost_usd for stage in stages)
@@ -163,6 +190,8 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
         estimated_minutes_maximum=total_minutes("maximum_calls"),
         notes=[
             "Estimate covers work after requirements reinspection; intake calls already made are excluded.",
+            "The Project Owner team-planning and final-approval calls are included.",
+            "Optional role nodes are conservatively reserved and removed after TeamPlan selection.",
             "Each revision round includes a new independent verification call.",
             "Role prompts and response-schema input overhead are included conservatively.",
             "Recommended and maximum totals include 20% and 25% contingency respectively.",

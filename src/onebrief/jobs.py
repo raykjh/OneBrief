@@ -17,12 +17,20 @@ from uuid import uuid4
 from filelock import FileLock
 from pydantic import BaseModel, Field
 
-from onebrief.budget_guard import BudgetExceeded, BudgetStore
+from onebrief.budget_guard import BudgetExceeded, BudgetStore, micros_to_dollars
+from onebrief.execution_graph import compile_execution_graph, persist_execution_graph
 from onebrief.execution_pipeline import ExecutionPipeline
 from onebrief.execution_schemas import PipelineStatus
+from onebrief.guarded_gemini import BudgetedGeminiClient
+from onebrief.model_policy import (
+    ModelPolicyGateway,
+    evaluate_model_budget,
+    persist_model_approval,
+)
 from onebrief.requirements_gate import require_ready_for_estimate
 from onebrief.schemas import BudgetEnvelope, IntakeRequest, InternalSource, RequirementsAnalysis
 from onebrief.source_loader import source_records
+from onebrief.team_planning import TeamPlan, TeamPlanningCoordinator
 
 
 def _now() -> str:
@@ -261,7 +269,7 @@ def build_result_package(
             for source in sorted(work_dir.rglob("*")):
                 if source.is_file() and ".tmp" not in source.name:
                     _copy_if_present(source, temp_dir / "artifacts" / source.relative_to(work_dir))
-        for name in ("approval.json", "cost_ledger.json"):
+        for name in ("approval.json", "cost_ledger.json", "model_execution_policy.json"):
             _copy_if_present(job_dir / "run" / name, temp_dir / "audit" / name)
         _copy_if_present(
             job_dir / "inputs" / "source_manifest.json",
@@ -319,7 +327,45 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
         )
         sources_payload = json.loads((job_dir / "inputs" / "sources.json").read_text(encoding="utf-8"))
         sources = [InternalSource.model_validate(item) for item in sources_payload]
-        checkpoint = ExecutionPipeline(job_dir / "run", gateway=gateway).run(
+        run_dir = job_dir / "run"
+        workspace_root = job_dir / "work" / "workspace"
+        raw_gateway = gateway or BudgetedGeminiClient(run_dir)
+        TeamPlanningCoordinator(raw_gateway, workspace_root).plan_and_deploy(
+            project_id=claimed.job_id,
+            intake=intake,
+            requirements=requirements,
+            sources=sources,
+        )
+        project_dir = workspace_root / "projects" / claimed.job_id
+        plan = TeamPlan.model_validate_json(
+            (project_dir / "02_plan_and_teams" / "team_plan.json").read_text(encoding="utf-8")
+        )
+        execution_graph = compile_execution_graph(plan)
+        persist_execution_graph(
+            execution_graph,
+            project_dir / "02_plan_and_teams" / "execution_graph.json",
+        )
+        estimate = BudgetEnvelope.model_validate_json(
+            (job_dir / "inputs" / "budget_estimate.json").read_text(encoding="utf-8")
+        )
+        approved_usd = micros_to_dollars(BudgetStore(run_dir).read().approval.approved_usd_micros)
+        model_decision, model_policy = evaluate_model_budget(
+            estimate, plan, approved_usd=approved_usd
+        )
+        persist_model_approval(
+            run_dir=run_dir,
+            project_dir=project_dir,
+            decision=model_decision,
+            policy=model_policy,
+        )
+        policy_gateway = ModelPolicyGateway(raw_gateway, model_policy)
+        pipeline = ExecutionPipeline(
+            run_dir,
+            gateway=policy_gateway,
+            stage_models={stage: model.value for stage, model in model_policy.stage_models.items()},
+            execution_graph=execution_graph,
+        )
+        checkpoint = pipeline.run(
             intake=intake,
             requirements=requirements,
             sources=sources,

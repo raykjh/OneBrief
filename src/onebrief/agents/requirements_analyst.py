@@ -41,12 +41,23 @@ Rules:
     approved conversion table or formula, aggregation method, and tie rule before
     marking the intake ready.
 11. Mark ready_for_estimate true only when supported and no mandatory gap remains.
-12. Mark unsupported for impersonation, deception, illegal harm, irreversible
-    authority, or professional judgments that must remain with a qualified human.
-13. For high-impact decisions, require legitimate task-relevant criteria, exclude
+12. Creative drafting is supported, including screenplays, stories, designs, and
+    other long-form artifacts. Do not mark a task unsupported merely because it
+    requires artistic judgment, professional-quality writing, or a long output.
+    Treat the result as a draft for human review. When the user supplies a canon or
+    style guide, use it as authoritative input without inventing canon changes.
+    For an open-ended creative request, premise, plot, protagonist, supporting cast,
+    genre, tone, ending direction, and approximate length are optional unless the
+    user explicitly requires an existing work or named element to be preserved.
+    Choose coherent working defaults from the supplied canon, disclose them in the
+    work contract, and do not ask the user to approve those defaults one by one.
+13. Mark unsupported only for impersonation, deception, illegal harm, irreversible
+    real-world authority, or regulated/high-impact professional judgments that must
+    remain with a qualified human.
+14. For high-impact decisions, require legitimate task-relevant criteria, exclude
     protected or highly sensitive traits, and keep final authority with a human.
-14. Do not solve the goal, write the final artifact, estimate cost, or call tools.
-15. Return only the structured output required by the schema.
+15. Do not solve the goal, write the final artifact, estimate cost, or call tools.
+16. Return only the structured output required by the schema.
 """.strip()
 
 

@@ -6,14 +6,18 @@ from pathlib import Path
 import pytest
 
 from onebrief.cloud_jobs import (
+    GCSJobStore,
     execute_cloud_run_job,
     parse_gcs_job_uri,
     run_cloud_worker,
 )
+from onebrief.dynamic_role_agents import GovernanceDecision
 from onebrief.execution_schemas import AnalysisPackage, DraftArtifact, VerificationReport
 from onebrief.jobs import JobRecord, JobStatus, JobStore, create_job
 from onebrief.producer import estimate_budget
 from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis, SourcePriority
+
+from team_plan_support import minimal_team_plan
 
 
 class FakeGateway:
@@ -57,11 +61,17 @@ class FakeGateway:
                 revision_instructions=[],
                 missing_information=[],
             ),
-        ]
+            GovernanceDecision(
+                verdict="PASS",
+                rationale="Verified result satisfies the contract.",
+            ),        ]
         self.calls: list[str] = []
 
-    def generate_json(self, *, stage: str, schema: type, **_: object):
+    def generate_json(self, *, stage: str, schema: type, **kwargs: object):
         self.calls.append(stage)
+        if stage == "team_planning":
+            request = json.loads(str(kwargs["contents"]))
+            return minimal_team_plan(request["project_id"])
         value = self.outputs.pop(0)
         assert isinstance(value, schema)
         return value
@@ -157,9 +167,11 @@ def test_cloud_worker_round_trip_publishes_remote_result(tmp_path: Path) -> None
     assert JobStore(remote_job).read().status == JobStatus.COMPLETE
     assert (remote_job / record.result_package / "package_manifest.json").exists()
     assert gateway.calls == [
+        "team_planning",
         "evidence_analysis",
         "long_form_draft",
         "independent_verification_r0",
+        "final_approval",
     ]
 
 
@@ -201,3 +213,27 @@ def test_execute_cloud_run_job_passes_only_the_job_uri_override() -> None:
 def test_parse_gcs_job_uri_rejects_unsafe_values(uri: str) -> None:
     with pytest.raises(ValueError):
         parse_gcs_job_uri(uri)
+
+def test_upload_outputs_publishes_terminal_job_record_last(tmp_path: Path, monkeypatch) -> None:
+    class Client:
+        def bucket(self, _name):
+            return object()
+
+    job_dir = tmp_path / "job"
+    (job_dir / "work").mkdir(parents=True)
+    (job_dir / "run").mkdir()
+    (job_dir / "job.json").write_text("{}", encoding="utf-8")
+    (job_dir / "work" / "execution_graph_state.json").write_text("{}", encoding="utf-8")
+    (job_dir / "run" / "cost_ledger.json").write_text("{}", encoding="utf-8")
+    uploaded = []
+    repository = GCSJobStore("gs://onebrief-test/jobs/ordered", client=Client())
+    monkeypatch.setattr(
+        repository,
+        "_replace_or_create",
+        lambda _source, relative: uploaded.append(relative.as_posix()),
+    )
+
+    repository.upload_outputs(job_dir)
+
+    assert uploaded[-1] == "job.json"
+    assert "work/execution_graph_state.json" in uploaded[:-1]

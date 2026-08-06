@@ -37,7 +37,7 @@ def _intake() -> IntakeRequest:
 def test_public_research_is_estimated_and_source_less_job_is_allowed(tmp_path: Path) -> None:
     intake = _intake()
     estimate = estimate_budget(intake, _requirements())
-    research = estimate.stages[0]
+    research = next(stage for stage in estimate.stages if stage.stage == "public_research")
     assert research.stage == "public_research"
     assert research.model == "gemini-2.5-flash"
     assert research.fixed_cost_usd_per_call == 0.035
