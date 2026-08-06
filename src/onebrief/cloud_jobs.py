@@ -192,6 +192,16 @@ class GCSJobStore:
         payload = self.bucket.blob(self._name("job.json")).download_as_text(encoding="utf-8")
         return JobRecord.model_validate_json(payload)
 
+    def read_json(self, relative: str | Path) -> dict[str, Any]:
+        try:
+            payload = self.bucket.blob(self._name(relative)).download_as_text(encoding="utf-8")
+        except NotFound as exc:
+            raise FileNotFoundError(f"job artifact not found: {relative}") from exc
+        value = json.loads(payload)
+        if not isinstance(value, dict):
+            raise ValueError(f"job artifact is not a JSON object: {relative}")
+        return value
+
     def download_result(self, destination: Path) -> Path:
         record = self.read_job()
         if not record.result_package:
