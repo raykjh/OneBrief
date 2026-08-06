@@ -47,13 +47,14 @@ def _json(payload: dict[str, Any]) -> str:
 class AnalystAgent:
     stage = "evidence_analysis"
 
-    def __init__(self, gateway: StructuredGateway):
+    def __init__(self, gateway: StructuredGateway, model: str = "gemini-3.5-flash"):
         self.gateway = gateway
+        self.model = model
 
     def run(self, contract: dict[str, Any], sources: list[dict[str, Any]]) -> AnalysisPackage:
         result = self.gateway.generate_json(
             stage=self.stage,
-            model="gemini-3.5-flash",
+            model=self.model,
             contents=_json({"work_contract": contract, "authoritative_sources": sources}),
             schema=AnalysisPackage,
             max_output_tokens=ANALYST_OUTPUT_CAP,
@@ -73,8 +74,9 @@ class AnalystAgent:
 class WriterAgent:
     stage = "long_form_draft"
 
-    def __init__(self, gateway: StructuredGateway):
+    def __init__(self, gateway: StructuredGateway, model: str = "gemini-3.5-flash"):
         self.gateway = gateway
+        self.model = model
 
     def run(
         self,
@@ -84,7 +86,7 @@ class WriterAgent:
     ) -> DraftArtifact:
         result = self.gateway.generate_json(
             stage=self.stage,
-            model="gemini-3.5-flash",
+            model=self.model,
             contents=_json(
                 {
                     "work_contract": contract,
@@ -112,8 +114,9 @@ class WriterAgent:
 class VerifierAgent:
     stage = "independent_verification"
 
-    def __init__(self, gateway: StructuredGateway):
+    def __init__(self, gateway: StructuredGateway, model: str = "gemini-3.5-flash"):
         self.gateway = gateway
+        self.model = model
 
     def run(
         self,
@@ -125,7 +128,7 @@ class VerifierAgent:
     ) -> VerificationReport:
         result = self.gateway.generate_json(
             stage=f"{self.stage}_r{round_number}",
-            model="gemini-3.5-flash",
+            model=self.model,
             contents=_json(
                 {
                     "work_contract": contract,
@@ -154,8 +157,9 @@ class VerifierAgent:
 class RevisionAgent:
     stage = "revision"
 
-    def __init__(self, gateway: StructuredGateway):
+    def __init__(self, gateway: StructuredGateway, model: str = "gemini-3.5-flash"):
         self.gateway = gateway
+        self.model = model
 
     def run(
         self,
@@ -168,7 +172,7 @@ class RevisionAgent:
     ) -> RevisionArtifact:
         result = self.gateway.generate_json(
             stage=f"{self.stage}_r{round_number}",
-            model="gemini-3.5-flash",
+            model=self.model,
             contents=_json(
                 {
                     "work_contract": contract,

@@ -14,6 +14,7 @@ from onebrief.execution_limits import (
 )
 from onebrief.requirements_gate import require_ready_for_estimate
 from onebrief.schemas import BudgetEnvelope, BudgetStatus, IntakeRequest, RequirementsAnalysis, StageEstimate
+from onebrief.team_planning import TEAM_PLANNING_OUTPUT_CAP
 
 PRICE_CARD_VERSION = "google-agent-platform-global-standard-search-2026-08-05"
 PRICE_SOURCE_URL = "https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing"
@@ -89,7 +90,13 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
     revisions = intake.max_revision_rounds
     recommended_revisions = min(1, revisions)
 
-    stages = []
+    stages = [
+        _stage(
+            "team_planning", "gemini-3.5-flash",
+            contract_tokens + 4500, TEAM_PLANNING_OUTPUT_CAP,
+            (1, 1, 1), 2,
+        )
+    ]
     if intake.public_research_allowed:
         stages.append(
             _stage(
@@ -163,6 +170,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
         estimated_minutes_maximum=total_minutes("maximum_calls"),
         notes=[
             "Estimate covers work after requirements reinspection; intake calls already made are excluded.",
+            "The Project Owner team-planning call is included before any downstream agent work.",
             "Each revision round includes a new independent verification call.",
             "Role prompts and response-schema input overhead are included conservatively.",
             "Recommended and maximum totals include 20% and 25% contingency respectively.",

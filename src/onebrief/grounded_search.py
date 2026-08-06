@@ -19,7 +19,11 @@ def run_grounded_research(
     desired_output: str | None,
 ) -> PublicResearchResult:
     """Run exactly one grounded prompt under a fixed worst-case fee reservation."""
-    model = "gemini-2.5-flash"
+    model = (
+        gateway.model_for("public_research")
+        if hasattr(gateway, "model_for")
+        else "gemini-2.5-flash"
+    )
     fixed_cost_cap = 0.035
     system_instruction = (
         "You are OneBrief's public research agent. Use Google Search for current public facts. "

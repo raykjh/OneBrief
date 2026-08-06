@@ -15,6 +15,8 @@ from onebrief.jobs import JobRecord, JobStatus, JobStore, create_job
 from onebrief.producer import estimate_budget
 from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis, SourcePriority
 
+from team_plan_support import minimal_team_plan
+
 
 class FakeGateway:
     def __init__(self):
@@ -60,8 +62,11 @@ class FakeGateway:
         ]
         self.calls: list[str] = []
 
-    def generate_json(self, *, stage: str, schema: type, **_: object):
+    def generate_json(self, *, stage: str, schema: type, **kwargs: object):
         self.calls.append(stage)
+        if stage == "team_planning":
+            request = json.loads(str(kwargs["contents"]))
+            return minimal_team_plan(request["project_id"])
         value = self.outputs.pop(0)
         assert isinstance(value, schema)
         return value
@@ -157,6 +162,7 @@ def test_cloud_worker_round_trip_publishes_remote_result(tmp_path: Path) -> None
     assert JobStore(remote_job).read().status == JobStatus.COMPLETE
     assert (remote_job / record.result_package / "package_manifest.json").exists()
     assert gateway.calls == [
+        "team_planning",
         "evidence_analysis",
         "long_form_draft",
         "independent_verification_r0",

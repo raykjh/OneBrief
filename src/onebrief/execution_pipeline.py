@@ -36,13 +36,27 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class ExecutionPipeline:
-    def __init__(self, run_dir: Path, gateway: object | None = None):
+    def __init__(
+        self,
+        run_dir: Path,
+        gateway: object | None = None,
+        stage_models: dict[str, str] | None = None,
+    ):
         self.run_dir = run_dir
         self.gateway = gateway or BudgetedGeminiClient(run_dir)
-        self.analyst = AnalystAgent(self.gateway)
-        self.writer = WriterAgent(self.gateway)
-        self.verifier = VerifierAgent(self.gateway)
-        self.reviser = RevisionAgent(self.gateway)
+        selected = stage_models or {}
+        self.analyst = AnalystAgent(
+            self.gateway, selected.get("evidence_analysis", "gemini-3.5-flash")
+        )
+        self.writer = WriterAgent(
+            self.gateway, selected.get("long_form_draft", "gemini-3.5-flash")
+        )
+        self.verifier = VerifierAgent(
+            self.gateway, selected.get("independent_verification", "gemini-3.5-flash")
+        )
+        self.reviser = RevisionAgent(
+            self.gateway, selected.get("revision", "gemini-3.5-flash")
+        )
 
     def _write(self, path: Path, text: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
