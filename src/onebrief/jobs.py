@@ -340,7 +340,7 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
         plan = TeamPlan.model_validate_json(
             (project_dir / "02_plan_and_teams" / "team_plan.json").read_text(encoding="utf-8")
         )
-        execution_graph = compile_execution_graph(plan)
+        execution_graph = compile_execution_graph(plan, intake.toolpack_ids)
         persist_execution_graph(
             execution_graph,
             project_dir / "02_plan_and_teams" / "execution_graph.json",

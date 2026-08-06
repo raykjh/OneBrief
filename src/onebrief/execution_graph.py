@@ -24,7 +24,7 @@ STAGE_BY_AGENT: dict[AgentType, tuple[str, ...]] = {
     AgentType.INVESTIGATOR: ("public_research",),
     AgentType.ANALYST: ("evidence_analysis",),
     AgentType.CREATOR: ("creative_direction",),
-    AgentType.MAKER: ("long_form_draft", "revision"),
+    AgentType.MAKER: ("tool_execution", "long_form_draft", "revision"),
     AgentType.INTEGRATOR: ("artifact_integration",),
     AgentType.CRITIC: ("independent_verification",),
     AgentType.GUARDIAN: ("policy_guard",),
@@ -123,7 +123,7 @@ def team_plan_hash(plan: TeamPlan) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def compile_execution_graph(plan: TeamPlan) -> ExecutionGraph:
+def compile_execution_graph(plan: TeamPlan, toolpack_ids: list[object] | None = None) -> ExecutionGraph:
     """Compile selected agents into an executable DAG; inactive roles never become nodes."""
     by_type = {member.agent_type: member for member in plan.members}
     nodes: list[ExecutionNode] = []
@@ -142,8 +142,10 @@ def compile_execution_graph(plan: TeamPlan) -> ExecutionGraph:
         ))
 
     add(AgentType.ARCHITECT, "project_architecture", [])
+    if toolpack_ids:
+        add(AgentType.MAKER, "tool_execution", ["project_architecture"])
     add(AgentType.INVESTIGATOR, "public_research", ["project_architecture"])
-    analysis_dependencies = ["project_architecture", "public_research"]
+    analysis_dependencies = ["project_architecture", "tool_execution", "public_research"]
     add(AgentType.ANALYST, "evidence_analysis", analysis_dependencies)
     add(AgentType.CREATOR, "creative_direction", ["evidence_analysis"])
     add(AgentType.MAKER, "long_form_draft", ["evidence_analysis", "creative_direction"])

@@ -74,6 +74,10 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
     analysis = require_ready_for_estimate(intake, analysis)
 
     source_tokens = sum(approximate_tokens(source.content or source.summary) for source in intake.internal_sources)
+    # Executable ToolPack evidence is generated after approval, so reserve its bounded
+    # model-input footprint even though it is not present in the intake descriptor yet.
+    if intake.toolpack_ids:
+        source_tokens += 60_000 * len(intake.toolpack_ids)
     contract_text = "\n".join(
         [
             intake.goal,
@@ -190,6 +194,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
         estimated_minutes_maximum=total_minutes("maximum_calls"),
         notes=[
             "Estimate covers work after requirements reinspection; intake calls already made are excluded.",
+            "Executable ToolPack evidence reserves 60,000 input tokens per selected pack.",
             "The Project Owner team-planning and final-approval calls are included.",
             "Optional role nodes are conservatively reserved and removed after TeamPlan selection.",
             "Each revision round includes a new independent verification call.",

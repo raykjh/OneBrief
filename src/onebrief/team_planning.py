@@ -156,6 +156,7 @@ def normalize_team_plan(raw: TeamPlanDraft | TeamPlan, *, project_id: str) -> Te
         "evidence_analysis": AgentType.ANALYST,
         "creative_direction": AgentType.CREATOR,
         "long_form_draft": AgentType.MAKER,
+        "tool_execution": AgentType.MAKER,
         "revision": AgentType.MAKER,
         "artifact_integration": AgentType.INTEGRATOR,
         "independent_verification": AgentType.CRITIC,
@@ -265,6 +266,7 @@ class ProjectOwnerAgent:
                 "goal": intake.goal,
                 "desired_output": intake.desired_output,
                 "public_research_allowed": intake.public_research_allowed,
+                "selected_toolpacks": [item.value for item in intake.toolpack_ids],
                 "normalized_goal": requirements.normalized_goal,
                 "deliverables": requirements.deliverables,
                 "acceptance_criteria": requirements.acceptance_criteria,
@@ -295,7 +297,9 @@ class ProjectOwnerAgent:
                 "evidence_analysis, a maker for long_form_draft and revision, and an independent critic "
                 "for independent_verification; add an investigator for public_research when enabled. "
                 "Add architect, creator, integrator, or guardian only when the goal genuinely activates "
-                "their distinct accountability. Use only pack IDs in pack_catalog. Assign APT-3 temperament "
+                "their distinct accountability. When Exchange is selected, treat it as a read-only executable "
+                "tool owned by the maker and strongly prefer a guardian for financial-claim boundaries. "
+                "Use only pack IDs in pack_catalog. Assign APT-3 temperament "
                 "as a tie-breaker profile, not authority. Select one model for every member from "
                 "approved_model_catalog and explain the cost/capability reason. Use gemini-2.5-flash only "
                 "for the investigator that owns public_research; use gemini-3.5-flash for complex work and "

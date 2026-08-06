@@ -13,6 +13,10 @@ class SourcePriority(StrEnum):
     OPTIONAL = "optional"
 
 
+class ToolPackId(StrEnum):
+    EXCHANGE = "exchange"
+
+
 class InternalSource(BaseModel):
     """Private or authoritative evidence supplied by the user."""
 
@@ -36,6 +40,7 @@ class IntakeRequest(BaseModel):
     public_research_allowed: bool = False
     budget_limit_usd: Annotated[float | None, Field(gt=0)] = None
     max_revision_rounds: Annotated[int, Field(ge=0, le=2)] = 2
+    toolpack_ids: list[ToolPackId] = Field(default_factory=list, max_length=5)
 
 
 class InformationRequirement(BaseModel):

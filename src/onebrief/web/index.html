@@ -27,6 +27,7 @@ textarea,input[type=text],input[type=number]{width:100%;border:1px solid var(--l
 <div class="field"><label for="goal">무엇을 완성할까요?</label><div class="hint">목적, 대상, 반드시 지켜야 할 조건을 함께 적으면 검수가 더 정확해집니다.</div><textarea id="goal" name="goal" required minlength="3" maxlength="8000" placeholder="예: 지원자 CSV와 사내 채용 규칙을 바탕으로 근거를 추적할 수 있는 1차 평가표를 작성해줘."></textarea></div>
 <div class="grid"><div class="field"><label for="desired">원하는 결과물</label><input id="desired" name="desired_output" type="text" maxlength="2000" placeholder="예: 결과 Excel + 검증 보고서"></div><div class="field"><label for="limit">실행 한도 (USD)</label><input id="limit" name="budget_limit_usd" type="number" min=".01" max="2" step=".01" value=".50" required></div></div>
 <div class="field upload"><label for="uploads">내부 자료</label><div class="hint">TXT, MD, CSV, JSON, YAML · 파일당 500KB · 전체 1MB. 내부 자료가 필요 없는 공개 자료 작업도 가능합니다.</div><input id="uploads" name="uploads" type="file" multiple accept=".txt,.md,.csv,.json,.yaml,.yml"></div>
+<div class="field upload"><label>Executable ToolPack</label><div class="hint">Runs only approved verification steps. Arbitrary commands, trading, and account connections are unavailable.</div><label><input type="checkbox" name="toolpack_ids" value="exchange"> Exchange - official FX evidence and verification code (read only)</label></div>
 <div class="checks"><label><input type="checkbox" name="public_research_allowed" value="true">공개 자료 검색 허용 (Google Search · 출처 보존)</label><label>수정 횟수 <select name="max_revision_rounds"><option value="0">0회</option><option value="1" selected>1회</option><option value="2">2회</option></select></label></div>
 <button class="primary" id="inspectButton" type="submit">필수정보와 예산 검수</button><p class="status" id="status" role="status"></p></form>
 <section class="result" id="result" aria-live="polite">
@@ -40,6 +41,7 @@ textarea,input[type=text],input[type=number]{width:100%;border:1px solid var(--l
 <script>
 const q=s=>document.querySelector(s),qa=s=>document.querySelectorAll(s);let sid=new URLSearchParams(location.search).get("session"),timer=null,terminalWaits=0;
 const labels={project_architecture:"작업 구조 설계",public_research:"공개 자료 조사",evidence_analysis:"근거 분석",creative_direction:"창작 방향 설정",long_form_draft:"결과물 작성",artifact_integration:"결과 통합",independent_verification:"독립 검증",policy_guard:"규칙·안전 검수",final_approval:"최종 승인"};
+labels.tool_execution="Approved tool execution";
 const roles={project_owner:"프로젝트 책임자",architect:"설계자",investigator:"조사자",analyst:"분석가",creator:"창작자",maker:"제작자",integrator:"통합자",critic:"검증자",guardian:"가디언"};
 const states={pending:"대기",running:"실행 중",complete:"완료",blocked:"차단",failed:"실패"};
 function steps(n){qa(".step").forEach((x,i)=>x.classList.toggle("active",i<n))}function money(n){return "$"+Number(n).toFixed(4)}

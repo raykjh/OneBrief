@@ -27,12 +27,14 @@ from onebrief.cloud_jobs import GCSJobStore, CloudExecutionReceipt, submit_cloud
 from onebrief.jobs import create_job
 from onebrief.producer import estimate_budget
 from onebrief.runner import inspect_requirements
+from onebrief.toolpacks import attach_toolpack_descriptors
 from onebrief.schemas import (
     BudgetEnvelope,
     IntakeRequest,
     InternalSource,
     RequirementsAnalysis,
     SourcePriority,
+    ToolPackId,
 )
 from onebrief.source_loader import ALLOWED_SUFFIXES, MAX_FILE_BYTES
 
@@ -294,6 +296,7 @@ async def inspect(
     budget_limit_usd: Annotated[float, Form(gt=0)] = 0.50,
     public_research_allowed: Annotated[bool, Form()] = False,
     max_revision_rounds: Annotated[int, Form(ge=0, le=2)] = 1,
+    toolpack_ids: Annotated[list[ToolPackId] | None, Form()] = None,
     uploads: Annotated[list[UploadFile] | None, File()] = None,
     store: WebSessionStore = Depends(get_session_store),
 ) -> dict[str, object]:
@@ -305,7 +308,9 @@ async def inspect(
         public_research_allowed=public_research_allowed,
         budget_limit_usd=budget_limit_usd,
         max_revision_rounds=max_revision_rounds,
+        toolpack_ids=toolpack_ids or [],
     )
+    intake = attach_toolpack_descriptors(intake)
     try:
         requirements = await inspect_requirements(intake)
         budget = estimate_budget(intake, requirements) if requirements.ready_for_estimate else None

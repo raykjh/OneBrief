@@ -32,6 +32,7 @@ from onebrief.grounded_search import run_grounded_research
 from onebrief.requirements_gate import require_ready_for_estimate
 from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis
 from onebrief.public_research import PublicResearchResult
+from onebrief.toolpacks import execute_toolpacks
 from onebrief.workbook_export import export_workbook
 
 T = TypeVar("T", bound=BaseModel)
@@ -194,6 +195,13 @@ class ExecutionPipeline:
                 self._write(path, handoff.model_dump_json(indent=2))
             graph_complete(stage, path.name)
             return handoff
+        def fail_running_graph(message: str, *, blocked: bool = False) -> None:
+            if runtime is None:
+                return
+            for node_id, record in runtime.state.nodes.items():
+                if record.status == NodeStatus.RUNNING:
+                    runtime.fail(node_id, message, blocked=blocked)
+
 
         try:
             architecture = run_handoff(
@@ -202,6 +210,31 @@ class ExecutionPipeline:
             )
             if architecture is not None:
                 contract["project_architecture"] = architecture.model_dump(mode="json")
+
+            if intake.toolpack_ids:
+                graph_begin("tool_execution")
+                self._checkpoint(
+                    output_dir, PipelineStatus.RUNNING, "tool_execution", completed, 0
+                )
+                _, tool_sources = execute_toolpacks(
+                    intake.toolpack_ids, output_dir / "toolpacks"
+                )
+                sources = [*sources, *tool_sources]
+                source_payload = [
+                    {
+                        "name": source.name,
+                        "priority": source.priority.value,
+                        "requirement_keys": source.requirement_keys,
+                        "content": source.content,
+                        "sha256": source.sha256,
+                    }
+                    for source in sources
+                ]
+                graph_complete(
+                    "tool_execution", "toolpacks/toolpack_execution.json",
+                    message="Approved read-only ToolPack checks passed and evidence was packaged.",
+                )
+                completed.append("tool_execution")
 
             public_research: PublicResearchResult | None = None
             if intake.public_research_allowed:
@@ -442,6 +475,7 @@ class ExecutionPipeline:
                 (output_dir / "execution_checkpoint.json").read_text(encoding="utf-8")
             )
         except BudgetExceeded as exc:
+            fail_running_graph(str(exc), blocked=True)
             self._checkpoint(
                 output_dir,
                 PipelineStatus.NEEDS_BUDGET,
@@ -452,6 +486,7 @@ class ExecutionPipeline:
             )
             raise
         except Exception as exc:
+            fail_running_graph(f"{type(exc).__name__}: {exc}")
             self._checkpoint(
                 output_dir,
                 PipelineStatus.FAILED,
