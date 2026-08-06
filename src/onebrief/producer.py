@@ -105,6 +105,18 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
                 (1, 1, 1), 4, fixed_cost_usd=0.035,
             )
         )
+    for optional_stage in (
+        "project_architecture",
+        "creative_direction",
+        "artifact_integration",
+        "policy_guard",
+    ):
+        stages.append(
+            _stage(
+                optional_stage, "gemini-3.5-flash",
+                base + 1800, 1800, (0, 1, 1), 2,
+            )
+        )
     stages.extend([
         _stage("evidence_analysis", "gemini-3.5-flash", base, ANALYST_OUTPUT_CAP, (1, 1, 1), 4),
         _stage(
@@ -130,6 +142,14 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
             REVISION_OUTPUT_CAP,
             (0, recommended_revisions, revisions),
             5,
+        ),
+        _stage(
+            "final_approval",
+            "gemini-3.5-flash",
+            base + ANALYST_OUTPUT_CAP + WRITER_OUTPUT_CAP + VERIFIER_OUTPUT_CAP,
+            1200,
+            (1, 1, 1),
+            2,
         ),
     ])
     raw_minimum = sum(stage.minimum_cost_usd for stage in stages)
@@ -170,7 +190,8 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
         estimated_minutes_maximum=total_minutes("maximum_calls"),
         notes=[
             "Estimate covers work after requirements reinspection; intake calls already made are excluded.",
-            "The Project Owner team-planning call is included before any downstream agent work.",
+            "The Project Owner team-planning and final-approval calls are included.",
+            "Optional role nodes are conservatively reserved and removed after TeamPlan selection.",
             "Each revision round includes a new independent verification call.",
             "Role prompts and response-schema input overhead are included conservatively.",
             "Recommended and maximum totals include 20% and 25% contingency respectively.",

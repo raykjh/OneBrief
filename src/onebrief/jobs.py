@@ -18,6 +18,7 @@ from filelock import FileLock
 from pydantic import BaseModel, Field
 
 from onebrief.budget_guard import BudgetExceeded, BudgetStore, micros_to_dollars
+from onebrief.execution_graph import compile_execution_graph, persist_execution_graph
 from onebrief.execution_pipeline import ExecutionPipeline
 from onebrief.execution_schemas import PipelineStatus
 from onebrief.guarded_gemini import BudgetedGeminiClient
@@ -339,6 +340,11 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
         plan = TeamPlan.model_validate_json(
             (project_dir / "02_plan_and_teams" / "team_plan.json").read_text(encoding="utf-8")
         )
+        execution_graph = compile_execution_graph(plan)
+        persist_execution_graph(
+            execution_graph,
+            project_dir / "02_plan_and_teams" / "execution_graph.json",
+        )
         estimate = BudgetEnvelope.model_validate_json(
             (job_dir / "inputs" / "budget_estimate.json").read_text(encoding="utf-8")
         )
@@ -357,6 +363,7 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
             run_dir,
             gateway=policy_gateway,
             stage_models={stage: model.value for stage, model in model_policy.stage_models.items()},
+            execution_graph=execution_graph,
         )
         checkpoint = pipeline.run(
             intake=intake,

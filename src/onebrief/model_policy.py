@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from onebrief.agent_registry import ApprovedModel
 from onebrief.budget_guard import BudgetExceeded
+from onebrief.execution_graph import STAGE_BY_AGENT
 from onebrief.producer import PRICES
 from onebrief.schemas import BudgetEnvelope, StageEstimate
 from onebrief.team_planning import TeamPlan
@@ -97,11 +98,16 @@ def evaluate_model_budget(
     }
     for stage, owner_id in plan.stage_owners.items():
         stage_models[stage] = by_id[owner_id].model
+    for member in plan.members:
+        for stage in STAGE_BY_AGENT[member.agent_type]:
+            stage_models[stage] = member.model
 
     selected: list[StageEstimate] = []
     for stage in estimate.stages:
         chosen = stage_models.get(stage.stage)
         if chosen is None:
+            if stage.minimum_calls == 0:
+                continue
             raise ValueError(f"budget stage has no TeamPlan model owner: {stage.stage}")
         selected.append(_repriced_stage(stage, chosen.value))
 

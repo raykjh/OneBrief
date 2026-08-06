@@ -15,7 +15,9 @@ from onebrief.deterministic_verification import (
     apply_deterministic_override,
     validate_draft_grounding,
 )
+from onebrief.dynamic_role_agents import DynamicRoleAgent, GovernanceAgent, GovernanceDecision, RoleHandoff
 from onebrief.execution_agents import AnalystAgent, RevisionAgent, VerifierAgent, WriterAgent
+from onebrief.execution_graph import ExecutionGraph, ExecutionGraphRuntime, NodeStatus
 from onebrief.execution_schemas import (
     AnalysisPackage,
     DraftArtifact,
@@ -41,10 +43,13 @@ class ExecutionPipeline:
         run_dir: Path,
         gateway: object | None = None,
         stage_models: dict[str, str] | None = None,
+        execution_graph: ExecutionGraph | None = None,
     ):
         self.run_dir = run_dir
         self.gateway = gateway or BudgetedGeminiClient(run_dir)
         selected = stage_models or {}
+        self.stage_models = selected
+        self.execution_graph = execution_graph
         self.analyst = AnalystAgent(
             self.gateway, selected.get("evidence_analysis", "gemini-3.5-flash")
         )
@@ -143,10 +148,65 @@ class ExecutionPipeline:
         ]
         completed: list[str] = []
         revision_round = 0
+        runtime = (
+            ExecutionGraphRuntime(self.execution_graph, output_dir / "execution_graph_state.json")
+            if self.execution_graph is not None
+            else None
+        )
+
+        def graph_begin(stage: str) -> bool:
+            if runtime is None:
+                return True
+            node = runtime.graph.node_for_stage(stage)
+            if runtime.state.nodes[node.node_id].status == NodeStatus.COMPLETE:
+                return False
+            runtime.start(node.node_id)
+            return True
+
+        def graph_complete(stage: str, *paths: str, message: str = "") -> None:
+            if runtime is None:
+                return
+            node = runtime.graph.node_for_stage(stage)
+            if runtime.state.nodes[node.node_id].status != NodeStatus.COMPLETE:
+                runtime.complete(node.node_id, *paths, message=message)
+
+        def has_graph_stage(stage: str) -> bool:
+            if runtime is None:
+                return False
+            try:
+                runtime.graph.node_for_stage(stage)
+                return True
+            except KeyError:
+                return False
+
+        def run_handoff(stage: str, payload: dict[str, object]) -> RoleHandoff | None:
+            if not has_graph_stage(stage):
+                return None
+            path = output_dir / f"{stage}.json"
+            handoff = self._load(path, RoleHandoff)
+            graph_begin(stage)
+            if handoff is None:
+                handoff = DynamicRoleAgent(
+                    self.gateway,
+                    stage,
+                    self.stage_models.get(stage, "gemini-3.5-flash"),
+                ).run(payload)
+                self._write(path, handoff.model_dump_json(indent=2))
+            graph_complete(stage, path.name)
+            return handoff
+
         try:
+            architecture = run_handoff(
+                "project_architecture",
+                {"contract": contract, "sources": source_payload},
+            )
+            if architecture is not None:
+                contract["project_architecture"] = architecture.model_dump(mode="json")
+
             public_research: PublicResearchResult | None = None
             if intake.public_research_allowed:
                 research_path = output_dir / "public_research.json"
+                graph_begin("public_research")
                 public_research = self._load(research_path, PublicResearchResult)
                 if public_research is None:
                     self._checkpoint(output_dir, PipelineStatus.RUNNING, "public_research", completed, 0)
@@ -171,24 +231,48 @@ class ExecutionPipeline:
                     }
                     for source in sources
                 ]
+                graph_complete("public_research", "public_research.json", "public_research.md")
                 completed.append("public_research")
 
             analysis_path = output_dir / "analysis.json"
+            graph_begin("evidence_analysis")
             analysis = self._load(analysis_path, AnalysisPackage)
             if analysis is None:
                 self._checkpoint(output_dir, PipelineStatus.RUNNING, "evidence_analysis", completed, 0)
                 analysis = self.analyst.run(contract, source_payload)
                 self._write(analysis_path, analysis.model_dump_json(indent=2))
+            graph_complete("evidence_analysis", "analysis.json")
             completed.append("evidence_analysis")
 
+            creative = run_handoff(
+                "creative_direction",
+                {"contract": contract, "analysis": analysis.model_dump(mode="json")},
+            )
+            if creative is not None:
+                contract["creative_direction"] = creative.model_dump(mode="json")
+
             draft_path = output_dir / "draft_r0.json"
+            graph_begin("long_form_draft")
             draft = self._load(draft_path, DraftArtifact)
             if draft is None:
                 self._checkpoint(output_dir, PipelineStatus.RUNNING, "long_form_draft", completed, 0)
                 draft = self.writer.run(contract, analysis, source_payload)
                 self._write(draft_path, draft.model_dump_json(indent=2))
+            graph_complete("long_form_draft", "draft_r0.json")
             completed.append("long_form_draft")
 
+            integration = run_handoff(
+                "artifact_integration",
+                {
+                    "contract": contract,
+                    "analysis": analysis.model_dump(mode="json"),
+                    "draft": draft.model_dump(mode="json"),
+                },
+            )
+            if integration is not None:
+                contract["artifact_integration"] = integration.model_dump(mode="json")
+
+            graph_begin("independent_verification")
             verification_path = output_dir / "verification_r0.json"
             grounding_path = output_dir / "deterministic_verification_r0.json"
             model_verification_path = output_dir / "model_verification_r0.json"
@@ -266,6 +350,30 @@ class ExecutionPipeline:
                 report = next_report
                 completed.append(verification_stage)
 
+            graph_complete(
+                "independent_verification",
+                f"verification_r{revision_round}.json",
+                f"deterministic_verification_r{revision_round}.json",
+            )
+
+            governance: GovernanceDecision | None = None
+            if has_graph_stage("policy_guard"):
+                guard_path = output_dir / "policy_guard.json"
+                governance = self._load(guard_path, GovernanceDecision)
+                graph_begin("policy_guard")
+                if governance is None:
+                    governance = GovernanceAgent(
+                        self.gateway,
+                        "policy_guard",
+                        self.stage_models.get("policy_guard", "gemini-3.5-flash"),
+                    ).run({
+                        "contract": contract,
+                        "verification": report.model_dump(mode="json"),
+                        "draft": draft.model_dump(mode="json"),
+                    })
+                    self._write(guard_path, governance.model_dump_json(indent=2))
+                graph_complete("policy_guard", "policy_guard.json")
+
             if report.verdict == Verdict.NEEDS_INFORMATION:
                 status = PipelineStatus.NEEDS_INFORMATION
                 message = "Verifier found a required conclusion unsupported by supplied evidence."
@@ -275,6 +383,41 @@ class ExecutionPipeline:
             else:
                 status = PipelineStatus.PARTIAL
                 message = "Revision limit reached before verification passed."
+
+            if governance is not None and governance.verdict != Verdict.PASS:
+                status = (
+                    PipelineStatus.NEEDS_INFORMATION
+                    if governance.verdict == Verdict.NEEDS_INFORMATION
+                    else PipelineStatus.PARTIAL
+                )
+                message = f"Policy guard returned {governance.verdict.value}: {governance.rationale}"
+
+            if has_graph_stage("final_approval"):
+                approval_path = output_dir / "final_approval.json"
+                approval = self._load(approval_path, GovernanceDecision)
+                graph_begin("final_approval")
+                if approval is None:
+                    approval = GovernanceAgent(
+                        self.gateway,
+                        "final_approval",
+                        self.stage_models.get("final_approval", "gemini-3.5-flash"),
+                    ).run({
+                        "contract": contract,
+                        "pipeline_status": status.value,
+                        "verification": report.model_dump(mode="json"),
+                        "policy_guard": governance.model_dump(mode="json") if governance else None,
+                    })
+                    self._write(approval_path, approval.model_dump_json(indent=2))
+                if status == PipelineStatus.COMPLETE and approval.verdict != Verdict.PASS:
+                    status = (
+                        PipelineStatus.NEEDS_INFORMATION
+                        if approval.verdict == Verdict.NEEDS_INFORMATION
+                        else PipelineStatus.PARTIAL
+                    )
+                    message = f"Project owner returned {approval.verdict.value}: {approval.rationale}"
+                if status != PipelineStatus.COMPLETE and approval.verdict == Verdict.PASS:
+                    raise ValueError("project owner cannot override a failed critic or guardian gate")
+                graph_complete("final_approval", "final_approval.json")
 
             body = draft.body_markdown.strip()
             final_text = body if body.startswith("# ") else f"# {draft.title}\n\n{body}"

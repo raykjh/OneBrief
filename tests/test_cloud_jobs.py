@@ -10,6 +10,7 @@ from onebrief.cloud_jobs import (
     parse_gcs_job_uri,
     run_cloud_worker,
 )
+from onebrief.dynamic_role_agents import GovernanceDecision
 from onebrief.execution_schemas import AnalysisPackage, DraftArtifact, VerificationReport
 from onebrief.jobs import JobRecord, JobStatus, JobStore, create_job
 from onebrief.producer import estimate_budget
@@ -59,7 +60,10 @@ class FakeGateway:
                 revision_instructions=[],
                 missing_information=[],
             ),
-        ]
+            GovernanceDecision(
+                verdict="PASS",
+                rationale="Verified result satisfies the contract.",
+            ),        ]
         self.calls: list[str] = []
 
     def generate_json(self, *, stage: str, schema: type, **kwargs: object):
@@ -166,6 +170,7 @@ def test_cloud_worker_round_trip_publishes_remote_result(tmp_path: Path) -> None
         "evidence_analysis",
         "long_form_draft",
         "independent_verification_r0",
+        "final_approval",
     ]
 
 

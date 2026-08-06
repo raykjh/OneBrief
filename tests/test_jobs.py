@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from onebrief.dynamic_role_agents import GovernanceDecision
 from onebrief.execution_schemas import (
     AnalysisPackage,
     DraftArtifact,
@@ -94,7 +95,10 @@ def _gateway() -> FakeGateway:
                 revision_instructions=[],
                 missing_information=[],
             ),
-        ]
+            GovernanceDecision(
+                verdict="PASS",
+                rationale="Verified result satisfies the contract.",
+            ),        ]
     )
 
 
@@ -132,6 +136,7 @@ def test_job_runs_to_immutable_result_package(tmp_path: Path) -> None:
         "evidence_analysis",
         "long_form_draft",
         "independent_verification_r0",
+        "final_approval",
     ]
     assert completed.result_package is not None
     package = job_dir / completed.result_package
