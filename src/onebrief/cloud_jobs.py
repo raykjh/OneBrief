@@ -164,11 +164,16 @@ class GCSJobStore:
 
     def upload_outputs(self, job_dir: Path) -> None:
         allowed = {"job.json", "run", "work", "packages"}
-        for source in _local_job_files(job_dir):
-            relative = source.relative_to(job_dir)
-            if relative.parts[0] not in allowed:
-                continue
-            self._replace_or_create(source, relative)
+        files = [
+            source
+            for source in _local_job_files(job_dir)
+            if source.relative_to(job_dir).parts[0] in allowed
+        ]
+        # Publish the terminal job record last. Readers must never observe COMPLETE
+        # before the graph, audit ledger, and immutable result package exist.
+        files.sort(key=lambda source: source.relative_to(job_dir).as_posix() == "job.json")
+        for source in files:
+            self._replace_or_create(source, source.relative_to(job_dir))
 
     def write_completion(self, record: JobRecord) -> None:
         self.bucket.blob(self._name("control/completion.json")).upload_from_string(

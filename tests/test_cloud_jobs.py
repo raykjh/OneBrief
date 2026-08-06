@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from onebrief.cloud_jobs import (
+    GCSJobStore,
     execute_cloud_run_job,
     parse_gcs_job_uri,
     run_cloud_worker,
@@ -212,3 +213,27 @@ def test_execute_cloud_run_job_passes_only_the_job_uri_override() -> None:
 def test_parse_gcs_job_uri_rejects_unsafe_values(uri: str) -> None:
     with pytest.raises(ValueError):
         parse_gcs_job_uri(uri)
+
+def test_upload_outputs_publishes_terminal_job_record_last(tmp_path: Path, monkeypatch) -> None:
+    class Client:
+        def bucket(self, _name):
+            return object()
+
+    job_dir = tmp_path / "job"
+    (job_dir / "work").mkdir(parents=True)
+    (job_dir / "run").mkdir()
+    (job_dir / "job.json").write_text("{}", encoding="utf-8")
+    (job_dir / "work" / "execution_graph_state.json").write_text("{}", encoding="utf-8")
+    (job_dir / "run" / "cost_ledger.json").write_text("{}", encoding="utf-8")
+    uploaded = []
+    repository = GCSJobStore("gs://onebrief-test/jobs/ordered", client=Client())
+    monkeypatch.setattr(
+        repository,
+        "_replace_or_create",
+        lambda _source, relative: uploaded.append(relative.as_posix()),
+    )
+
+    repository.upload_outputs(job_dir)
+
+    assert uploaded[-1] == "job.json"
+    assert "work/execution_graph_state.json" in uploaded[:-1]

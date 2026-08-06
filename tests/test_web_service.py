@@ -40,6 +40,8 @@ def test_home_serves_the_real_workflow() -> None:
     assert 'this.disabled=true;q("#status").textContent=""' in response.text
     assert "/api/sessions/" in response.text and "/graph" in response.text
     assert "에이전트 실행 흐름" in response.text
+    assert 'new URLSearchParams(location.search).get("session")' in response.text
+    assert "terminalWaits>=5" in response.text
 
 
 @pytest.mark.parametrize("ready", [False, True])
