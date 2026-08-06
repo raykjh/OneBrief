@@ -27,6 +27,7 @@ from onebrief.model_policy import (
     evaluate_model_budget,
     persist_model_approval,
 )
+from onebrief.project_closure import ProjectClosureManager
 from onebrief.requirements_gate import require_ready_for_estimate
 from onebrief.schemas import BudgetEnvelope, IntakeRequest, InternalSource, RequirementsAnalysis
 from onebrief.source_loader import source_records
@@ -372,6 +373,12 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
             output_dir=job_dir / "work",
         )
         status = _pipeline_status(checkpoint.status)
+        ProjectClosureManager(workspace_root / "pack_registry").close(
+            project_id=claimed.job_id,
+            project_dir=project_dir,
+            work_dir=job_dir / "work",
+            terminal_status=status.value,
+        )
         package, digest = build_result_package(job_dir, status=status, attempt=claimed.attempts)
         return store.finish(
             status,

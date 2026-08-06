@@ -89,6 +89,7 @@ PROJECT_DIRECTORIES = (
     "06_decisions_and_evidence",
     "07_budget_and_usage",
     "08_execution_log",
+    "09_closure",
 )
 
 
