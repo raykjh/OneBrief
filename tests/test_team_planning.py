@@ -11,6 +11,7 @@ from onebrief.team_planning import (
     TeamDefinition,
     TeamMemberPlan,
     TeamPlan,
+    TeamPlanDraft,
     TeamPlanningCoordinator,
     validate_team_plan,
 )
@@ -95,7 +96,7 @@ class FakeGateway:
 
     def generate_json(self, *, schema: type, **_: object):
         self.calls += 1
-        assert schema is TeamPlan
+        assert schema is TeamPlanDraft
         return self.plan
 
 
@@ -151,3 +152,23 @@ def test_coordinator_resumes_without_replanning(tmp_path: Path) -> None:
     coordinator.plan_and_deploy(**kwargs)
     coordinator.plan_and_deploy(**kwargs)
     assert gateway.calls == 1
+
+def test_provider_team_membership_references_are_repaired_before_strict_validation() -> None:
+    valid = _plan()
+    payload = valid.model_dump(mode="json")
+    payload["teams"][0]["lead_instance_id"] = "missing-lead"
+    payload["teams"][0]["member_instance_ids"] = ["critic-01"]
+    draft = TeamPlanDraft.model_validate(payload)
+    gateway = FakeGateway(draft)
+
+    result = ProjectOwnerAgent(gateway).run(
+        project_id="job-123",
+        intake=IntakeRequest(goal="Create a grounded guide."),
+        requirements=_requirements(),
+        sources=[_source()],
+    )
+
+    team = result.teams[0]
+    assert team.lead_instance_id == "owner-01"
+    assert team.member_instance_ids == [member.instance_id for member in result.members]
+    assert result.stage_owners["final_approval"] == "owner-01"

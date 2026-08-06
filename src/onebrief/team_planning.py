@@ -105,6 +105,79 @@ class TeamPlan(BaseModel):
         return self
 
 
+class TeamPlanDraft(BaseModel):
+    """Provider-facing schema; cross-reference repair happens before strict validation."""
+
+    schema_version: str = "onebrief-team-plan-v1"
+    project_id: str
+    goal_summary: str
+    planning_rationale: str
+    teams: list[TeamDefinition]
+    members: list[TeamMemberPlan] = Field(min_length=4, max_length=9)
+    stage_owners: dict[str, str]
+    omitted_agent_types: list[AgentType] = Field(default_factory=list)
+
+
+def normalize_team_plan(raw: TeamPlanDraft | TeamPlan, *, project_id: str) -> TeamPlan:
+    """Repair redundant team references without inventing agents or authority."""
+    members = list(raw.members)
+    selected = {member.agent_type for member in members}
+    original_teams = {team.team_id: team for team in raw.teams}
+    teams: list[TeamDefinition] = []
+    for team_id in dict.fromkeys(member.team_id for member in members):
+        assigned = [member.instance_id for member in members if member.team_id == team_id]
+        original = original_teams.get(team_id)
+        preferred_owner = next(
+            (
+                member.instance_id
+                for member in members
+                if member.team_id == team_id and member.agent_type == AgentType.PROJECT_OWNER
+            ),
+            None,
+        )
+        lead = (
+            original.lead_instance_id
+            if original is not None and original.lead_instance_id in assigned
+            else preferred_owner or assigned[0]
+        )
+        teams.append(TeamDefinition(
+            team_id=team_id,
+            mission=original.mission if original is not None else f"Execute {team_id} work.",
+            lead_instance_id=lead,
+            member_instance_ids=assigned,
+        ))
+
+    by_type = {member.agent_type: member.instance_id for member in members}
+    stage_owners = dict(raw.stage_owners)
+    stage_types = {
+        "final_approval": AgentType.PROJECT_OWNER,
+        "project_architecture": AgentType.ARCHITECT,
+        "public_research": AgentType.INVESTIGATOR,
+        "evidence_analysis": AgentType.ANALYST,
+        "creative_direction": AgentType.CREATOR,
+        "long_form_draft": AgentType.MAKER,
+        "revision": AgentType.MAKER,
+        "artifact_integration": AgentType.INTEGRATOR,
+        "independent_verification": AgentType.CRITIC,
+        "policy_guard": AgentType.GUARDIAN,
+    }
+    for stage, agent_type in stage_types.items():
+        if agent_type in by_type:
+            stage_owners[stage] = by_type[agent_type]
+        else:
+            stage_owners.pop(stage, None)
+
+    return TeamPlan(
+        project_id=project_id,
+        goal_summary=raw.goal_summary,
+        planning_rationale=raw.planning_rationale,
+        teams=teams,
+        members=members,
+        stage_owners=stage_owners,
+        omitted_agent_types=sorted(set(AgentType) - selected, key=lambda item: item.value),
+    )
+
+
 class TeamDeployment(BaseModel):
     schema_version: str = "onebrief-team-deployment-v1"
     project_id: str
@@ -212,7 +285,7 @@ class ProjectOwnerAgent:
             stage="team_planning",
             model="gemini-3.5-flash",
             contents=contents,
-            schema=TeamPlan,
+            schema=TeamPlanDraft,
             max_output_tokens=TEAM_PLANNING_OUTPUT_CAP,
             temperature=0.1,
             system_instruction=(
@@ -232,10 +305,9 @@ class ProjectOwnerAgent:
                 "omitted_agent_types. Do not grant permissions; code derives authority from the registry."
             ),
         )
-        if not isinstance(plan, TeamPlan):
+        if not isinstance(plan, (TeamPlanDraft, TeamPlan)):
             raise TypeError("project owner returned an invalid TeamPlan type")
-        if plan.project_id != project_id:
-            raise ValueError("project owner changed the immutable project ID")
+        plan = normalize_team_plan(plan, project_id=project_id)
         return validate_team_plan(plan, public_research_allowed=intake.public_research_allowed)
 
 
