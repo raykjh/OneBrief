@@ -17,7 +17,12 @@ from onebrief.deterministic_verification import (
     apply_deterministic_override,
     validate_draft_grounding,
 )
-from onebrief.development_toolpack import CodeChangeSet, DevelopmentRun, ExchangeDevelopmentToolPack
+from onebrief.development_toolpack import (
+    CodeChangeSet,
+    DevelopmentRun,
+    ExchangeDevelopmentToolPack,
+    RepositoryInspection,
+)
 from onebrief.generic_development_toolpack import (
     ApprovedProjectDevelopmentToolPack,
     ProjectCodeChangeSet,
@@ -115,6 +120,55 @@ class ExecutionPipeline:
             return None
         return schema.model_validate_json(path.read_text(encoding="utf-8"))
 
+
+    @staticmethod
+    def _merge_development_retry(previous: T, retry: T) -> T:
+        """Overlay a bounded retry on the prior full change set."""
+        prior_by_path = {item.path: item for item in previous.changes}
+        order = [item.path for item in previous.changes]
+        merged = dict(prior_by_path)
+        directive = " ".join([
+            retry.summary,
+            *(item.reason for item in retry.changes),
+        ]).casefold()
+        if any(stem in directive for stem in ("remov", "delet")):
+            for path, prior in prior_by_path.items():
+                if prior.base_sha256 is None and Path(path).stem.casefold() in directive:
+                    merged.pop(path, None)
+                    order = [item for item in order if item != path]
+
+        for item in retry.changes:
+            prior = prior_by_path.get(item.path)
+            removal = bool(
+                prior is not None
+                and prior.base_sha256 is None
+                and item.content == ""
+                and any(stem in item.reason.casefold() for stem in ("remov", "delet"))
+            )
+            if removal:
+                merged.pop(item.path, None)
+                order = [path for path in order if path != item.path]
+                continue
+            merged[item.path] = item
+            if item.path not in order:
+                order.append(item.path)
+        payload = retry.model_dump(mode="json")
+        payload["changes"] = [merged[path].model_dump(mode="json") for path in order]
+        return type(previous).model_validate(payload)
+
+    def _bind_project_change_set(
+        self, intake: IntakeRequest, development_pack, change_set: T, output_dir: Path
+    ) -> T:
+        if ToolPackId.PROJECT_DEVELOPMENT not in intake.toolpack_ids:
+            return change_set
+        inspection_path = (
+            output_dir / "toolpacks" / ToolPackId.PROJECT_DEVELOPMENT.value
+            / "evidence" / "repository_inspection.json"
+        )
+        inspection = self._load(inspection_path, RepositoryInspection)
+        if inspection is None:
+            raise RuntimeError("approved project inspection is unavailable")
+        return development_pack.bind_change_set_to_inspection(change_set, inspection)
     def _temperament_audit(self, output_dir: Path) -> list[dict[str, object]]:
         """Collect only APT-3 decisions that actually broke an equal-choice tie."""
         decisions: list[dict[str, object]] = []
@@ -320,6 +374,7 @@ class ExecutionPipeline:
                         parallel_work["tool_execution"] = executor.submit(
                             execute_toolpacks, intake.toolpack_ids,
                             output_dir / "toolpacks", intake.existing_project_id,
+                            "\n".join((intake.goal, intake.desired_output or "")),
                         )
                     else:
                         parallel_work["tool_execution"] = executor.submit(
@@ -426,6 +481,9 @@ class ExecutionPipeline:
                         self._persist_recoveries(output_dir)
                         self._write(change_set_path, change_set.model_dump_json(indent=2))
                     development_dir = output_dir / "development"
+                    change_set = self._bind_project_change_set(
+                        intake, development_pack, change_set, output_dir
+                    )
                     development_run = self._load(
                         development_dir / "development_run.json", DevelopmentRun
                     )
@@ -456,6 +514,16 @@ class ExecutionPipeline:
                                 source_payload,
                                 verification_feedback=feedback,
                                 previous_change_set=change_set,
+                            )
+                            self._write(
+                                output_dir / "code_change_set_retry_delta_r1.json",
+                                retry_change_set.model_dump_json(indent=2),
+                            )
+                            retry_change_set = self._merge_development_retry(
+                                change_set, retry_change_set
+                            )
+                            retry_change_set = self._bind_project_change_set(
+                                intake, development_pack, retry_change_set, output_dir
                             )
                             self._capture_developer_recoveries(developer)
                             self._persist_recoveries(output_dir)
@@ -562,6 +630,16 @@ class ExecutionPipeline:
                         source_payload,
                         verification_feedback=feedback,
                         previous_change_set=previous_change_set,
+                    )
+                    self._write(
+                        output_dir / f"code_change_set_revision_delta_r{revision_round}.json",
+                        retry_change_set.model_dump_json(indent=2),
+                    )
+                    retry_change_set = self._merge_development_retry(
+                        previous_change_set, retry_change_set
+                    )
+                    retry_change_set = self._bind_project_change_set(
+                        intake, development_pack, retry_change_set, output_dir
                     )
                     self._capture_developer_recoveries(developer)
                     self._persist_recoveries(output_dir)

@@ -13,6 +13,7 @@ from google.genai import types
 from pydantic import BaseModel
 
 from onebrief.budget_guard import BudgetGuardError, BudgetStore, RunStatus
+from onebrief.gemini_schema import gemini_compatible_model, restore_nullable_values
 from onebrief.producer import approximate_tokens
 
 T = TypeVar("T", bound=BaseModel)
@@ -44,11 +45,12 @@ class BudgetedGeminiClient:
 
         # Disable hidden reasoning tokens so max_output_tokens is an enforceable billed-output cap.
         thinking = types.ThinkingConfig(thinking_budget=0)
+        provider_schema = gemini_compatible_model(response_schema) if response_schema else None
         generation = types.GenerationConfig(
             max_output_tokens=max_output_tokens,
             temperature=temperature,
             response_mime_type="application/json" if response_schema else None,
-            response_schema=response_schema,
+            response_schema=provider_schema,
             thinking_config=thinking,
         )
         count = self.client.models.count_tokens(
@@ -62,8 +64,8 @@ class BudgetedGeminiClient:
         # Vertex countTokens does not include response-schema tokens. Add schema and
         # system text locally, then keep 15% plus 256 tokens of conservative headroom.
         schema_text = (
-            json.dumps(response_schema.model_json_schema(), ensure_ascii=False, sort_keys=True)
-            if response_schema
+            json.dumps(provider_schema.model_json_schema(), ensure_ascii=False, sort_keys=True)
+            if provider_schema
             else ""
         )
         observed = int(count.total_tokens or 0)
@@ -84,7 +86,7 @@ class BudgetedGeminiClient:
                     max_output_tokens=max_output_tokens,
                     temperature=temperature,
                     response_mime_type="application/json" if response_schema else None,
-                    response_schema=response_schema,
+                    response_schema=provider_schema,
                     thinking_config=thinking,
                 ),
             )
@@ -149,7 +151,8 @@ class BudgetedGeminiClient:
             response_schema=schema,
         )
         if response.parsed is not None:
-            return schema.model_validate(response.parsed)
+            parsed = restore_nullable_values(schema, response.parsed)
+            return schema.model_validate(parsed)
         if not response.text:
             raise ValueError(f"{stage} returned no structured response")
         return schema.model_validate_json(response.text)

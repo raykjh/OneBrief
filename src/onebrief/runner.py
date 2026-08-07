@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from typing import Any
+import re
 from uuid import uuid4
 
 from google.adk.runners import Runner
@@ -16,6 +17,103 @@ from onebrief.requirements_gate import apply_requirements_gate
 from onebrief.schemas import IntakeRequest, RequirementsAnalysis
 
 APP_NAME = "onebrief"
+def _normalize_requirements_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Repair harmless provider formatting before strict domain validation."""
+
+    def text(value: Any, limit: int, fallback: str) -> str:
+        normalized = str(value or fallback).strip()
+        return normalized[:limit] or fallback
+
+    def strings(value: Any, limit: int, item_limit: int) -> list[str]:
+        items = value if isinstance(value, list) else []
+        return [text(item, item_limit, "Not specified.") for item in items[:limit]]
+
+    def key(value: Any, index: int) -> str:
+        normalized = re.sub(r"[^a-z0-9_]+", "_", str(value or "").casefold()).strip("_")
+        if not normalized or not normalized[0].isalpha():
+            normalized = f"requirement_{index:02d}_{normalized}".rstrip("_")
+        return normalized[:64]
+
+    payload["supported"] = bool(payload.get("supported", True))
+    payload["support_reason"] = text(payload.get("support_reason"), 500, "The requested work is supported.")
+    payload["normalized_goal"] = text(payload.get("normalized_goal"), 1000, "Complete the requested work.")
+    payload["deliverables"] = strings(payload.get("deliverables"), 10, 300) or ["Requested artifact"]
+    payload["acceptance_criteria"] = (
+        strings(payload.get("acceptance_criteria"), 12, 300)
+        or ["The requested artifact is complete and usable."]
+    )
+    payload["assumptions"] = strings(payload.get("assumptions"), 10, 300)
+    payload["consolidated_questions"] = strings(payload.get("consolidated_questions"), 10, 500)
+
+    for field_name in ("mandatory_information", "optional_information"):
+        normalized_information: list[dict[str, Any]] = []
+        raw_information = payload.get(field_name)
+        for index, item in enumerate(raw_information if isinstance(raw_information, list) else [], start=1):
+            if not isinstance(item, dict):
+                continue
+            normalized_information.append({
+                "key": key(item.get("key"), index),
+                "request": text(item.get("request"), 500, "Please provide the required information."),
+                "reason": text(item.get("reason"), 500, "This information is needed to complete the work."),
+                "acceptable_evidence": (
+                    strings(item.get("acceptable_evidence"), 5, 200)
+                    or ["A relevant authoritative source."]
+                ),
+            })
+        payload[field_name] = normalized_information[:10]
+
+    contract = payload.get("completion_contract")
+    if not isinstance(contract, dict):
+        contract = {}
+        payload["completion_contract"] = contract
+    contract["target_state"] = text(
+        contract.get("target_state"), 1000, payload["normalized_goal"]
+    )
+    raw_criteria = contract.get("quality_criteria")
+    normalized_criteria: list[dict[str, Any]] = []
+    for index, criterion in enumerate(raw_criteria if isinstance(raw_criteria, list) else [], start=1):
+        if not isinstance(criterion, dict):
+            continue
+        mode = str(criterion.get("evaluation_mode", "independent_review"))
+        if mode not in {"deterministic", "independent_review"}:
+            mode = "independent_review"
+        normalized_criteria.append({
+            "criterion_id": f"Q{index:02d}",
+            "description": text(
+                criterion.get("description"), 300, payload["acceptance_criteria"][0]
+            ),
+            "evaluation_mode": mode,
+            "evidence_required": text(
+                criterion.get("evidence_required"), 300, "Evidence that the criterion is satisfied."
+            ),
+            "required": bool(criterion.get("required", True)),
+        })
+    if not normalized_criteria:
+        normalized_criteria = [{
+            "criterion_id": f"Q{index:02d}",
+            "description": criterion,
+            "evaluation_mode": "independent_review",
+            "evidence_required": "Evidence that the criterion is satisfied.",
+            "required": True,
+        } for index, criterion in enumerate(payload["acceptance_criteria"], start=1)]
+    contract["quality_criteria"] = normalized_criteria[:12]
+    contract["pass_condition"] = text(
+        contract.get("pass_condition"), 300, "All required criteria pass."
+    )
+
+    if payload["mandatory_information"]:
+        payload["ready_for_estimate"] = False
+        if not payload["consolidated_questions"]:
+            payload["consolidated_questions"] = [
+                item["request"] for item in payload["mandatory_information"]
+            ][:10]
+    else:
+        payload["ready_for_estimate"] = bool(payload.get("ready_for_estimate", True))
+    if not payload["supported"]:
+        payload["ready_for_estimate"] = False
+    return payload
+
+
 
 
 async def _run_requirements(payload: dict[str, Any]) -> RequirementsAnalysis:
@@ -37,7 +135,7 @@ async def _run_requirements(payload: dict[str, Any]) -> RequirementsAnalysis:
             final_text = "".join(part.text or "" for part in event.content.parts)
     if not final_text:
         raise RuntimeError("Requirements Analyst returned no final response")
-    return RequirementsAnalysis.model_validate(json.loads(final_text))
+    return RequirementsAnalysis.model_validate(_normalize_requirements_payload(json.loads(final_text)))
 
 
 async def inspect_requirements(intake: IntakeRequest) -> RequirementsAnalysis:

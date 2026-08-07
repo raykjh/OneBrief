@@ -112,3 +112,30 @@ def test_changed_project_never_reuses_code_patch(tmp_path: Path) -> None:
 
     assert candidate is not None
     assert candidate.reusable_artifacts == ("analysis.json",)
+
+
+def test_generic_project_inspection_allows_compatible_code_reuse(tmp_path: Path) -> None:
+    head = "c" * 40
+    intake = _intake().model_copy(update={
+        "existing_project_id": "generic-node",
+        "toolpack_ids": [ToolPackId.PROJECT_DEVELOPMENT],
+    })
+    old = tmp_path / "old-job"
+    (old / "inputs").mkdir(parents=True)
+    evidence = old / "work" / "toolpacks" / "project_development" / "evidence"
+    evidence.mkdir(parents=True)
+    (old / "inputs" / "intake.json").write_text(intake.model_dump_json(), encoding="utf-8")
+    (old / "job.json").write_text('{"job_id":"old-job","status":"failed"}', encoding="utf-8")
+    (evidence / "repository_inspection.json").write_text(
+        json.dumps({"head_sha": head}), encoding="utf-8"
+    )
+    (old / "work" / "code_change_set.json").write_text('{"changes":[]}', encoding="utf-8")
+    project = _project(head).model_copy(update={
+        "project_id": "generic-node",
+        "toolpack_id": ToolPackId.PROJECT_DEVELOPMENT,
+    })
+
+    candidate = find_reuse_candidate(tmp_path, intake, project)
+
+    assert candidate is not None
+    assert candidate.reusable_artifacts == ("code_change_set.json",)

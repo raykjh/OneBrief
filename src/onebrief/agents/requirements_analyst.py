@@ -3,6 +3,7 @@
 from google.adk.agents import LlmAgent
 from google.genai import types
 
+from onebrief.gemini_schema import gemini_compatible_model
 from onebrief.schemas import RequirementsAnalysis
 
 
@@ -100,7 +101,9 @@ requirements_analyst = LlmAgent(
         "and decides whether budget estimation may begin."
     ),
     instruction=REQUIREMENTS_ANALYST_INSTRUCTION,
-    output_schema=RequirementsAnalysis,
+    # Gemini receives a compatible transport shape; the runner validates the
+    # final JSON against the strict domain model.
+    output_schema=gemini_compatible_model(RequirementsAnalysis),
     output_key="requirements_analysis",
     generate_content_config=types.GenerateContentConfig(
         temperature=0.1,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -133,26 +134,59 @@ class ApprovedProjectDevelopmentToolPack:
             raise RuntimeError(completed.stderr.decode("utf-8", errors="replace")[:1000])
         return completed.stdout
 
-    def inspect(self, output_dir: Path) -> tuple[RepositoryInspection, list[InternalSource]]:
+    def inspect(
+        self, output_dir: Path, focus_text: str = ""
+    ) -> tuple[RepositoryInspection, list[InternalSource]]:
         profile, head = self._validate_root()
+        allowed_suffixes = {item.casefold() for item in profile.allowed_suffixes}
+        read_prefixes = tuple(profile.allowed_read_prefixes)
+        write_prefixes = tuple(profile.allowed_write_prefixes)
         tracked = [item for item in self._git("ls-files", "-z").split("\0") if item]
-        tracked.sort(key=lambda item: (0 if self.approved_edit_path(item) else 1, item.casefold()))
+
+        focus_terms = {
+            item for item in re.findall(r"[a-z0-9][a-z0-9_-]{2,}", focus_text.casefold())
+            if item not in {
+                "the", "and", "for", "with", "from", "this", "that", "project",
+                "existing", "safely", "improve", "complete", "result", "unity",
+            }
+        }
+        if any(marker in focus_text.casefold() for marker in ("???", "??", "??", "localization", "language")):
+            focus_terms.update({"localization", "language", "locale", "i18n", "string", "translation"})
+        intrinsic = ("localization", "language", "locale", "i18n", "string", "translation")
+        localization_focus = any(term in focus_text.casefold() for term in intrinsic)
+        code_suffixes = {".cs", ".js", ".jsx", ".mjs", ".py", ".ts", ".tsx"}
+
+        def rank(relative: str) -> tuple[int, int, int, int, int, str]:
+            lowered = relative.casefold()
+            hits = sum(term in lowered for term in focus_terms)
+            editable = any(relative.startswith(prefix) for prefix in write_prefixes)
+            intrinsic_hits = sum(term in lowered for term in intrinsic) if localization_focus else 0
+            suffix = PurePosixPath(relative).suffix.casefold()
+            filename_length = len(PurePosixPath(relative).name)
+            return (-intrinsic_hits, 0 if suffix in code_suffixes else 1, filename_length, -hits, 0 if editable else 1, lowered)
+
+        tracked.sort(key=rank)
         records: list[RepositoryContextFile] = []
         sources: list[InternalSource] = []
         total = 0
         for relative in tracked:
             pure = generic_safe_relative(relative)
             normalized = pure.as_posix()
-            if not any(normalized.startswith(prefix) for prefix in profile.allowed_read_prefixes):
+            if not any(normalized.startswith(prefix) for prefix in read_prefixes):
                 continue
-            if pure.suffix.casefold() not in {item.casefold() for item in profile.allowed_suffixes}:
+            if pure.suffix.casefold() not in allowed_suffixes:
                 continue
             source_path = (self.root / Path(*pure.parts)).resolve()
-            if not source_path.is_relative_to(self.root) or source_path.is_symlink():
+            if (
+                not source_path.is_relative_to(self.root)
+                or source_path.is_symlink()
+                or not source_path.is_file()
+            ):
+                continue
+            size = source_path.stat().st_size
+            if size > MAX_CONTEXT_FILE_BYTES or total + size > MAX_CONTEXT_BYTES:
                 continue
             data = self._blob(head, normalized)
-            if len(data) > MAX_CONTEXT_FILE_BYTES or total + len(data) > MAX_CONTEXT_BYTES:
-                continue
             destination = output_dir / "repository_context" / Path(*pure.parts)
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(data)
@@ -166,11 +200,13 @@ class ApprovedProjectDevelopmentToolPack:
                 size_bytes=len(data), sha256=digest,
             ))
             total += len(data)
+            if len(records) >= 48 or total >= int(MAX_CONTEXT_BYTES * 0.95):
+                break
         inspection = RepositoryInspection(
             repository_name=self.root.name, head_sha=head, context_files=records,
             safety_boundary=[
                 "exact-hash approved project and clean Git HEAD",
-                "bounded committed text context only",
+                "bounded committed text context prioritized by the approved goal",
                 "all edits occur in a disposable local clone",
                 "only generated fixed validation adapters may execute",
                 "no install, deploy, push, credentials, accounts, or arbitrary commands",
@@ -201,6 +237,32 @@ class ApprovedProjectDevelopmentToolPack:
                 commands.append((adapter.adapter_id.value, argv, 900))
         return commands
 
+
+    def bind_change_set_to_inspection(
+        self,
+        change_set: ProjectCodeChangeSet,
+        inspection: RepositoryInspection,
+    ) -> ProjectCodeChangeSet:
+        """Bind model-proposed edits to hashes from the trusted inspection."""
+        _profile, head = self._validate_root()
+        if inspection.head_sha != head:
+            raise RuntimeError("repository inspection HEAD is stale")
+        inspected = {item.path: item.sha256 for item in inspection.context_files}
+        rebound: list[ProjectFileChange] = []
+        for change in change_set.changes:
+            try:
+                self._blob(head, change.path)
+                exists = True
+            except RuntimeError:
+                exists = False
+            if exists and change.path not in inspected:
+                raise PermissionError(
+                    f"existing file was not included in approved model context: {change.path}"
+                )
+            rebound.append(change.model_copy(update={
+                "base_sha256": inspected[change.path] if exists else None,
+            }))
+        return change_set.model_copy(update={"changes": rebound})
     def apply_and_verify(self, change_set: ProjectCodeChangeSet, output_dir: Path) -> DevelopmentRun:
         profile, head = self._validate_root()
         for change in change_set.changes:
@@ -211,6 +273,7 @@ class ApprovedProjectDevelopmentToolPack:
         with tempfile.TemporaryDirectory(prefix="onebrief_project_dev_") as temporary:
             clone = Path(temporary) / "repository"
             self._git("clone", "--local", "--no-hardlinks", str(self.root), str(clone), cwd=Path(temporary))
+            new_paths: list[str] = []
             for change in change_set.changes:
                 pure = generic_safe_relative(change.path)
                 target = (clone / Path(*pure.parts)).resolve()
@@ -222,10 +285,19 @@ class ApprovedProjectDevelopmentToolPack:
                         raise RuntimeError(f"stale or missing base hash: {change.path}")
                 elif change.base_sha256 is not None:
                     raise RuntimeError(f"new file cannot declare a base hash: {change.path}")
+                else:
+                    new_paths.append(change.path)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(change.content, encoding="utf-8", newline="\n")
+            if new_paths:
+                self._git("add", "-N", "--", *new_paths, cwd=clone)
+            approved_paths = [item.path for item in change_set.changes]
+            try:
+                self._git("diff", "--check", "--", *approved_paths, cwd=clone)
+            except RuntimeError as exc:
+                raise RuntimeError(f"development patch hygiene failed: {exc}") from exc
             results = [self.runner(command_id, argv, clone, timeout) for command_id, argv, timeout in self._commands(profile, clone)]
-            patch = self._git("diff", "--binary", "--no-ext-diff", cwd=clone)
+            patch = self._git("diff", "--binary", "--no-ext-diff", "--", *approved_paths, cwd=clone)
             if not patch.strip():
                 raise ValueError("development change set produced no repository diff")
             patch_path = output_dir / "changes.patch"

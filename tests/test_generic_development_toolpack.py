@@ -10,6 +10,7 @@ from onebrief.generic_development_toolpack import (
     ApprovedProjectDevelopmentToolPack,
     ProjectCodeChangeSet,
 )
+from onebrief.development_toolpack import DevelopmentCommandResult
 from onebrief.project_import import ExternalProjectImporter, MANIFEST_NAME
 from onebrief.schemas import ToolPackId
 from onebrief.toolpack_lifecycle import ProjectToolPackLifecycle
@@ -30,6 +31,10 @@ def _approved_node_project(tmp_path: Path) -> tuple[Path, Path]:
     (root / "src").mkdir(parents=True)
     (root / "tests").mkdir()
     (root / "src" / "app.js").write_text("export const answer = 40;\n", encoding="utf-8")
+    (root / "src" / "localization-manager.js").write_text(
+        "export const language = 'en';\n", encoding="utf-8"
+    )
+
     (root / "tests" / "app.test.js").write_text(
         "import test from 'node:test';\n"
         "import assert from 'node:assert/strict';\n"
@@ -136,3 +141,142 @@ def test_generic_toolpack_execution_packages_context_and_resumes_with_editable_n
     assert resumed_runs[0].toolpack_id == ToolPackId.PROJECT_DEVELOPMENT
     assert any(item.name == "project-source/src/app.js" for item in first_sources)
     assert any(item.name == "project-source/src/app.js" for item in resumed_sources)
+
+
+def test_generic_inspection_prioritizes_goal_relevant_context(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    inspection, sources = ApprovedProjectDevelopmentToolPack(
+        "generic-node", registry
+    ).inspect(tmp_path / "focused", "Add multilingual localization and language switching")
+
+    assert inspection.context_files
+    assert "localization" in inspection.context_files[0].path
+    assert sources[0].name.endswith("localization-manager.js")
+
+
+def test_change_set_hashes_are_bound_to_trusted_inspection(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    inspection, _sources = pack.inspect(tmp_path / "inspection", "localization language")
+    proposed = ProjectCodeChangeSet(
+        summary="Update inspected localization and add a locale file.",
+        changes=[
+            {
+                "path": "src/localization-manager.js",
+                "base_sha256": "0" * 64,
+                "content": "export const language = 'ja';\n",
+                "reason": "Add a tested locale default.",
+            },
+            {
+                "path": "src/locales.js",
+                "base_sha256": "f" * 64,
+                "content": "export const locales = ['en', 'ja'];\n",
+                "reason": "Add supported locale metadata.",
+            },
+        ],
+    )
+
+    bound = pack.bind_change_set_to_inspection(proposed, inspection)
+
+    expected = next(
+        item.sha256 for item in inspection.context_files
+        if item.path == "src/localization-manager.js"
+    )
+    assert bound.changes[0].base_sha256 == expected
+    assert bound.changes[1].base_sha256 is None
+    assert proposed.changes[0].base_sha256 == "0" * 64
+
+
+def test_change_set_cannot_edit_existing_file_omitted_from_context(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    inspection, _sources = pack.inspect(tmp_path / "inspection", "localization language")
+    inspection = inspection.model_copy(update={
+        "context_files": [
+            item for item in inspection.context_files if item.path != "src/app.js"
+        ]
+    })
+    proposed = ProjectCodeChangeSet(
+        summary="Attempt an unseen edit.",
+        changes=[{
+            "path": "src/app.js",
+            "base_sha256": None,
+            "content": "export const answer = 42;\n",
+            "reason": "Edit a file outside model context.",
+        }],
+    )
+
+    with pytest.raises(PermissionError, match="not included in approved model context"):
+        pack.bind_change_set_to_inspection(proposed, inspection)
+
+
+def test_patch_includes_new_files_and_excludes_validator_side_effects(tmp_path: Path) -> None:
+    root, registry = _approved_node_project(tmp_path)
+    committed = subprocess.run(
+        ["git", "show", "HEAD:src/app.js"], cwd=root, check=True, capture_output=True
+    ).stdout
+
+    def side_effect_runner(command_id: str, argv: list[str], cwd: Path, timeout: int):
+        (cwd / "package.json").write_text('{"validator":"side-effect"}\n', encoding="utf-8")
+        return DevelopmentCommandResult(
+            command_id=command_id, argv=argv, exit_code=0,
+            duration_seconds=0.01, output_tail="ok",
+        )
+
+    change_set = ProjectCodeChangeSet(
+        summary="Update one file and add another.",
+        changes=[
+            {
+                "path": "src/app.js",
+                "base_sha256": hashlib.sha256(committed).hexdigest(),
+                "content": "export const answer = 42;\n",
+                "reason": "Update approved source.",
+            },
+            {
+                "path": "src/new-locales.js",
+                "base_sha256": None,
+                "content": "export const locales = ['ja'];\n",
+                "reason": "Add approved locale source.",
+            },
+        ],
+    )
+
+    output = tmp_path / "result" / "development"
+    ApprovedProjectDevelopmentToolPack(
+        "generic-node", registry, runner=side_effect_runner
+    ).apply_and_verify(change_set, output)
+    patch = (output / "changes.patch").read_text(encoding="utf-8")
+    assert "src/new-locales.js" in patch
+    assert "package.json" not in patch
+
+
+def test_generic_runner_rejects_patch_whitespace_before_project_validation(tmp_path: Path) -> None:
+    root, registry = _approved_node_project(tmp_path)
+    committed = subprocess.run(
+        ["git", "show", "HEAD:src/app.js"], cwd=root, check=True, capture_output=True
+    ).stdout
+    validation_called = False
+
+    def runner(command_id: str, argv: list[str], cwd: Path, timeout: int) -> DevelopmentCommandResult:
+        nonlocal validation_called
+        validation_called = True
+        return DevelopmentCommandResult(
+            command_id=command_id, argv=argv, exit_code=0,
+            duration_seconds=0.01, output_tail="ok",
+        )
+
+    change_set = ProjectCodeChangeSet(
+        summary="Introduce an invalid whitespace-only code line.",
+        changes=[{
+            "path": "src/app.js",
+            "base_sha256": hashlib.sha256(committed).hexdigest(),
+            "content": "export const answer = 42;  \n",
+            "reason": "Exercise deterministic patch hygiene.",
+        }],
+    )
+
+    with pytest.raises(RuntimeError, match="development patch hygiene failed"):
+        ApprovedProjectDevelopmentToolPack(
+            "generic-node", registry, runner=runner
+        ).apply_and_verify(change_set, tmp_path / "whitespace")
+    assert validation_called is False

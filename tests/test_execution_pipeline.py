@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from onebrief.development_toolpack import CodeChangeSet, DevelopmentCommandResult, DevelopmentRun
+from onebrief.generic_development_toolpack import ProjectCodeChangeSet
 from onebrief.budget_guard import BudgetExceeded, BudgetStore, RunStatus
 from onebrief.execution_pipeline import ExecutionPipeline
 from onebrief.execution_agents import DeveloperAgent
@@ -566,4 +567,86 @@ def test_exchange_development_returns_failed_acceptance_to_the_software_maker(
         "independent_verification_r0",
         "long_form_draft_verification_retry",
         "independent_verification_r1",
+    ]
+
+def test_development_retry_overlays_prior_changes_and_removes_new_duplicate(tmp_path: Path) -> None:
+    pipeline = ExecutionPipeline(tmp_path)
+    previous = ProjectCodeChangeSet(
+        summary="Initial multilingual implementation.",
+        changes=[
+            {
+                "path": "Assets/Game/Localization.cs",
+                "base_sha256": "a" * 64,
+                "content": "class Localization {}\n",
+                "reason": "Update localization.",
+            },
+            {
+                "path": "Assets/Game/Duplicate.cs",
+                "base_sha256": None,
+                "content": "class Duplicate {}\n",
+                "reason": "Add a helper.",
+            },
+        ],
+    )
+    delta = ProjectCodeChangeSet(
+        summary="Remove the duplicate helper.",
+        changes=[{
+            "path": "Assets/Game/Duplicate.cs",
+            "base_sha256": None,
+            "content": "",
+            "reason": "Remove the duplicate file.",
+        }],
+    )
+
+    merged = pipeline._merge_development_retry(previous, delta)
+
+    assert [item.path for item in merged.changes] == ["Assets/Game/Localization.cs"]
+    assert merged.changes[0].content == "class Localization {}\n"
+
+
+def test_development_retry_preserves_prior_scope_when_updating_one_file(tmp_path: Path) -> None:
+    pipeline = ExecutionPipeline(tmp_path)
+    previous = ProjectCodeChangeSet(
+        summary="Initial change.",
+        changes=[
+            {"path": "Assets/A.cs", "base_sha256": "a" * 64, "content": "A1", "reason": "Update A."},
+            {"path": "Assets/B.cs", "base_sha256": "b" * 64, "content": "B1", "reason": "Update B."},
+        ],
+    )
+    delta = ProjectCodeChangeSet(
+        summary="Correct A.",
+        changes=[{
+            "path": "Assets/A.cs", "base_sha256": "a" * 64,
+            "content": "A2", "reason": "Fix A."
+        }],
+    )
+
+    merged = pipeline._merge_development_retry(previous, delta)
+
+    assert [(item.path, item.content) for item in merged.changes] == [
+        ("Assets/A.cs", "A2"), ("Assets/B.cs", "B1")
+    ]
+
+
+def test_retry_summary_can_remove_named_new_duplicate_without_dropping_scope(tmp_path: Path) -> None:
+    pipeline = ExecutionPipeline(tmp_path)
+    previous = ProjectCodeChangeSet(
+        summary="Initial change.",
+        changes=[
+            {"path": "Assets/Localization.cs", "base_sha256": "a" * 64, "content": "L1", "reason": "Update localization."},
+            {"path": "Assets/JulpaeRuntimeSession.cs", "base_sha256": None, "content": "duplicate", "reason": "Add helper."},
+        ],
+    )
+    delta = ProjectCodeChangeSet(
+        summary="Remove duplicate JulpaeRuntimeSession and correct localization.",
+        changes=[{
+            "path": "Assets/Localization.cs", "base_sha256": "a" * 64,
+            "content": "L2", "reason": "Correct localization after deleting duplicate."
+        }],
+    )
+
+    merged = pipeline._merge_development_retry(previous, delta)
+
+    assert [(item.path, item.content) for item in merged.changes] == [
+        ("Assets/Localization.cs", "L2")
     ]

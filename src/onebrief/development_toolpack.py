@@ -164,7 +164,16 @@ def _default_runner(
     started = time.monotonic()
     environment = {
         key: value for key, value in os.environ.items()
-        if key.casefold() in {"path", "systemroot", "temp", "tmp", "comspec", "pathext"}
+        if key.casefold() in {
+            "path", "systemroot", "temp", "tmp", "comspec", "pathext",
+            "userprofile", "appdata", "localappdata", "programdata",
+            "homedrive", "homepath",
+            "allusersprofile", "commonprogramfiles", "commonprogramfiles(x86)",
+            "commonprogramw6432", "computername", "number_of_processors", "os",
+            "processor_architecture", "programfiles", "programfiles(x86)",
+            "programw6432", "public", "systemdrive", "username", "userdomain",
+            "windir",
+        }
     }
     environment.update({"CI": "1", "NO_COLOR": "1"})
     completed = subprocess.run(
@@ -173,6 +182,22 @@ def _default_runner(
         shell=False, check=False,
     )
     output = (completed.stdout + "\n" + completed.stderr).strip()
+    if "-logFile" in argv:
+        index = argv.index("-logFile") + 1
+        if index < len(argv):
+            log_path = Path(argv[index])
+            if log_path.is_file():
+                log_text = log_path.read_text(encoding="utf-8", errors="replace")
+                if log_text.strip():
+                    output = (output + "\n" + log_text[-20_000:]).strip()
+                    signals = [
+                        line for line in log_text.splitlines()
+                        if any(marker in line.casefold() for marker in (
+                            "error", "failed", "exception", "compilation", "package manager"
+                        ))
+                    ]
+                    if signals:
+                        output = (output + "\nVERIFICATION SIGNALS\n" + "\n".join(signals[-60:])).strip()
     result = DevelopmentCommandResult(
         command_id=command_id,
         argv=argv,
@@ -322,6 +347,7 @@ class ExchangeDevelopmentToolPack:
         with tempfile.TemporaryDirectory(prefix="onebrief_dev_") as temporary:
             clone = Path(temporary) / "repository"
             self._git("clone", "--local", "--no-hardlinks", str(self.root), str(clone), cwd=Path(temporary))
+            new_paths: list[str] = []
             for change in change_set.changes:
                 pure = _safe_relative(change.path)
                 target = (clone / Path(*pure.parts)).resolve()
@@ -333,9 +359,13 @@ class ExchangeDevelopmentToolPack:
                         raise RuntimeError(f"stale or missing base hash: {change.path}")
                 elif change.base_sha256 is not None:
                     raise RuntimeError(f"new file cannot declare a base hash: {change.path}")
+                else:
+                    new_paths.append(change.path)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(change.content, encoding="utf-8", newline="\n")
 
+            if new_paths:
+                self._git("add", "-N", "--", *new_paths, cwd=clone)
             attached = self._attach_dependencies(clone)
             try:
                 npm = "npm.cmd" if os.name == "nt" else "npm"
@@ -348,7 +378,8 @@ class ExchangeDevelopmentToolPack:
             finally:
                 self._detach_dependencies(attached)
 
-            patch = self._git("diff", "--binary", "--no-ext-diff", cwd=clone)
+            approved_paths = [item.path for item in change_set.changes]
+            patch = self._git("diff", "--binary", "--no-ext-diff", "--", *approved_paths, cwd=clone)
             if not patch.strip():
                 raise ValueError("development change set produced no repository diff")
             patch_path = output_dir / "changes.patch"

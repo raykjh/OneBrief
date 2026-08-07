@@ -70,15 +70,21 @@ class ReuseCandidate:
 
 
 def _inspection_head(job_dir: Path) -> str | None:
-    path = (
-        job_dir / "work" / "toolpacks" / "exchange_development" / "evidence"
-        / "repository_inspection.json"
-    )
-    try:
-        value = json.loads(path.read_text(encoding="utf-8")).get("head_sha")
-    except (OSError, json.JSONDecodeError):
-        return None
-    return value if isinstance(value, str) and len(value) == 40 else None
+    for toolpack_id in (
+        ToolPackId.PROJECT_DEVELOPMENT.value,
+        ToolPackId.EXCHANGE_DEVELOPMENT.value,
+    ):
+        path = (
+            job_dir / "work" / "toolpacks" / toolpack_id / "evidence"
+            / "repository_inspection.json"
+        )
+        try:
+            value = json.loads(path.read_text(encoding="utf-8")).get("head_sha")
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(value, str) and len(value) == 40:
+            return value
+    return None
 
 
 def _artifact_names(job_dir: Path, *, code_compatible: bool) -> tuple[str, ...]:
@@ -103,7 +109,7 @@ def find_reuse_candidate(
     if not jobs_root.is_dir():
         return None
     wanted = request_fingerprint(intake)
-    candidates: list[tuple[float, ReuseCandidate]] = []
+    candidates: list[tuple[int, int, float, ReuseCandidate]] = []
     for job_dir in jobs_root.iterdir():
         if not job_dir.is_dir() or job_dir.name.startswith("."):
             continue
@@ -136,8 +142,14 @@ def find_reuse_candidate(
             reusable_artifacts=names,
             project_head_sha=inspected_head,
         )
-        candidates.append((job_dir.stat().st_mtime, candidate))
-    return max(candidates, key=lambda item: item[0])[1] if candidates else None
+        has_code = any(name.startswith("code_change_set") for name in names)
+        legacy_delta_risk = bool(
+            has_code
+            and (job_dir / "work" / "code_change_set_retry_r1.json").is_file()
+            and not (job_dir / "work" / "code_change_set_retry_delta_r1.json").is_file()
+        )
+        candidates.append((int(has_code), int(not legacy_delta_risk), job_dir.stat().st_mtime, candidate))
+    return max(candidates, key=lambda item: item[:3])[3] if candidates else None
 
 
 def seed_reusable_artifacts(candidate: ReuseCandidate, new_job_dir: Path) -> Path:
