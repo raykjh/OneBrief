@@ -27,7 +27,9 @@ from onebrief.model_policy import (
     evaluate_model_budget,
     persist_model_approval,
 )
+from onebrief.project_catalog import ProjectCatalog
 from onebrief.project_closure import ProjectClosureManager
+from onebrief.project_continuity import ProjectContinuityStore
 from onebrief.requirements_gate import require_ready_for_estimate
 from onebrief.schemas import BudgetEnvelope, IntakeRequest, InternalSource, RequirementsAnalysis
 from onebrief.source_loader import source_records
@@ -313,11 +315,22 @@ def _pipeline_status(status: PipelineStatus) -> JobStatus:
     }[status]
 
 
+def _record_project_continuity(job_dir: Path, intake: IntakeRequest | None) -> None:
+    if intake is None or not intake.existing_project_id:
+        return
+    try:
+        project = ProjectCatalog().get(intake.existing_project_id)
+        ProjectContinuityStore(project, job_dir.parent).record_terminal_job(job_dir)
+    except Exception:
+        # Project state is advisory memory and must never corrupt a completed work package.
+        return
+
 def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
     """Claim and execute one job. The persisted checkpoint makes model work resumable."""
     job_dir = job_dir.resolve()
     store = JobStore(job_dir)
     claimed = store.claim(os.getpid())
+    intake: IntakeRequest | None = None
     try:
         verify_input_snapshot(job_dir)
         intake = IntakeRequest.model_validate_json(
@@ -341,7 +354,8 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
         plan = TeamPlan.model_validate_json(
             (project_dir / "02_plan_and_teams" / "team_plan.json").read_text(encoding="utf-8")
         )
-        execution_graph = compile_execution_graph(plan, intake.toolpack_ids)
+        active_intake = intake.model_copy(update={"toolpack_ids": plan.toolpack_ids})
+        execution_graph = compile_execution_graph(plan, plan.toolpack_ids)
         persist_execution_graph(
             execution_graph,
             project_dir / "02_plan_and_teams" / "execution_graph.json",
@@ -364,10 +378,14 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
             run_dir,
             gateway=policy_gateway,
             stage_models={stage: model.value for stage, model in model_policy.stage_models.items()},
+            stage_skills={
+                stage: list(next(member for member in plan.members if member.instance_id == owner_id).packs.skill_packs)
+                for stage, owner_id in plan.stage_owners.items()
+            },
             execution_graph=execution_graph,
         )
         checkpoint = pipeline.run(
-            intake=intake,
+            intake=active_intake,
             requirements=requirements,
             sources=sources,
             output_dir=job_dir / "work",
@@ -380,32 +398,38 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
             terminal_status=status.value,
         )
         package, digest = build_result_package(job_dir, status=status, attempt=claimed.attempts)
-        return store.finish(
+        finished = store.finish(
             status,
             stage=checkpoint.current_stage,
             message=checkpoint.message,
             result_package=package,
             manifest_sha256=digest,
         )
+        _record_project_continuity(job_dir, intake)
+        return finished
     except BudgetExceeded as exc:
         package, digest = build_result_package(
             job_dir,
             status=JobStatus.NEEDS_BUDGET,
             attempt=claimed.attempts,
         )
-        return store.finish(
+        finished = store.finish(
             JobStatus.NEEDS_BUDGET,
             stage="budget_gate",
             message=str(exc),
             result_package=package,
             manifest_sha256=digest,
         )
+        _record_project_continuity(job_dir, intake)
+        return finished
     except Exception as exc:
-        return store.finish(
+        finished = store.finish(
             JobStatus.FAILED,
             stage="failed",
             message=f"{type(exc).__name__}: {exc}",
         )
+        _record_project_continuity(job_dir, intake)
+        return finished
 
 
 def start_background_job(job_dir: Path) -> JobRecord:

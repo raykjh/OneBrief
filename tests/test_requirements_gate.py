@@ -8,7 +8,7 @@ from onebrief.jobs import create_job
 from onebrief.producer import estimate_budget
 from onebrief.requirements_gate import apply_requirements_gate, find_scoring_gap
 from onebrief.runner import reinspect_requirements
-from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis, SourcePriority
+from onebrief.schemas import InformationRequirement, IntakeRequest, InternalSource, RequirementsAnalysis, SourcePriority
 
 
 def _intake() -> IntakeRequest:
@@ -99,6 +99,89 @@ def test_complete_conversion_rules_allow_estimation() -> None:
     assert result.ready_for_estimate is True
     assert result.mandatory_information == []
     assert estimate.recommended_approval_usd > 0
+
+def test_public_research_time_window_is_optional_and_disclosed() -> None:
+    intake = IntakeRequest(
+        goal="광교 지역의 조건별 주거 매물 목록을 만들어줘.",
+        public_research_allowed=True,
+    )
+    analysis = _ready().model_copy(
+        update={
+            "mandatory_information": [
+                InformationRequirement(
+                    key="analysis_period",
+                    request="최근 3개월을 보여줄지 조회 기간을 정해 주세요.",
+                    reason="검색 범위를 정해야 합니다.",
+                    acceptable_evidence=["기간 지정"],
+                )
+            ],
+            "consolidated_questions": ["최근 3개월을 보여드릴까요?"],
+            "ready_for_estimate": False,
+        }
+    )
+
+    result = apply_requirements_gate(intake, analysis)
+
+    assert result.ready_for_estimate is True
+    assert result.mandatory_information == []
+    assert [item.key for item in result.optional_information] == ["analysis_period"]
+    assert result.consolidated_questions == []
+    assert any("실제 사용 기간" in item for item in result.assumptions)
+
+
+def test_confirmed_api_indicator_and_framework_choices_cannot_loop() -> None:
+    answer = InternalSource(
+        name="user-supplement-abc123.md",
+        priority=SourcePriority.MANDATORY,
+        requirement_keys=["api", "indicators", "framework"],
+        content=(
+            "모의 데이터는 안됨. 무료 공개 API를 사용해주고, 표준 기술 지표를 적용해줘. "
+            "특정 프론트엔드 프레임워크는 없음."
+        ),
+    )
+    intake = IntakeRequest(
+        goal="환율 추이와 매수·매도 의견을 보여주는 웹프로그램을 만들어줘.",
+        internal_sources=[answer],
+    )
+    items = [
+        InformationRequirement(
+            key="api",
+            request="특정 API 서비스 또는 모의 데이터 사용 여부를 알려주세요.",
+            reason="데이터 제공자를 선택해야 합니다.",
+            acceptable_evidence=["API 선택"],
+        ),
+        InformationRequirement(
+            key="indicators",
+            request="사용할 기술적 지표를 알려주세요.",
+            reason="매수·매도 규칙이 필요합니다.",
+            acceptable_evidence=["기술 지표"],
+        ),
+        InformationRequirement(
+            key="framework",
+            request="선호하는 프론트엔드 프레임워크와 차트 라이브러리를 알려주세요.",
+            reason="구현 기술을 선택해야 합니다.",
+            acceptable_evidence=["프레임워크 선택"],
+        ),
+    ]
+    analysis = _ready().model_copy(
+        update={
+            "mandatory_information": items,
+            "consolidated_questions": [item.request for item in items],
+            "ready_for_estimate": False,
+        }
+    )
+
+    result = apply_requirements_gate(intake, analysis)
+
+    assert result.ready_for_estimate is True
+    assert result.mandatory_information == []
+    assert {item.key for item in result.optional_information} == {
+        "api",
+        "indicators",
+        "framework",
+    }
+    assert result.consolidated_questions == []
+
 
 
 def test_producer_blocks_stale_ready_file_before_budget_creation() -> None:

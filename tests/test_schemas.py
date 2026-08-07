@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from onebrief.schemas import InformationRequirement, RequirementsAnalysis
+from onebrief.schemas import EvaluationMode, InformationRequirement, RequirementsAnalysis
 
 
 def _gap() -> InformationRequirement:
@@ -43,4 +43,10 @@ def test_complete_supported_intake_can_be_estimated() -> None:
         ready_for_estimate=True,
     )
     assert result.ready_for_estimate is True
+    assert result.completion_contract is not None
+    assert result.completion_contract.quality_criteria[0].criterion_id == "Q01"
+    assert (
+        result.completion_contract.quality_criteria[0].evaluation_mode
+        == EvaluationMode.INDEPENDENT_REVIEW
+    )
 

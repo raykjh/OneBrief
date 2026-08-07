@@ -1,7 +1,12 @@
 # OneBrief
 
-OneBrief turns one goal and an authoritative source package into a validated
-long-form deliverable with minimal user interruption.
+OneBrief lets a non-expert describe a goal once, then automatically assembles and
+supervises an agent team until the result meets an explicit definition of done. It is a
+general-purpose, quality-convergence operating system rather than a long-form writer or
+an agent-count showcase.
+
+The product contract is defined in `docs/PRODUCT_IDENTITY.md`. Example projects and
+domain ToolPacks are validation cases; they do not define the product.
 
 ## Implemented milestones
 

@@ -46,6 +46,7 @@ class ExecutionNode(BaseModel):
     agent_type: AgentType
     depends_on: list[str] = Field(default_factory=list)
     activation_reason: str
+    parallel_group: str | None = None
 
 
 class ExecutionGraph(BaseModel):
@@ -139,6 +140,7 @@ def compile_execution_graph(plan: TeamPlan, toolpack_ids: list[object] | None = 
             agent_type=agent_type,
             depends_on=[item for item in dependencies if item in {node.node_id for node in nodes}],
             activation_reason=member.selection_reason,
+            parallel_group="context_fanout" if stage in {"tool_execution", "public_research"} else None,
         ))
 
     add(AgentType.ARCHITECT, "project_architecture", [])

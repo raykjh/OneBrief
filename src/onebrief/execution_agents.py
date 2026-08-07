@@ -5,14 +5,18 @@ from __future__ import annotations
 import json
 from typing import Any, Protocol, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
+from onebrief.development_toolpack import CodeChangeSet, approved_edit_path
 
 from onebrief.execution_limits import (
     ANALYST_OUTPUT_CAP,
+    DEVELOPER_OUTPUT_CAP,
     REVISION_OUTPUT_CAP,
     VERIFIER_OUTPUT_CAP,
     WRITER_OUTPUT_CAP,
 )
+from onebrief.recovery_policy import RecoveryAction, RecoveryDecision, RecoveryPolicy
+from onebrief.skill_packs import skill_instruction
 from onebrief.execution_schemas import AnalysisPackage, DraftArtifact, RevisionArtifact, VerificationReport
 
 from onebrief.temperament import (
@@ -47,9 +51,10 @@ def _json(payload: dict[str, Any]) -> str:
 class AnalystAgent:
     stage = "evidence_analysis"
 
-    def __init__(self, gateway: StructuredGateway, model: str = "gemini-3.5-flash"):
+    def __init__(self, gateway: StructuredGateway, model: str = "gemini-3.5-flash", skill_ids: list[str] | None = None):
         self.gateway = gateway
         self.model = model
+        self.skill_context = skill_instruction(skill_ids or [])
 
     def run(self, contract: dict[str, Any], sources: list[dict[str, Any]]) -> AnalysisPackage:
         result = self.gateway.generate_json(
@@ -66,6 +71,7 @@ class AnalystAgent:
                 "goal's language and return only the required structured object."
                 + " "
                 + ANALYST_PROFILE.instruction()
+                + (("\n\n" + self.skill_context) if self.skill_context else "")
             ),
         )
         return enforce_temperament_audit(result, ANALYST_PROFILE)
@@ -74,49 +80,160 @@ class AnalystAgent:
 class WriterAgent:
     stage = "long_form_draft"
 
-    def __init__(self, gateway: StructuredGateway, model: str = "gemini-3.5-flash"):
+    def __init__(self, gateway: StructuredGateway, model: str = "gemini-3.5-flash", skill_ids: list[str] | None = None):
         self.gateway = gateway
         self.model = model
+        self.skill_context = skill_instruction(skill_ids or [])
 
     def run(
         self,
         contract: dict[str, Any],
         analysis: AnalysisPackage,
         sources: list[dict[str, Any]] | None = None,
+        verification_feedback: VerificationReport | None = None,
+        previous_draft: DraftArtifact | None = None,
+        round_number: int = 0,
     ) -> DraftArtifact:
         result = self.gateway.generate_json(
-            stage=self.stage,
+            stage=(self.stage if not verification_feedback else f"{self.stage}_revision_r{round_number}"),
             model=self.model,
             contents=_json(
                 {
                     "work_contract": contract,
                     "analysis_package": analysis.model_dump(mode="json"),
                     "authoritative_sources": sources or [],
+                    "previous_draft": previous_draft.model_dump(mode="json") if previous_draft else None,
+                    "verification_feedback": (
+                        verification_feedback.model_dump(mode="json") if verification_feedback else None
+                    ),
                 }
             ),
             schema=DraftArtifact,
             max_output_tokens=WRITER_OUTPUT_CAP,
             system_instruction=(
-                "You are OneBrief's long-form writer. Draft the complete requested artifact from the analysis "
-                "package. Cover every requested item, but keep wording concise enough for the output "
-                "cap. If the requested output is Excel or a candidate list, include one clean Markdown "
+                "You are OneBrief's artifact maker and the owner of this output. Draft the complete requested "
+                "artifact from the analysis package. If previous_draft and verification_feedback are supplied, "
+                "revise your own work, address every blocking issue, and preserve every passing part. Cover every "
+                "requested item, but keep wording concise enough for the output cap. If the requested output is "
+                "Excel or a candidate list, include one clean Markdown "
                 "table with one candidate per row so it can be exported deterministically. Every material "
                 "claim must be traceable to cited finding IDs. Never change the "
                 "goal, invent a source, or make a high-impact decision for a human. Write in the goal's "
                 "language and return only the required structured object."
                 + " "
                 + WRITER_PROFILE.instruction()
+                + (("\n\n" + self.skill_context) if self.skill_context else "")
             ),
         )
         return enforce_temperament_audit(result, WRITER_PROFILE)
 
 
+class DeveloperAgent:
+    """Produces bounded full-file edits for the isolated development ToolPack."""
+
+    stage = "long_form_draft"
+
+    def __init__(self, gateway: StructuredGateway, model: str = "gemini-3.5-flash", skill_ids: list[str] | None = None):
+        self.gateway = gateway
+        self.model = model
+        self.skill_context = skill_instruction(skill_ids or [])
+        self.recovery_policy = RecoveryPolicy()
+        self.last_recovery_decisions: list[RecoveryDecision] = []
+
+    def run(
+        self,
+        contract: dict[str, Any],
+        analysis: AnalysisPackage,
+        sources: list[dict[str, Any]],
+        verification_feedback: str | None = None,
+        previous_change_set: CodeChangeSet | None = None,
+    ) -> CodeChangeSet:
+        self.last_recovery_decisions = []
+        developer_sources = []
+        for source in sources:
+            prepared = dict(source)
+            name = str(prepared.get("name", ""))
+            candidate = (
+                name.removeprefix("exchange-source/") if name.startswith("exchange-source/") else ""
+            )
+            repository_path = approved_edit_path(candidate) if candidate else None
+            prepared["repository_path"] = repository_path
+            normalized_name = name.casefold().replace("\\", "/")
+            if "/tests/" in normalized_name or normalized_name.startswith("exchange-source/tests/"):
+                prepared["source_role"] = "immutable_acceptance_contract"
+            elif repository_path is not None:
+                prepared["source_role"] = "editable_source"
+            else:
+                prepared["source_role"] = "read_only_context"
+            developer_sources.append(prepared)
+        contents = _json({
+            "work_contract": contract,
+            "analysis_package": analysis.model_dump(mode="json"),
+            "approved_repository_files": developer_sources,
+            "previous_change_set": (
+                previous_change_set.model_dump(mode="json") if previous_change_set else None
+            ),
+            "verification_feedback": verification_feedback,
+        })
+        base_instruction = (
+            "You are OneBrief's software maker. Return the smallest complete source changes that "
+            "implement the requested executable artifact. For an existing file, path must exactly equal its "
+            "repository_path; never copy the provenance name beginning with exchange-source/. Only edit files "
+            "with a non-null repository_path in approved_repository_files or add a necessary text source file "
+            "under the same project. For an existing file, copy its exact "
+            "sha256 into base_sha256 and return the complete replacement content. For a new file use null. "
+            "Never touch secrets, dependencies, generated data, Git metadata, deployment, accounts, or trading. "
+            "Files marked immutable_acceptance_contract are binding regression contracts: do not edit them and "
+            "preserve every behavior, marker, control, and data contract they assert. Prefer additive, localized "
+            "changes over redesigning or replacing a mature implementation. If verification_feedback is present, "
+            "correct every reported failure while retaining all previously passing behavior. Do not return a report "
+            "in place of runnable source code. Keep existing correct behavior, make no unsupported financial claim, "
+            "and stay within the acceptance criteria. Keep the combined replacement "
+            "content below 60000 UTF-8 bytes. Return only the schema."
+        )
+        stage_base = (
+            f"{self.stage}_verification_retry" if verification_feedback else self.stage
+        )
+        result = None
+        for attempt in range(2):
+            instruction = base_instruction
+            if attempt:
+                instruction += (
+                    " The previous response failed structured-output or repository-path validation. Retry from "
+                    "scratch with at most three changed files. Every existing-file path must exactly equal the "
+                    "repository_path field and must not include exchange-source/. Prefer the smallest existing "
+                    "source files, remove comments and repetition, and keep all "
+                    "replacement content below 55000 characters while preserving a runnable implementation."
+                )
+            try:
+                result = self.gateway.generate_json(
+                    stage=stage_base if not attempt else f"{stage_base}_compact_retry",
+                    model=self.model,
+                    contents=contents,
+                    schema=CodeChangeSet,
+                    max_output_tokens=DEVELOPER_OUTPUT_CAP,
+                    system_instruction=instruction + (("\n\n" + self.skill_context) if self.skill_context else ""),
+                    temperature=0.1,
+                )
+                break
+            except (ValidationError, ValueError) as exc:
+                decision = self.recovery_policy.decide(
+                    exc, context="developer_structured_output", attempt_number=attempt + 1
+                )
+                self.last_recovery_decisions.append(decision)
+                if decision.action != RecoveryAction.AUTO_RETRY or not decision.retry_allowed:
+                    raise
+        if not isinstance(result, CodeChangeSet):
+            raise TypeError("developer returned an invalid code change set")
+        return result
+
 class VerifierAgent:
     stage = "independent_verification"
 
-    def __init__(self, gateway: StructuredGateway, model: str = "gemini-3.5-flash"):
+    def __init__(self, gateway: StructuredGateway, model: str = "gemini-3.5-flash", skill_ids: list[str] | None = None):
         self.gateway = gateway
         self.model = model
+        self.skill_context = skill_instruction(skill_ids or [])
 
     def run(
         self,
@@ -125,6 +242,7 @@ class VerifierAgent:
         draft: DraftArtifact,
         round_number: int,
         sources: list[dict[str, Any]] | None = None,
+        implementation_evidence: dict[str, Any] | None = None,
     ) -> VerificationReport:
         result = self.gateway.generate_json(
             stage=f"{self.stage}_r{round_number}",
@@ -135,6 +253,7 @@ class VerifierAgent:
                     "analysis_package": analysis.model_dump(mode="json"),
                     "draft": draft.model_dump(mode="json"),
                     "authoritative_sources": sources or [],
+                    "implementation_evidence": implementation_evidence,
                 }
             ),
             schema=VerificationReport,
@@ -143,12 +262,13 @@ class VerifierAgent:
                 "You are OneBrief's independent verifier. You did not write the draft. Test every "
                 "acceptance criterion, factual "
                 "grounding, citation coverage, internal consistency, completeness, and human-authority "
-                "boundary. PASS only when no blocking issue remains. Use REVISE for correctable issues "
+                "boundary. When implementation_evidence is supplied, inspect the actual changed source and test evidence rather than trusting the maker summary; map every claimed feature and acceptance criterion to code and a relevant test. PASS only when no blocking issue remains. Use REVISE for correctable issues "
                 "and NEEDS_INFORMATION only when supplied evidence cannot support a required conclusion. "
                 "Give exact revision instructions. Write every user-facing field in the goal's language. "
                 "Return only the structured object."
                 + " "
                 + VERIFIER_PROFILE.instruction()
+                + (("\n\n" + self.skill_context) if self.skill_context else "")
             ),
         )
         return enforce_temperament_audit(result, VERIFIER_PROFILE)
@@ -157,9 +277,10 @@ class VerifierAgent:
 class RevisionAgent:
     stage = "revision"
 
-    def __init__(self, gateway: StructuredGateway, model: str = "gemini-3.5-flash"):
+    def __init__(self, gateway: StructuredGateway, model: str = "gemini-3.5-flash", skill_ids: list[str] | None = None):
         self.gateway = gateway
         self.model = model
+        self.skill_context = skill_instruction(skill_ids or [])
 
     def run(
         self,
@@ -191,6 +312,7 @@ class RevisionAgent:
                 "finding IDs. Write in the goal's language and return only the structured object."
                 + " "
                 + REVISION_PROFILE.instruction()
+                + (("\n\n" + self.skill_context) if self.skill_context else "")
             ),
         )
         return enforce_temperament_audit(result, REVISION_PROFILE)

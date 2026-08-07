@@ -24,14 +24,34 @@ from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
 from onebrief.cloud_jobs import GCSJobStore, CloudExecutionReceipt, submit_cloud_job
-from onebrief.jobs import create_job
+from onebrief.project_bootstrap import (
+    FolderRegistrationRequest,
+    choose_project_folder,
+    draft_project_folder,
+    register_project_folder,
+)
+from onebrief.jobs import JobStore, create_job, run_job
 from onebrief.producer import estimate_budget
-from onebrief.runner import inspect_requirements
-from onebrief.toolpacks import attach_toolpack_descriptors
+from onebrief.project_catalog import ProjectCatalog, RegisteredProject
+from onebrief.project_import import (
+    ExternalProjectImporter,
+    MANIFEST_NAME,
+    MAX_MANIFEST_BYTES,
+)
+from onebrief.project_continuity import ProjectContinuationContext, ProjectContinuityStore
+from onebrief.result_delivery import ExchangePreviewManager
+from onebrief.request_reuse import (
+    find_reuse_candidate,
+    request_fingerprint,
+    seed_reusable_artifacts,
+)
+from onebrief.runner import inspect_requirements, reinspect_requirements
+from onebrief.toolpacks import attach_toolpack_descriptors, route_toolpack_candidates
 from onebrief.schemas import (
     BudgetEnvelope,
     IntakeRequest,
     InternalSource,
+    OutputTarget,
     RequirementsAnalysis,
     SourcePriority,
     ToolPackId,
@@ -39,7 +59,7 @@ from onebrief.schemas import (
 from onebrief.source_loader import ALLOWED_SUFFIXES, MAX_FILE_BYTES
 
 MAX_UPLOAD_FILES = 10
-MAX_TOTAL_UPLOAD_BYTES = 1_000_000
+MAX_TOTAL_UPLOAD_BYTES = 3_000_000
 
 
 def _now() -> str:
@@ -52,6 +72,11 @@ class WebSession(BaseModel):
     intake: IntakeRequest
     requirements: RequirementsAnalysis
     budget: BudgetEnvelope | None = None
+    request_fingerprint: str = Field(default="0" * 64, pattern=r"^[a-f0-9]{64}$")
+    selected_project: RegisteredProject | None = None
+    continuation_context: ProjectContinuationContext | None = None
+    reuse_source_job_uri: str | None = None
+    previous_attempt: dict[str, object] | None = None
 
 
 class ExecutionLink(BaseModel):
@@ -121,6 +146,80 @@ class InMemoryWebSessionStore:
             raise FileNotFoundError("execution not found") from exc
 
 
+class LocalWebSessionStore(InMemoryWebSessionStore):
+    """Restart-safe local UI state; keeps the InMemory API used by local execution."""
+
+    def __init__(self, root: Path):
+        super().__init__()
+        self.root = root.resolve()
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def _path(self, session_id: str, name: str) -> Path:
+        if not session_id or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-" for char in session_id):
+            raise FileNotFoundError("invalid session id")
+        return self.root / session_id / name
+
+    @staticmethod
+    def _atomic(path: Path, content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + f".{uuid4().hex}.tmp")
+        temporary.write_text(content, encoding="utf-8")
+        os.replace(temporary, path)
+
+    def create(self, session: WebSession) -> None:
+        with self.lock:
+            path = self._path(session.session_id, "session.json")
+            if path.exists():
+                raise RuntimeError("session already exists")
+            self._atomic(path, session.model_dump_json(indent=2) + "\n")
+            self.sessions[session.session_id] = session
+
+    def read(self, session_id: str) -> WebSession:
+        if session_id in self.sessions:
+            return self.sessions[session_id]
+        path = self._path(session_id, "session.json")
+        try:
+            session = WebSession.model_validate_json(path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise FileNotFoundError("session not found") from exc
+        self.sessions[session_id] = session
+        return session
+
+    def claim_run(self, session_id: str) -> None:
+        with self.lock:
+            path = self._path(session_id, "run-claim.json")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with path.open("x", encoding="utf-8") as stream:
+                    stream.write(json.dumps({"claimed_at": _now()}))
+            except FileExistsError as exc:
+                raise RuntimeError("this session was already submitted") from exc
+            self.claims.add(session_id)
+
+    def release_run(self, session_id: str) -> None:
+        with self.lock:
+            self._path(session_id, "run-claim.json").unlink(missing_ok=True)
+            self.claims.discard(session_id)
+
+    def save_execution(self, link: ExecutionLink) -> None:
+        with self.lock:
+            self._atomic(
+                self._path(link.session_id, "execution.json"),
+                link.model_dump_json(indent=2) + "\n",
+            )
+            self.executions[link.session_id] = link
+
+    def read_execution(self, session_id: str) -> ExecutionLink:
+        if session_id in self.executions:
+            return self.executions[session_id]
+        path = self._path(session_id, "execution.json")
+        try:
+            link = ExecutionLink.model_validate_json(path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise FileNotFoundError("execution not found") from exc
+        self.executions[session_id] = link
+        return link
+
 class GCSWebSessionStore:
     """Private durable UI state with generation guards for one-shot execution."""
 
@@ -179,21 +278,72 @@ class GCSWebSessionStore:
 
 
 _store: WebSessionStore | None = None
+_local_tasks: set[asyncio.Task[object]] = set()
+
+
+class LocalJobRepository:
+    """Read-only status adapter for a development job kept on this PC."""
+
+    def __init__(self, job_dir: Path):
+        self.job_dir = job_dir.resolve()
+
+    def read_job(self):
+        return JobStore(self.job_dir).read()
+
+    def read_json(self, relative: str):
+        path = (self.job_dir / relative).resolve()
+        if not path.is_relative_to(self.job_dir) or not path.is_file():
+            raise FileNotFoundError(relative)
+        return json.loads(path.read_text(encoding="utf-8"))
+
+
+
+def _local_jobs_root() -> Path:
+    return Path(os.environ.get(
+        "ONEBRIEF_LOCAL_JOBS_ROOT",
+        str(Path(tempfile.gettempdir()) / "onebrief-local-jobs"),
+    )).resolve()
 
 
 def get_session_store() -> WebSessionStore:
     global _store
     if _store is None:
         bucket = os.environ.get("ONEBRIEF_BUCKET")
-        _store = GCSWebSessionStore(bucket) if bucket else InMemoryWebSessionStore()
+        _store = GCSWebSessionStore(bucket) if bucket else LocalWebSessionStore(
+            Path(tempfile.gettempdir()) / "onebrief-web-sessions"
+        )
     return _store
+
+
+def _merge_canonical_goal(goal: str, supplement: str) -> str:
+    """Promote confirmed answers into the single goal used by future continuations."""
+    addition = supplement.strip()
+    if not addition:
+        return goal.strip()
+    marker = "[\ucd94\uac00 \ud655\uc815\u00b7\ubcf4\uc644\uc0ac\ud56d]"
+    merged = f"{goal.strip()}\n\n{marker}\n{addition}"
+    if len(merged) > 8000:
+        raise HTTPException(
+            422,
+            "\ubaa9\ud45c\uc640 \ubcf4\uc644\uc0ac\ud56d\uc744 \ud569\uce5c \ub0b4\uc6a9\uc774 8,000\uc790\ub97c \ub118\uc2b5\ub2c8\ub2e4. \ud575\uc2ec\ub9cc \ub0a8\uaca8 \uc904\uc5ec \uc8fc\uc138\uc694.",
+        )
+    return merged
 
 
 def _public_session(session: WebSession) -> dict[str, object]:
     return {
         "session_id": session.session_id,
+        "canonical_goal": session.intake.goal,
         "requirements": session.requirements.model_dump(mode="json"),
+        "selected_project": session.selected_project.model_dump(mode="json") if session.selected_project else None,
+        "continuation": session.continuation_context.model_dump(mode="json") if session.continuation_context else None,
+        "previous_attempt": session.previous_attempt,
         "budget": session.budget.model_dump(mode="json") if session.budget else None,
+        "approval_range": (
+            {"minimum": session.budget.minimum_cost_usd, "maximum": _approval_ceiling(session)}
+            if session.budget
+            else None
+        ),
         "preflight_notice": (
             "Requirements inspection is one bounded Gemini call made before execution approval; "
             "the displayed execution estimate starts after that inspection."
@@ -245,24 +395,21 @@ async def _sources_from_uploads(uploads: list[UploadFile]) -> list[InternalSourc
 def _approval_ceiling(session: WebSession) -> float:
     if session.budget is None:
         return 0.0
-    values = [
+    return min(
         session.budget.maximum_cost_usd,
-        float(os.environ.get("ONEBRIEF_WEB_MAX_APPROVAL_USD", "2.00")),
-    ]
-    if session.intake.budget_limit_usd is not None:
-        values.append(session.intake.budget_limit_usd)
-    return min(values)
+        float(os.environ.get("ONEBRIEF_WEB_MAX_APPROVAL_USD", "10.00")),
+    )
 
 
 def validate_approval(session: WebSession, approved_usd: float) -> None:
     if session.budget is None or not session.requirements.ready_for_estimate:
-        raise ValueError("The approval is outside the permitted budget range.")
+        raise ValueError("아직 실행 예산을 승인할 수 있는 상태가 아닙니다.")
     minimum = session.budget.minimum_cost_usd
     ceiling = _approval_ceiling(session)
     if approved_usd + 1e-9 < minimum:
-        raise ValueError("The approval is outside the permitted budget range.")
+        raise ValueError(f"승인액은 최소 예상 금액 ${minimum:.4f} 이상이어야 합니다.")
     if approved_usd - 1e-9 > ceiling:
-        raise ValueError("The approval is outside the permitted budget range.")
+        raise ValueError(f"승인액은 현재 허용 상한 ${ceiling:.4f} 이하여야 합니다.")
 
 
 def _service_config() -> tuple[str, str, str, str]:
@@ -289,30 +436,133 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "onebrief-web"}
 
 
+@app.post("/api/projects/import")
+async def import_external_project(
+    manifest: Annotated[UploadFile, File()],
+) -> dict[str, object]:
+    if manifest.filename != MANIFEST_NAME:
+        raise HTTPException(
+            422,
+            f"\uc548\ub0b4\ud30c\uc77c \uc774\ub984\uc740 {MANIFEST_NAME}\uc774\uc5b4\uc57c \ud569\ub2c8\ub2e4.",
+        )
+    payload = await manifest.read(MAX_MANIFEST_BYTES + 1)
+    try:
+        result = ExternalProjectImporter().import_bytes(payload)
+        project = ProjectCatalog().get(result.record.manifest.project_id)
+    except (OSError, ValueError, KeyError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {
+        "project": project.model_dump(mode="json"),
+        "inventory": result.record.inventory.model_dump(mode="json"),
+        "toolpack_preparation": result.record.toolpack_preparation.model_dump(mode="json"),
+        "registry_path": result.registry_path,
+    }
+
+
+
+@app.post("/api/projects/pick-folder")
+def pick_external_project_folder() -> dict[str, object]:
+    if os.name != "nt":
+        raise HTTPException(404, "Local folder selection is unavailable in this deployment.")
+    try:
+        root = choose_project_folder()
+        if root is None:
+            return {"cancelled": True}
+        draft = draft_project_folder(root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"cancelled": False, "draft": draft.model_dump(mode="json")}
+
+
+@app.post("/api/projects/register-folder")
+def register_external_project_folder(
+    request: FolderRegistrationRequest,
+) -> dict[str, object]:
+    if os.name != "nt":
+        raise HTTPException(404, "Local folder registration is unavailable in this deployment.")
+    try:
+        result = register_project_folder(request)
+        project = ProjectCatalog().get(result.record.manifest.project_id)
+    except (OSError, ValueError, KeyError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {
+        "project": project.model_dump(mode="json"),
+        "inventory": result.record.inventory.model_dump(mode="json"),
+        "toolpack_preparation": result.record.toolpack_preparation.model_dump(mode="json"),
+        "registry_path": result.registry_path,
+    }
+
+@app.get("/api/projects")
+def projects(q: str = "") -> dict[str, object]:
+    items: list[dict[str, object]] = []
+    for project in ProjectCatalog().list(q[:200]):
+        payload = project.model_dump(mode="json")
+        try:
+            state = ProjectContinuityStore(project, _local_jobs_root()).load_or_bootstrap()
+            payload["continuation"] = state.model_dump(mode="json")
+        except Exception:
+            payload["continuation"] = None
+        items.append(payload)
+    return {"projects": items}
+
 @app.post("/api/inspect")
 async def inspect(
     goal: Annotated[str, Form(min_length=3, max_length=8000)],
+    output_target: Annotated[OutputTarget, Form()] = OutputTarget.AUTO,
     desired_output: Annotated[str | None, Form(max_length=2000)] = None,
-    budget_limit_usd: Annotated[float, Form(gt=0)] = 0.50,
-    public_research_allowed: Annotated[bool, Form()] = False,
-    max_revision_rounds: Annotated[int, Form(ge=0, le=2)] = 1,
-    toolpack_ids: Annotated[list[ToolPackId] | None, Form()] = None,
+    budget_limit_usd: Annotated[float | None, Form(gt=0)] = None,
+    public_research_disabled: Annotated[bool, Form()] = False,
+    max_revision_rounds: Annotated[int, Form(ge=0, le=2)] = 2,
+    existing_project_id: Annotated[str | None, Form(max_length=64)] = None,
     uploads: Annotated[list[UploadFile] | None, File()] = None,
     store: WebSessionStore = Depends(get_session_store),
 ) -> dict[str, object]:
     sources = await _sources_from_uploads(uploads or [])
+    selected_project = None
+    continuation_context = None
+    if output_target == OutputTarget.EXISTING_PROJECT:
+        if not existing_project_id:
+            raise HTTPException(422, "기존 프로젝트 개선을 선택하면 대상 프로젝트를 골라야 합니다.")
+        try:
+            selected_project = ProjectCatalog().get(existing_project_id)
+        except KeyError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if selected_project.toolpack_status != "approved":
+            raise HTTPException(
+                409,
+                "\ud504\ub85c\uc81d\ud2b8 \ub4f1\ub85d\uacfc \uc870\uc0ac\ub294 \uc644\ub8cc\ub418\uc5c8\uc9c0\ub9cc ToolPack \uc0dd\uc131\u00b7\uac80\uc99d\u00b7\uc2b9\uc778\uc774 \ud544\uc694\ud569\ub2c8\ub2e4.",
+            )
+        continuation_context = ProjectContinuityStore(
+            selected_project, _local_jobs_root()
+        ).context()
+        sources = [*sources, continuation_context.as_internal_source()]
+    elif existing_project_id:
+        raise HTTPException(422, "기존 프로젝트가 아닌 작업에는 프로젝트를 지정할 수 없습니다.")
     intake = IntakeRequest(
         goal=goal,
+        output_target=output_target,
+        existing_project_id=existing_project_id or None,
         desired_output=desired_output or None,
         internal_sources=sources,
-        public_research_allowed=public_research_allowed,
+        public_research_allowed=not public_research_disabled,
         budget_limit_usd=budget_limit_usd,
         max_revision_rounds=max_revision_rounds,
-        toolpack_ids=toolpack_ids or [],
     )
+    intake = route_toolpack_candidates(intake)
     intake = attach_toolpack_descriptors(intake)
     try:
-        requirements = await inspect_requirements(intake)
+        fingerprint = request_fingerprint(intake)
+        candidate = (
+            find_reuse_candidate(_local_jobs_root(), intake, selected_project)
+            if isinstance(store, InMemoryWebSessionStore)
+            else None
+        )
+        if candidate is not None:
+            requirements = RequirementsAnalysis.model_validate_json(
+                (candidate.job_dir / "inputs" / "requirements.json").read_text(encoding="utf-8")
+            )
+        else:
+            requirements = await inspect_requirements(intake)
         budget = estimate_budget(intake, requirements) if requirements.ready_for_estimate else None
         session = WebSession(
             session_id=str(uuid4()),
@@ -320,6 +570,11 @@ async def inspect(
             intake=intake,
             requirements=requirements,
             budget=budget,
+            request_fingerprint=fingerprint,
+            selected_project=selected_project,
+            continuation_context=continuation_context,
+            reuse_source_job_uri=str(candidate.job_dir) if candidate else None,
+            previous_attempt=candidate.public_summary() if candidate else None,
         )
         store.create(session)
         return _public_session(session)
@@ -327,6 +582,60 @@ async def inspect(
         raise
     except Exception as exc:
         raise HTTPException(502, f"Service operation failed: {type(exc).__name__}") from exc
+
+@app.post("/api/sessions/{session_id}/reinspect")
+async def reinspect_session(
+    session_id: str,
+    answers: Annotated[str, Form(max_length=8000)] = "",
+    store: WebSessionStore = Depends(get_session_store),
+) -> dict[str, object]:
+    try:
+        previous = store.read(session_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    answer_text = answers.strip()
+    if not answer_text:
+        raise HTTPException(422, "부족한 정보에 대한 답변을 입력해 주세요.")
+    requirement_keys = [item.key for item in previous.requirements.mandatory_information]
+    answer_source = InternalSource(
+        name=f"user-supplement-{uuid4().hex[:8]}.md",
+        priority=SourcePriority.MANDATORY,
+        requirement_keys=requirement_keys or ["user_supplement"],
+        summary="User-provided answers to the consolidated requirements questions.",
+        content=(
+            "# 요구사항 보완 답변\n\n"
+            f"{answer_text}\n"
+        ),
+        media_type="text/markdown",
+    )
+    augmented = previous.intake.model_copy(
+        update={
+            "goal": _merge_canonical_goal(previous.intake.goal, answer_text),
+            "internal_sources": [*previous.intake.internal_sources, answer_source],
+        }
+    )
+    try:
+        requirements = await reinspect_requirements(augmented, previous.requirements)
+        budget = estimate_budget(augmented, requirements) if requirements.ready_for_estimate else None
+        session = WebSession(
+            session_id=str(uuid4()),
+            created_at=_now(),
+            intake=augmented,
+            requirements=requirements,
+            budget=budget,
+            request_fingerprint=request_fingerprint(augmented),
+            selected_project=previous.selected_project,
+            continuation_context=previous.continuation_context,
+            reuse_source_job_uri=None,
+            previous_attempt=None,
+        )
+        store.create(session)
+        return _public_session(session)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Service operation failed: {type(exc).__name__}") from exc
+
 
 
 @app.post("/api/sessions/{session_id}/run")
@@ -337,14 +646,55 @@ async def run_session(
 ) -> dict[str, object]:
     try:
         session = store.read(session_id)
+        selected_project = None
+        if session.intake.existing_project_id:
+            selected_project = ProjectCatalog().get(session.intake.existing_project_id)
+            if not selected_project.ready_for_isolated_edit:
+                raise ValueError(
+                    "선택한 프로젝트에 커밋되지 않은 변경이 있습니다. 현재 변경을 보존한 채 "
+                    "안전하게 격리 실행할 수 있도록 먼저 정리해야 합니다."
+                )
         validate_approval(session, approval.approved_usd)
         store.claim_run(session_id)
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, KeyError) as exc:
         raise HTTPException(404, str(exc)) from exc
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
 
     try:
+        if ToolPackId.EXCHANGE_DEVELOPMENT in session.intake.toolpack_ids:
+            if not isinstance(store, InMemoryWebSessionStore):
+                raise RuntimeError(
+                    "Exchange development is local-only because the approved repository is on this PC."
+                )
+            local_root = _local_jobs_root()
+            local_root.mkdir(parents=True, exist_ok=True)
+            reuse_candidate = find_reuse_candidate(local_root, session.intake, selected_project)
+            job_dir = create_job(
+                jobs_dir=local_root,
+                intake=session.intake,
+                requirements=session.requirements,
+                sources=session.intake.internal_sources,
+                estimate=session.budget,
+                approved_usd=approval.approved_usd,
+            )
+            if reuse_candidate is not None:
+                seed_reusable_artifacts(reuse_candidate, job_dir)
+            link = ExecutionLink(
+                session_id=session_id,
+                job_uri=str(job_dir),
+                operation_name="local",
+                created_at=_now(),
+            )
+            store.save_execution(link)
+            task = asyncio.create_task(asyncio.to_thread(run_job, job_dir))
+            _local_tasks.add(task)
+            task.add_done_callback(_local_tasks.discard)
+            return {
+                "session_id": session_id,
+                "status": "queued",
+                "message": "승인된 한도 안에서 로컬 개발 작업을 시작했습니다.",
+            }
         bucket, project, region, job_name = _service_config()
         with tempfile.TemporaryDirectory(prefix="onebrief_web_job_") as temp:
             job_dir = create_job(
@@ -387,6 +737,9 @@ async def session_status(
 ) -> dict[str, object]:
     try:
         link = store.read_execution(session_id)
+        if link.operation_name == "local":
+            record = await asyncio.to_thread(JobStore(Path(link.job_uri)).read)
+            return record.model_dump(mode="json")
         record = await asyncio.to_thread(GCSJobStore(link.job_uri).read_job)
         return record.model_dump(mode="json")
     except FileNotFoundError as exc:
@@ -403,7 +756,10 @@ async def session_graph(
     """Return the selected team DAG and its durable node execution history."""
     try:
         link = store.read_execution(session_id)
-        repository = GCSJobStore(link.job_uri)
+        repository = (
+            LocalJobRepository(Path(link.job_uri))
+            if link.operation_name == "local" else GCSJobStore(link.job_uri)
+        )
         record = await asyncio.to_thread(repository.read_job)
         base = f"work/workspace/projects/{record.job_id}/02_plan_and_teams"
         try:
@@ -433,6 +789,7 @@ async def session_graph(
                 "attempt": run.get("attempt", 0),
                 "message": run.get("message", ""),
                 "output_paths": run.get("output_paths", []),
+                "parallel_group": node.get("parallel_group"),
             })
         return {
             "session_id": session_id,
@@ -447,16 +804,114 @@ async def session_graph(
         raise HTTPException(502, f"Service operation failed: {type(exc).__name__}") from exc
 
 
+@app.post("/api/projects/{project_id}/latest-result/preview")
+async def preview_latest_project_result(project_id: str) -> dict[str, object]:
+    try:
+        project = ProjectCatalog().get(project_id)
+        state = ProjectContinuityStore(project, _local_jobs_root()).load_or_bootstrap()
+        if not state.last_run_id or not state.last_result_package:
+            raise RuntimeError("completed project result is unavailable")
+        receipt = await asyncio.to_thread(
+            ExchangePreviewManager(project, _local_jobs_root()).start,
+            state.last_run_id,
+        )
+        return receipt.model_dump(mode="json")
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (FileNotFoundError, RuntimeError, PermissionError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+@app.get("/api/projects/{project_id}/latest-result")
+async def latest_project_result(project_id: str) -> FileResponse:
+    try:
+        project = ProjectCatalog().get(project_id)
+        state = ProjectContinuityStore(project, _local_jobs_root()).load_or_bootstrap()
+        if not state.last_run_id or not state.last_result_package:
+            raise RuntimeError("completed project result is unavailable")
+        jobs_root = _local_jobs_root()
+        job_dir = (jobs_root / state.last_run_id).resolve()
+        if not job_dir.is_relative_to(jobs_root) or not job_dir.is_dir():
+            raise RuntimeError("completed project result is unavailable")
+        record = await asyncio.to_thread(JobStore(job_dir).read)
+        package = (job_dir / (record.result_package or "")).resolve()
+        if not package.is_relative_to(job_dir) or not package.exists():
+            raise RuntimeError("completed project result is unavailable")
+        if package.is_dir():
+            temp = Path(tempfile.mkdtemp(prefix="onebrief_latest_result_"))
+            archive = await asyncio.to_thread(
+                shutil.make_archive, str(temp / "onebrief-result"), "zip", package
+            )
+            return FileResponse(
+                Path(archive),
+                media_type="application/zip",
+                filename=f"onebrief-{project_id}-latest-result.zip",
+                background=BackgroundTask(shutil.rmtree, temp, ignore_errors=True),
+            )
+        return FileResponse(
+            package,
+            media_type="application/zip",
+            filename=f"onebrief-{project_id}-latest-result.zip",
+        )
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
 @app.get("/api/sessions/{session_id}/result")
 async def session_result(
     session_id: str,
     store: WebSessionStore = Depends(get_session_store),
 ) -> FileResponse:
     try:
+        session = store.read(session_id)
         link = store.read_execution(session_id)
+        if link.operation_name == "local":
+            job_dir = Path(link.job_uri)
+            record = await asyncio.to_thread(JobStore(job_dir).read)
+            if session.intake.output_target == OutputTarget.SPREADSHEET:
+                workbook = job_dir / "work" / "result.xlsx"
+                if workbook.is_file():
+                    return FileResponse(
+                        workbook,
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        filename="OneBrief 결과.xlsx",
+                    )
+            if not record.result_package:
+                raise RuntimeError("result package is not ready")
+            package = (job_dir / record.result_package).resolve()
+            if not package.is_relative_to(job_dir.resolve()) or not package.exists():
+                raise RuntimeError("result package is unavailable")
+            if package.is_dir():
+                temp = Path(tempfile.mkdtemp(prefix="onebrief_local_result_"))
+                archive = await asyncio.to_thread(
+                    shutil.make_archive,
+                    str(temp / "onebrief-result"),
+                    "zip",
+                    package,
+                )
+                return FileResponse(
+                    Path(archive),
+                    media_type="application/zip",
+                    filename=f"onebrief-{session_id[:8]}-result.zip",
+                    background=BackgroundTask(shutil.rmtree, temp, ignore_errors=True),
+                )
+            return FileResponse(
+                package,
+                media_type="application/zip",
+                filename=f"onebrief-{session_id[:8]}-result.zip",
+            )
         temp = Path(tempfile.mkdtemp(prefix="onebrief_result_"))
         result_dir = temp / "result"
         await asyncio.to_thread(GCSJobStore(link.job_uri).download_result, result_dir)
+        if session.intake.output_target == OutputTarget.SPREADSHEET:
+            workbook = result_dir / "artifacts" / "result.xlsx"
+            if workbook.is_file():
+                return FileResponse(
+                    workbook,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    filename="OneBrief 결과.xlsx",
+                    background=BackgroundTask(shutil.rmtree, temp, ignore_errors=True),
+                )
         archive = Path(shutil.make_archive(str(temp / "onebrief-result"), "zip", result_dir))
         return FileResponse(
             archive,

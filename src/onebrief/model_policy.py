@@ -50,7 +50,10 @@ class ModelExecutionPolicy(BaseModel):
     stage_models: dict[str, ApprovedModel]
 
     def model_for(self, stage: str) -> str:
-        base_stage = re.sub(r"_r\d+$", "", stage)
+        base_stage = stage
+        retry_suffix = re.compile(r"(?:_r\d+|_compact_retry|_verification_retry)$")
+        while retry_suffix.search(base_stage):
+            base_stage = retry_suffix.sub("", base_stage)
         selected = self.stage_models.get(base_stage)
         if selected is None:
             raise PermissionError(f"stage has no approved model binding: {stage}")

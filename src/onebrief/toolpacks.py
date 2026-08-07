@@ -13,7 +13,8 @@ from typing import Callable
 
 from pydantic import BaseModel, Field
 
-from onebrief.schemas import InternalSource, SourcePriority, ToolPackId
+from onebrief.development_toolpack import ExchangeDevelopmentToolPack
+from onebrief.schemas import InternalSource, OutputTarget, SourcePriority, ToolPackId
 
 
 class ToolCommandResult(BaseModel):
@@ -96,25 +97,68 @@ def _command_runner(argv: list[str], cwd: Path, timeout_seconds: int) -> ToolCom
 
 
 def toolpack_descriptor(toolpack_id: ToolPackId) -> InternalSource:
-    if toolpack_id != ToolPackId.EXCHANGE:
+    if toolpack_id == ToolPackId.EXCHANGE_DEVELOPMENT:
+        content = (
+            "Exchange Development is an approved isolated source-development ToolPack. It may read "
+            "tracked source files, propose bounded text changes with exact base hashes, edit only an "
+            "isolated clone, and run fixed repository tests, web tests, and web build. It returns a "
+            "reviewable patch and changed files. It cannot modify the original repository, push, "
+            "deploy, access credentials or accounts, execute trades, or run arbitrary commands."
+        )
+        summary = "Approved isolated Exchange source editing, test, build, and patch capability."
+    elif toolpack_id == ToolPackId.EXCHANGE:
+        content = (
+            "Exchange is an approved read-only executable ToolPack. It provides official-source FX "
+            "data status, data-quality checks, BOK/ECB cross-check evidence, walk-forward model "
+            "performance, and reproducible repository tests. It cannot place trades, connect accounts, "
+            "handle credentials, issue personalized buy/sell instructions, or promise profit. During "
+            "execution OneBrief runs only the fixed integrity commands and packages fixed evidence files."
+        )
+        summary = "Approved Exchange read-only data and verification capability."
+    else:
         raise ValueError(f"unsupported ToolPack: {toolpack_id}")
-    content = (
-        "Exchange is an approved read-only executable ToolPack. It provides official-source FX "
-        "data status, data-quality checks, BOK/ECB cross-check evidence, walk-forward model "
-        "performance, and reproducible repository tests. It cannot place trades, connect accounts, "
-        "handle credentials, issue personalized buy/sell instructions, or promise profit. During "
-        "execution OneBrief runs only the fixed integrity commands and packages fixed evidence files."
-    )
+    content_bytes = content.encode("utf-8")
     return InternalSource(
-        name="toolpack-exchange-capability.md",
+        name=f"toolpack-{toolpack_id.value}-capability.md",
         priority=SourcePriority.MANDATORY,
-        requirement_keys=["exchange_toolpack"],
-        summary="Approved Exchange read-only data and verification capability.",
+        requirement_keys=[f"{toolpack_id.value}_toolpack"],
+        summary=summary,
         content=content,
         media_type="text/markdown",
-        size_bytes=len(content.encode("utf-8")),
-        sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        size_bytes=len(content_bytes),
+        sha256=hashlib.sha256(content_bytes).hexdigest(),
     )
+
+
+def route_toolpack_candidates(intake):
+    """Select only internally relevant capabilities; the Project Owner makes the final choice."""
+    if intake.toolpack_ids:
+        return intake
+    if intake.existing_project_id == "exchange":
+        return intake.model_copy(update={
+            "toolpack_ids": [ToolPackId.EXCHANGE_DEVELOPMENT]
+        })
+    if intake.existing_project_id:
+        return intake
+    text = "\n".join((intake.goal, intake.desired_output or "")).casefold()
+    exchange_markers = (
+        "exchange", "fx", "foreign exchange", "currency", "환율", "외환", "원화",
+        r"c:\exchange",
+    )
+    if not any(marker in text for marker in exchange_markers):
+        return intake
+    development_markers = (
+        "개선", "개발", "수정", "기능", "코드", "웹프로그램", "web app",
+        "develop", "improve", "modify", "code",
+    )
+    wants_development = (
+        intake.output_target == OutputTarget.EXISTING_PROJECT
+        or any(marker in text for marker in development_markers)
+    )
+    candidate = (
+        ToolPackId.EXCHANGE_DEVELOPMENT if wants_development else ToolPackId.EXCHANGE
+    )
+    return intake.model_copy(update={"toolpack_ids": [candidate]})
 
 
 def attach_toolpack_descriptors(intake):
@@ -208,6 +252,42 @@ class ExchangeToolPack:
         return run, sources
 
 
+def _execute_exchange_development(
+    output_dir: Path,
+) -> tuple[ToolPackRun, list[InternalSource]]:
+    pack_dir = output_dir / ToolPackId.EXCHANGE_DEVELOPMENT.value
+    evidence_root = pack_dir / "evidence"
+    inspection, sources = ExchangeDevelopmentToolPack().inspect(evidence_root)
+    evidence: list[ToolEvidence] = []
+    inspection_path = evidence_root / "repository_inspection.json"
+    evidence.append(ToolEvidence(
+        source_path="repository_inspection.json",
+        packaged_path=inspection_path.relative_to(output_dir.parent).as_posix(),
+        size_bytes=inspection_path.stat().st_size,
+        sha256=_sha256(inspection_path),
+    ))
+    for item in inspection.context_files:
+        path = evidence_root / "repository_context" / item.path
+        evidence.append(ToolEvidence(
+            source_path=f"repository_context/{item.path}",
+            packaged_path=path.relative_to(output_dir.parent).as_posix(),
+            size_bytes=path.stat().st_size,
+            sha256=_sha256(path),
+        ))
+    run = ToolPackRun(
+        toolpack_id=ToolPackId.EXCHANGE_DEVELOPMENT,
+        readonly=False,
+        status="ready",
+        commands=[],
+        evidence=evidence,
+        safety_boundary=inspection.safety_boundary,
+    )
+    pack_dir.mkdir(parents=True, exist_ok=True)
+    (pack_dir / "toolpack_run.json").write_text(
+        run.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
+    return run, sources
+
 def execute_toolpacks(
     toolpack_ids: list[ToolPackId], output_dir: Path
 ) -> tuple[list[ToolPackRun], list[InternalSource]]:
@@ -235,9 +315,12 @@ def execute_toolpacks(
     runs: list[ToolPackRun] = []
     sources: list[InternalSource] = []
     for toolpack_id in toolpack_ids:
-        if toolpack_id != ToolPackId.EXCHANGE:
+        if toolpack_id == ToolPackId.EXCHANGE:
+            run, generated = ExchangeToolPack().execute(output_dir)
+        elif toolpack_id == ToolPackId.EXCHANGE_DEVELOPMENT:
+            run, generated = _execute_exchange_development(output_dir)
+        else:
             raise ValueError(f"unsupported ToolPack: {toolpack_id}")
-        run, generated = ExchangeToolPack().execute(output_dir)
         runs.append(run)
         sources.extend(generated)
     manifest = {

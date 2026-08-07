@@ -1,0 +1,13 @@
+{
+  "schema_version": "onebrief-project-v1",
+  "project_id": "my-unity-game",
+  "name": "My Unity Game",
+  "project_type": "unity_game",
+  "project_root": "C:\\path\\to\\MyUnityGame",
+  "canonical_goal": "Maintain and improve the game without regressing existing behavior.",
+  "summary": "Existing Unity game imported into OneBrief.",
+  "authoritative_documents": [
+    "README.md",
+    "docs/GAME_RULES.md"
+  ]
+}

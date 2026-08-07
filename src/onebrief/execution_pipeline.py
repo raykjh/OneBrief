@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 import os
+import shutil
 from pathlib import Path
 from typing import TypeVar
 from uuid import uuid4
@@ -15,22 +17,28 @@ from onebrief.deterministic_verification import (
     apply_deterministic_override,
     validate_draft_grounding,
 )
+from onebrief.development_toolpack import CodeChangeSet, DevelopmentRun, ExchangeDevelopmentToolPack
 from onebrief.dynamic_role_agents import DynamicRoleAgent, GovernanceAgent, GovernanceDecision, RoleHandoff
-from onebrief.execution_agents import AnalystAgent, RevisionAgent, VerifierAgent, WriterAgent
+from onebrief.execution_agents import (
+    AnalystAgent,
+    DeveloperAgent,
+    VerifierAgent,
+    WriterAgent,
+)
 from onebrief.execution_graph import ExecutionGraph, ExecutionGraphRuntime, NodeStatus
 from onebrief.execution_schemas import (
     AnalysisPackage,
     DraftArtifact,
     ExecutionCheckpoint,
     PipelineStatus,
-    RevisionArtifact,
     VerificationReport,
     Verdict,
 )
 from onebrief.guarded_gemini import BudgetedGeminiClient
 from onebrief.grounded_search import run_grounded_research
+from onebrief.recovery_policy import RecoveryAction, RecoveryDecision, RecoveryPolicy
 from onebrief.requirements_gate import require_ready_for_estimate
-from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis
+from onebrief.schemas import IntakeRequest, InternalSource, OutputTarget, RequirementsAnalysis, ToolPackId
 from onebrief.public_research import PublicResearchResult
 from onebrief.toolpacks import execute_toolpacks
 from onebrief.workbook_export import export_workbook
@@ -44,25 +52,29 @@ class ExecutionPipeline:
         run_dir: Path,
         gateway: object | None = None,
         stage_models: dict[str, str] | None = None,
+        stage_skills: dict[str, list[str]] | None = None,
         execution_graph: ExecutionGraph | None = None,
     ):
         self.run_dir = run_dir
         self.gateway = gateway or BudgetedGeminiClient(run_dir)
         selected = stage_models or {}
         self.stage_models = selected
+        assigned_skills = stage_skills or {}
         self.execution_graph = execution_graph
         self.analyst = AnalystAgent(
-            self.gateway, selected.get("evidence_analysis", "gemini-3.5-flash")
+            self.gateway, selected.get("evidence_analysis", "gemini-3.5-flash"), assigned_skills.get("evidence_analysis")
         )
         self.writer = WriterAgent(
-            self.gateway, selected.get("long_form_draft", "gemini-3.5-flash")
+            self.gateway, selected.get("long_form_draft", "gemini-3.5-flash"), assigned_skills.get("long_form_draft")
+        )
+        self.developer = DeveloperAgent(
+            self.gateway, selected.get("long_form_draft", "gemini-3.5-flash"), assigned_skills.get("long_form_draft")
         )
         self.verifier = VerifierAgent(
-            self.gateway, selected.get("independent_verification", "gemini-3.5-flash")
+            self.gateway, selected.get("independent_verification", "gemini-3.5-flash"), assigned_skills.get("independent_verification")
         )
-        self.reviser = RevisionAgent(
-            self.gateway, selected.get("revision", "gemini-3.5-flash")
-        )
+        self.recovery_policy = RecoveryPolicy()
+        self.recovery_decisions: list[RecoveryDecision] = []
 
     def _write(self, path: Path, text: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -97,6 +109,52 @@ class ExecutionPipeline:
                     decisions.append(decision)
         return decisions
 
+    def _append_recovery(self, decision: RecoveryDecision) -> None:
+        key = decision.model_dump_json()
+        if all(item.model_dump_json() != key for item in self.recovery_decisions):
+            self.recovery_decisions.append(decision)
+
+    def _capture_developer_recoveries(self) -> None:
+        for decision in self.developer.last_recovery_decisions:
+            self._append_recovery(decision)
+
+    def _persist_recoveries(self, output_dir: Path) -> None:
+        if not self.recovery_decisions:
+            return
+        payload = {
+            "schema_version": "onebrief-recovery-log-v1",
+            "decisions": [item.model_dump(mode="json") for item in self.recovery_decisions],
+        }
+        self._write(
+            output_dir / "recovery_decisions.json",
+            json.dumps(payload, ensure_ascii=False, indent=2),
+        )
+
+    def _development_evidence(self, output_dir: Path) -> dict[str, object] | None:
+        development_dir = output_dir / "development"
+        run = self._load(development_dir / "development_run.json", DevelopmentRun)
+        change_set = self._load(output_dir / "code_change_set.json", CodeChangeSet)
+        if run is None or change_set is None:
+            return None
+        changed_files: list[dict[str, str]] = []
+        remaining = 70_000
+        for relative in run.changed_paths:
+            path = development_dir / "changed_files" / Path(*relative.split("/"))
+            if not path.is_file() or remaining <= 0:
+                continue
+            content = path.read_text(encoding="utf-8", errors="replace")
+            excerpt = content[:remaining]
+            remaining -= len(excerpt)
+            changed_files.append({"path": relative, "content": excerpt})
+        return {
+            "change_set": change_set.model_dump(mode="json"),
+            "development_run": run.model_dump(mode="json"),
+            "changed_files": changed_files,
+            "verification_rule": (
+                "Compare every deliverable and claimed feature with the actual changed files. "
+                "Legacy tests prove regression safety only; new behavior needs relevant deterministic evidence."
+            ),
+        }
     def _checkpoint(
         self,
         output_dir: Path,
@@ -125,15 +183,20 @@ class ExecutionPipeline:
         sources: list[InternalSource],
         output_dir: Path,
     ) -> ExecutionCheckpoint:
+        self.recovery_decisions = []
         requirements = require_ready_for_estimate(
             intake.model_copy(update={"internal_sources": sources}), requirements, sources
         )
         contract = {
             "goal": intake.goal,
             "desired_output": intake.desired_output,
+            "output_target": intake.output_target.value,
             "normalized_goal": requirements.normalized_goal,
             "deliverables": requirements.deliverables,
             "acceptance_criteria": requirements.acceptance_criteria,
+            "completion_contract": (
+                requirements.completion_contract.model_dump(mode="json") if requirements.completion_contract else None
+            ),
             "assumptions": requirements.assumptions,
             "public_research_allowed": intake.public_research_allowed,
         }
@@ -211,62 +274,89 @@ class ExecutionPipeline:
             if architecture is not None:
                 contract["project_architecture"] = architecture.model_dump(mode="json")
 
-            if intake.toolpack_ids:
-                graph_begin("tool_execution")
-                self._checkpoint(
-                    output_dir, PipelineStatus.RUNNING, "tool_execution", completed, 0
-                )
-                _, tool_sources = execute_toolpacks(
-                    intake.toolpack_ids, output_dir / "toolpacks"
-                )
-                sources = [*sources, *tool_sources]
-                source_payload = [
-                    {
-                        "name": source.name,
-                        "priority": source.priority.value,
-                        "requirement_keys": source.requirement_keys,
-                        "content": source.content,
-                        "sha256": source.sha256,
-                    }
-                    for source in sources
-                ]
+            public_research: PublicResearchResult | None = None
+            tool_sources: list[InternalSource] = []
+            parallel_work: dict[str, object] = {}
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="onebrief-context") as executor:
+                if intake.toolpack_ids:
+                    graph_begin("tool_execution")
+                    self._checkpoint(
+                        output_dir, PipelineStatus.RUNNING, "parallel_context", completed, 0
+                    )
+                    parallel_work["tool_execution"] = executor.submit(
+                        execute_toolpacks,
+                        intake.toolpack_ids,
+                        output_dir / "toolpacks",
+                    )
+
+                if intake.public_research_allowed:
+                    research_path = output_dir / "public_research.json"
+                    graph_begin("public_research")
+                    self._checkpoint(
+                        output_dir, PipelineStatus.RUNNING, "parallel_context", completed, 0
+                    )
+
+                    def load_or_research() -> PublicResearchResult:
+                        existing = self._load(research_path, PublicResearchResult)
+                        if existing is not None:
+                            return existing
+                        result = run_grounded_research(
+                            self.gateway, goal=intake.goal, desired_output=intake.desired_output
+                        )
+                        self._write(research_path, result.model_dump_json(indent=2))
+                        self._write(output_dir / "public_research.md", result.answer_markdown)
+                        if result.search_suggestions_html:
+                            self._write(
+                                output_dir / "google_search_suggestions.html",
+                                result.search_suggestions_html,
+                            )
+                        return result
+
+                    parallel_work["public_research"] = executor.submit(load_or_research)
+
+                outcomes: dict[str, object] = {}
+                failures: dict[str, Exception] = {}
+                for stage, future in parallel_work.items():
+                    try:
+                        outcomes[stage] = future.result()
+                    except Exception as exc:
+                        failures[stage] = exc
+
+            if "tool_execution" in outcomes:
+                _, tool_sources = outcomes["tool_execution"]
                 graph_complete(
-                    "tool_execution", "toolpacks/toolpack_execution.json",
-                    message="Approved read-only ToolPack checks passed and evidence was packaged.",
+                    "tool_execution",
+                    "toolpacks/toolpack_execution.json",
+                    message="Approved ToolPack checks completed in the parallel context phase.",
                 )
                 completed.append("tool_execution")
 
-            public_research: PublicResearchResult | None = None
-            if intake.public_research_allowed:
-                research_path = output_dir / "public_research.json"
-                graph_begin("public_research")
-                public_research = self._load(research_path, PublicResearchResult)
-                if public_research is None:
-                    self._checkpoint(output_dir, PipelineStatus.RUNNING, "public_research", completed, 0)
-                    public_research = run_grounded_research(
-                        self.gateway, goal=intake.goal, desired_output=intake.desired_output
-                    )
-                    self._write(research_path, public_research.model_dump_json(indent=2))
-                    self._write(output_dir / "public_research.md", public_research.answer_markdown)
-                    if public_research.search_suggestions_html:
-                        self._write(
-                            output_dir / "google_search_suggestions.html",
-                            public_research.search_suggestions_html,
-                        )
-                sources = [*sources, public_research.as_internal_source()]
-                source_payload = [
-                    {
-                        "name": source.name,
-                        "priority": source.priority.value,
-                        "requirement_keys": source.requirement_keys,
-                        "content": source.content,
-                        "sha256": source.sha256,
-                    }
-                    for source in sources
-                ]
+            if "public_research" in outcomes:
+                public_research = outcomes["public_research"]
                 graph_complete("public_research", "public_research.json", "public_research.md")
                 completed.append("public_research")
 
+            if failures:
+                if runtime is not None:
+                    for stage, exc in failures.items():
+                        node = runtime.graph.node_for_stage(stage)
+                        if runtime.state.nodes[node.node_id].status == NodeStatus.RUNNING:
+                            runtime.fail(node.node_id, str(exc))
+                raise next(iter(failures.values()))
+
+            sources = [*sources, *tool_sources]
+            if public_research is not None:
+                sources.append(public_research.as_internal_source())
+            source_payload = [
+                {
+                    "name": source.name,
+                    "priority": source.priority.value,
+                    "requirement_keys": source.requirement_keys,
+                    "content": source.content,
+                    "sha256": source.sha256,
+                }
+                for source in sources
+            ]
             analysis_path = output_dir / "analysis.json"
             graph_begin("evidence_analysis")
             analysis = self._load(analysis_path, AnalysisPackage)
@@ -289,7 +379,88 @@ class ExecutionPipeline:
             draft = self._load(draft_path, DraftArtifact)
             if draft is None:
                 self._checkpoint(output_dir, PipelineStatus.RUNNING, "long_form_draft", completed, 0)
-                draft = self.writer.run(contract, analysis, source_payload)
+                if ToolPackId.EXCHANGE_DEVELOPMENT in intake.toolpack_ids:
+                    change_set_path = output_dir / "code_change_set.json"
+                    change_set = self._load(change_set_path, CodeChangeSet)
+                    if change_set is None:
+                        change_set = self.developer.run(contract, analysis, source_payload)
+                        self._capture_developer_recoveries()
+                        self._persist_recoveries(output_dir)
+                        self._write(change_set_path, change_set.model_dump_json(indent=2))
+                    development_dir = output_dir / "development"
+                    development_run = self._load(
+                        development_dir / "development_run.json", DevelopmentRun
+                    )
+                    if development_run is None:
+                        development_pack = ExchangeDevelopmentToolPack()
+                        try:
+                            development_run = development_pack.apply_and_verify(
+                                change_set, development_dir
+                            )
+                        except RuntimeError as exc:
+                            feedback = str(exc)
+                            decision = self.recovery_policy.decide(
+                                exc, context="development_verification", attempt_number=1
+                            )
+                            self._append_recovery(decision)
+                            self._persist_recoveries(output_dir)
+                            if (
+                                decision.action != RecoveryAction.RETURN_TO_AGENT
+                                or not decision.retry_allowed
+                            ):
+                                raise
+                            self._write(
+                                output_dir / "development_verification_failure_r0.txt",
+                                feedback,
+                            )
+                            retry_change_set = self.developer.run(
+                                contract,
+                                analysis,
+                                source_payload,
+                                verification_feedback=feedback,
+                                previous_change_set=change_set,
+                            )
+                            self._capture_developer_recoveries()
+                            self._persist_recoveries(output_dir)
+                            self._write(
+                                output_dir / "code_change_set_retry_r1.json",
+                                retry_change_set.model_dump_json(indent=2),
+                            )
+                            self._write(change_set_path, retry_change_set.model_dump_json(indent=2))
+                            development_run = development_pack.apply_and_verify(
+                                retry_change_set, development_dir
+                            )
+                    finding_ids = [item.finding_id for item in analysis.findings]
+                    command_lines = "\n".join(
+                        f"- `{item.command_id}`: 통과 (종료 코드 {item.exit_code})"
+                        for item in development_run.commands
+                    )
+                    changed_lines = "\n".join(
+                        f"- `{item}`" for item in development_run.changed_paths
+                    )
+                    draft = DraftArtifact(
+                        title="검증된 Exchange 웹프로그램 개선본",
+                        body_markdown=(
+                            "요청된 개선을 원본과 분리된 작업 공간에서 구현하고 검증했습니다. "
+                            f"작업 범위는 분석 근거 [{finding_ids[0]}]에 따릅니다.\n\n"
+                            "## 변경된 실행 파일\n\n"
+                            f"{changed_lines}\n\n"
+                            "## 자동 검증\n\n"
+                            f"{command_lines}\n\n"
+                            "## 전달물\n\n"
+                            "- `development/changes.patch`: 검토 후 기존 저장소에 적용할 변경 묶음\n"
+                            "- `development/changed_files/`: 변경된 전체 실행 파일\n"
+                            "- `development/development_run.json`: 테스트·빌드 및 안전 경계 기록\n\n"
+                            "원본 저장소, 원격 저장소, 배포 환경, 계정 및 거래 기능은 변경하지 않았습니다."
+                        ),
+                        cited_finding_ids=finding_ids,
+                        drafting_decisions=[
+                            "원본 대신 격리 복제본에서 변경했습니다.",
+                            "고정된 테스트와 웹 빌드를 모두 통과한 결과만 반환했습니다.",
+                        ],
+                    )
+                else:
+                    draft = self.writer.run(contract, analysis, source_payload)
                 self._write(draft_path, draft.model_dump_json(indent=2))
             graph_complete("long_form_draft", "draft_r0.json")
             completed.append("long_form_draft")
@@ -315,7 +486,8 @@ class ExecutionPipeline:
                 model_report = self._load(model_verification_path, VerificationReport)
                 if model_report is None:
                     model_report = report or self.verifier.run(
-                        contract, analysis, draft, 0, source_payload
+                        contract, analysis, draft, 0, source_payload,
+                        self._development_evidence(output_dir),
                     )
                     self._write(
                         model_verification_path, model_report.model_dump_json(indent=2)
@@ -328,10 +500,8 @@ class ExecutionPipeline:
 
             while report.verdict == Verdict.REVISE and revision_round < intake.max_revision_rounds:
                 revision_round += 1
-                revision_stage = f"revision_r{revision_round}"
-                revision_path = output_dir / f"revision_r{revision_round}.json"
-                revision = self._load(revision_path, RevisionArtifact)
-                if revision is None:
+                if ToolPackId.EXCHANGE_DEVELOPMENT in intake.toolpack_ids:
+                    revision_stage = f"development_revision_r{revision_round}"
                     self._checkpoint(
                         output_dir,
                         PipelineStatus.RUNNING,
@@ -339,20 +509,112 @@ class ExecutionPipeline:
                         completed,
                         revision_round,
                     )
-                    revision = self.reviser.run(
-                        contract, analysis, draft, report, revision_round, source_payload
+                    previous_change_set = self._load(
+                        output_dir / "code_change_set.json", CodeChangeSet
                     )
-                    self._write(revision_path, revision.model_dump_json(indent=2))
-                draft = DraftArtifact(
-                    title=revision.title,
-                    body_markdown=revision.revised_body_markdown,
-                    cited_finding_ids=revision.cited_finding_ids,
-                    drafting_decisions=[*draft.drafting_decisions, *revision.addressed_issues],
-                    temperament_decisions=[
-                        *draft.temperament_decisions,
-                        *revision.temperament_decisions,
-                    ],
-                )
+                    if previous_change_set is None:
+                        raise RuntimeError("development revision lost the prior change set")
+                    feedback = "\n".join([
+                        *report.blocking_issues,
+                        *report.revision_instructions,
+                    ])
+                    retry_change_set = self.developer.run(
+                        contract,
+                        analysis,
+                        source_payload,
+                        verification_feedback=feedback,
+                        previous_change_set=previous_change_set,
+                    )
+                    self._capture_developer_recoveries()
+                    self._persist_recoveries(output_dir)
+                    self._write(
+                        output_dir / f"code_change_set_revision_r{revision_round}.json",
+                        retry_change_set.model_dump_json(indent=2),
+                    )
+                    self._write(
+                        output_dir / "code_change_set.json",
+                        retry_change_set.model_dump_json(indent=2),
+                    )
+                    development_dir = output_dir / "development"
+                    if development_dir.exists():
+                        shutil.rmtree(development_dir)
+                    ExchangeDevelopmentToolPack().apply_and_verify(
+                        retry_change_set, development_dir
+                    )
+                    draft = DraftArtifact(
+                        title=draft.title,
+                        body_markdown=(
+                            draft.body_markdown
+                            + f"\n\n## 구현 수정 {revision_round}\n\n"
+                            + "독립 검증의 차단 항목을 소프트웨어 제작자에게 반환하고 "
+                            + "변경 코드를 다시 빌드·테스트했습니다."
+                        ),
+                        cited_finding_ids=draft.cited_finding_ids,
+                        drafting_decisions=[
+                            *draft.drafting_decisions,
+                            *report.revision_instructions,
+                        ],
+                        temperament_decisions=list(draft.temperament_decisions),
+                    )
+                    self._write(
+                        output_dir / f"draft_r{revision_round}.json",
+                        draft.model_dump_json(indent=2),
+                    )
+                    completed.append(revision_stage)
+
+                    verification_stage = f"verification_r{revision_round}"
+                    self._checkpoint(
+                        output_dir,
+                        PipelineStatus.RUNNING,
+                        verification_stage,
+                        completed,
+                        revision_round,
+                    )
+                    model_report = self.verifier.run(
+                        contract,
+                        analysis,
+                        draft,
+                        revision_round,
+                        source_payload,
+                        self._development_evidence(output_dir),
+                    )
+                    self._write(
+                        output_dir / f"model_verification_r{revision_round}.json",
+                        model_report.model_dump_json(indent=2),
+                    )
+                    grounding = validate_draft_grounding(sources, draft)
+                    self._write(
+                        output_dir / f"deterministic_verification_r{revision_round}.json",
+                        grounding.model_dump_json(indent=2),
+                    )
+                    report = apply_deterministic_override(model_report, grounding)
+                    self._write(
+                        output_dir / f"verification_r{revision_round}.json",
+                        report.model_dump_json(indent=2),
+                    )
+                    completed.append(verification_stage)
+                    continue
+                revision_stage = f"maker_revision_r{revision_round}"
+                revision_path = output_dir / f"draft_r{revision_round}.json"
+                revised_draft = self._load(revision_path, DraftArtifact)
+                if revised_draft is None:
+                    self._checkpoint(
+                        output_dir,
+                        PipelineStatus.RUNNING,
+                        revision_stage,
+                        completed,
+                        revision_round,
+                    )
+                    revised_draft = self.writer.run(
+                        contract,
+                        analysis,
+                        source_payload,
+                        verification_feedback=report,
+                        previous_draft=draft,
+                        round_number=revision_round,
+                    )
+                    self._write(revision_path, revised_draft.model_dump_json(indent=2))
+                draft = revised_draft
                 completed.append(revision_stage)
 
                 verification_stage = f"verification_r{revision_round}"
@@ -371,7 +633,8 @@ class ExecutionPipeline:
                     model_report = self._load(model_verification_path, VerificationReport)
                     if model_report is None:
                         model_report = next_report or self.verifier.run(
-                            contract, analysis, draft, revision_round, source_payload
+                            contract, analysis, draft, revision_round, source_payload,
+                            self._development_evidence(output_dir),
                         )
                         self._write(
                             model_verification_path, model_report.model_dump_json(indent=2)
@@ -455,13 +718,15 @@ class ExecutionPipeline:
             body = draft.body_markdown.strip()
             final_text = body if body.startswith("# ") else f"# {draft.title}\n\n{body}"
             self._write(output_dir / "final.md", final_text)
-            export_workbook(final_text, output_dir / "result.xlsx", public_research)
+            if intake.output_target in {OutputTarget.AUTO, OutputTarget.SPREADSHEET}:
+                export_workbook(final_text, output_dir / "result.xlsx", public_research)
             self._write(output_dir / "final_verification.json", report.model_dump_json(indent=2))
             self._write(
                 output_dir / "temperament_decisions.json",
                 json.dumps(self._temperament_audit(output_dir), ensure_ascii=False, indent=2),
             )
             BudgetStore(self.run_dir).complete()
+            self._persist_recoveries(output_dir)
             self._checkpoint(
                 output_dir,
                 status,
@@ -475,6 +740,10 @@ class ExecutionPipeline:
                 (output_dir / "execution_checkpoint.json").read_text(encoding="utf-8")
             )
         except BudgetExceeded as exc:
+            self._append_recovery(self.recovery_policy.decide(
+                exc, context="budget_gate", attempt_number=1
+            ))
+            self._persist_recoveries(output_dir)
             fail_running_graph(str(exc), blocked=True)
             self._checkpoint(
                 output_dir,
@@ -486,7 +755,20 @@ class ExecutionPipeline:
             )
             raise
         except Exception as exc:
+            self._capture_developer_recoveries()
+            decision = self.recovery_policy.decide(
+                exc, context="pipeline", attempt_number=1
+            )
+            if not self.recovery_decisions or (
+                self.recovery_decisions[-1].error_summary != decision.error_summary
+            ):
+                self._append_recovery(decision)
+            self._persist_recoveries(output_dir)
             fail_running_graph(f"{type(exc).__name__}: {exc}")
+            try:
+                BudgetStore(self.run_dir).fail(f"{type(exc).__name__}: {exc}")
+            except Exception:
+                pass
             self._checkpoint(
                 output_dir,
                 PipelineStatus.FAILED,

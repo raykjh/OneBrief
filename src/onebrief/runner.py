@@ -49,7 +49,10 @@ async def inspect_requirements(intake: IntakeRequest) -> RequirementsAnalysis:
             "instruction": (
                 "Build the work contract from the goal and authoritative uploads in one pass. "
                 "Inspect source contents, not only names or requirement keys. Return every "
-                "remaining mandatory question together; do not start the requested work."
+                "remaining mandatory question together; do not start the requested work. "
+                "For existing_project, first restore the project contract and work status from "
+                "the onebrief-project-continuation source. Resume pending or failed work and ask "
+                "only when the restored state cannot resolve a material ambiguity."
             ),
         }
     )
@@ -77,16 +80,26 @@ async def reinspect_requirements(
             item.model_dump(mode="json") for item in previous.optional_information
         ],
     }
+    confirmed_decisions = [
+        source.content
+        for source in intake.internal_sources
+        if source.name.startswith("user-supplement-")
+    ]
     result = await _run_requirements(
         {
             "mode": "reinspection_after_upload",
             "previous_gaps_only": previous_gaps,
             "intake_with_uploaded_sources": intake.model_dump(mode="json"),
+            "user_confirmed_decisions": confirmed_decisions,
             "instruction": (
                 "Rebuild the contract from the original intake and authoritative uploads. "
                 "Re-evaluate every previous gap against actual uploaded content. A matching "
                 "requirement key is only a routing hint, not proof of sufficiency. Keep any "
-                "gap whose content is absent, incomplete, contradictory, or unusable."
+                "gap whose content is absent, incomplete, contradictory, or unusable. "
+                "Treat user_confirmed_decisions as direct authoritative answers. A choice such as "
+                "free public API, standard technical indicators, or no framework preference resolves "
+                "that implementation-choice gap. Do not repeat a resolved question. Ordinary framework, "
+                "library, provider, display, and analysis defaults are optional rather than mandatory."
             ),
         }
     )

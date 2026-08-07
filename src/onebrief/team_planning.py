@@ -20,7 +20,7 @@ from onebrief.agent_registry import (
     PackGrant,
     TemperamentAssignment,
 )
-from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis
+from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis, ToolPackId
 from onebrief.workspaces import WorkspaceManager
 
 
@@ -28,6 +28,7 @@ TEAM_PLANNING_OUTPUT_CAP = 3000
 
 PACK_CATALOG: dict[str, tuple[str, ...]] = {
     "knowledge_packs": ("project-contract", "approved-sources", "acceptance-criteria"),
+    "skill_packs": ("existing-project-development", "implementation-verification", "financial-signal-validation"),
     "tool_packs": ("structured-gemini", "artifact-workspace"),
     "template_packs": ("requested-output", "evidence-handoff", "review-verdict"),
     "rule_packs": ("budget-gate", "evidence-grounding", "independent-review"),
@@ -65,6 +66,7 @@ class TeamPlan(BaseModel):
     goal_summary: str
     planning_rationale: str
     teams: list[TeamDefinition]
+    toolpack_ids: list[ToolPackId] = Field(default_factory=list, max_length=5)
     members: list[TeamMemberPlan] = Field(min_length=4, max_length=9)
     stage_owners: dict[str, str]
     omitted_agent_types: list[AgentType] = Field(default_factory=list)
@@ -74,6 +76,8 @@ class TeamPlan(BaseModel):
         member_ids = [member.instance_id for member in self.members]
         if len(member_ids) != len(set(member_ids)):
             raise ValueError("team plan contains duplicate instance IDs")
+        if len(self.toolpack_ids) != len(set(self.toolpack_ids)):
+            raise ValueError("team plan contains duplicate ToolPacks")
         team_ids = [team.team_id for team in self.teams]
         if len(team_ids) != len(set(team_ids)):
             raise ValueError("team plan contains duplicate team IDs")
@@ -116,11 +120,31 @@ class TeamPlanDraft(BaseModel):
     members: list[TeamMemberPlan] = Field(min_length=4, max_length=9)
     stage_owners: dict[str, str]
     omitted_agent_types: list[AgentType] = Field(default_factory=list)
+    toolpack_ids: list[ToolPackId] = Field(default_factory=list, max_length=5)
 
 
 def normalize_team_plan(raw: TeamPlanDraft | TeamPlan, *, project_id: str) -> TeamPlan:
     """Repair redundant team references without inventing agents or authority."""
-    members = list(raw.members)
+    members: list[TeamMemberPlan] = []
+    financial_goal = any(
+        token in raw.goal_summary.casefold()
+        for token in ("환율", "통화", "금융", "투자", "exchange", "currency", "forex")
+    )
+    for member in raw.members:
+        skills = list(member.packs.skill_packs)
+        if ToolPackId.EXCHANGE_DEVELOPMENT in raw.toolpack_ids:
+            if member.agent_type in {AgentType.ARCHITECT, AgentType.MAKER}:
+                skills.append("existing-project-development")
+            if member.agent_type == AgentType.CRITIC:
+                skills.append("implementation-verification")
+            if financial_goal and member.agent_type in {
+                AgentType.ANALYST, AgentType.MAKER, AgentType.CRITIC, AgentType.GUARDIAN,
+            }:
+                skills.append("financial-signal-validation")
+        packs = member.packs.model_copy(
+            update={"skill_packs": list(dict.fromkeys(skills))}
+        )
+        members.append(member.model_copy(update={"packs": packs}))
     selected = {member.agent_type for member in members}
     original_teams = {team.team_id: team for team in raw.teams}
     teams: list[TeamDefinition] = []
@@ -172,6 +196,7 @@ def normalize_team_plan(raw: TeamPlanDraft | TeamPlan, *, project_id: str) -> Te
         project_id=project_id,
         goal_summary=raw.goal_summary,
         planning_rationale=raw.planning_rationale,
+        toolpack_ids=raw.toolpack_ids,
         teams=teams,
         members=members,
         stage_owners=stage_owners,
@@ -192,11 +217,22 @@ def _safe_segment(value: str, field: str) -> None:
         raise ValueError(f"{field} must be one safe path segment")
 
 
-def validate_team_plan(plan: TeamPlan, *, public_research_allowed: bool) -> TeamPlan:
+def validate_team_plan(
+    plan: TeamPlan,
+    *,
+    public_research_allowed: bool,
+    available_toolpacks: list[ToolPackId] | None = None,
+) -> TeamPlan:
     """Enforce authority separation and executable stage ownership after model planning."""
     registry = AgentRegistry()
     for member in plan.members:
         _safe_segment(member.instance_id, "instance_id")
+    if available_toolpacks is not None:
+        unavailable = set(plan.toolpack_ids) - set(available_toolpacks)
+        if unavailable:
+            raise ValueError(
+                f"project owner selected unavailable ToolPacks: {sorted(item.value for item in unavailable)}"
+            )
         _safe_segment(member.team_id, "team_id")
         registry.get(member.agent_type)
         if not member.model_selection_reason.strip():
@@ -228,6 +264,19 @@ def validate_team_plan(plan: TeamPlan, *, public_research_allowed: bool) -> Team
         investigator = by_id[plan.stage_owners["public_research"]]
         if investigator.model != ApprovedModel.GEMINI_2_5_FLASH:
             raise ValueError("public_research must use the approved Google Search-grounded model")
+    skill_roles = {
+        "existing-project-development": {AgentType.ARCHITECT, AgentType.MAKER},
+        "implementation-verification": {AgentType.CRITIC},
+        "financial-signal-validation": {
+            AgentType.ANALYST, AgentType.MAKER, AgentType.CRITIC, AgentType.GUARDIAN,
+        },
+    }
+    for member in plan.members:
+        for skill_id in member.packs.skill_packs:
+            if member.agent_type not in skill_roles[skill_id]:
+                raise ValueError(
+                    f"{skill_id} cannot be assigned to {member.agent_type.value}"
+                )
     for stage, owner_id in plan.stage_owners.items():
         if stage != "public_research" and by_id[owner_id].model == ApprovedModel.GEMINI_2_5_FLASH:
             raise ValueError("gemini-2.5-flash is reserved for public_research")
@@ -265,8 +314,9 @@ class ProjectOwnerAgent:
                 "project_id": project_id,
                 "goal": intake.goal,
                 "desired_output": intake.desired_output,
+                "output_target": intake.output_target.value,
                 "public_research_allowed": intake.public_research_allowed,
-                "selected_toolpacks": [item.value for item in intake.toolpack_ids],
+                "available_toolpack_candidates": [item.value for item in intake.toolpack_ids],
                 "normalized_goal": requirements.normalized_goal,
                 "deliverables": requirements.deliverables,
                 "acceptance_criteria": requirements.acceptance_criteria,
@@ -297,9 +347,15 @@ class ProjectOwnerAgent:
                 "evidence_analysis, a maker for long_form_draft and revision, and an independent critic "
                 "for independent_verification; add an investigator for public_research when enabled. "
                 "Add architect, creator, integrator, or guardian only when the goal genuinely activates "
-                "their distinct accountability. When Exchange is selected, treat it as a read-only executable "
-                "tool owned by the maker and strongly prefer a guardian for financial-claim boundaries. "
-                "Use only pack IDs in pack_catalog. Assign APT-3 temperament "
+                "their distinct accountability. When exchange is selected, treat it as a read-only "
+                "tool owned by the maker. When exchange_development is selected, assign the maker "
+                "responsibility for bounded source changes in an isolated clone and strongly prefer a "
+                "guardian for software-safety and financial-claim boundaries. Neither ToolPack may "
+                "trade, access accounts, push, or deploy. "
+                "Select toolpack_ids only from available_toolpack_candidates and only when execution is "
+                "necessary to achieve the goal. The user does not choose tools. An empty selection is valid "
+                "when no candidate is needed. Choosing a ToolPack activates tool_execution and its evidence. "
+                "Use only pack IDs in pack_catalog. Assign skill_packs only when their specialized guidance is needed: existing-project-development to architect or maker, implementation-verification only to critic, and financial-signal-validation to analyst, maker, critic, or guardian. Assign APT-3 temperament "
                 "as a tie-breaker profile, not authority. Select one model for every member from "
                 "approved_model_catalog and explain the cost/capability reason. Use gemini-2.5-flash only "
                 "for the investigator that owns public_research; use gemini-3.5-flash for complex work and "
@@ -312,7 +368,11 @@ class ProjectOwnerAgent:
         if not isinstance(plan, (TeamPlanDraft, TeamPlan)):
             raise TypeError("project owner returned an invalid TeamPlan type")
         plan = normalize_team_plan(plan, project_id=project_id)
-        return validate_team_plan(plan, public_research_allowed=intake.public_research_allowed)
+        return validate_team_plan(
+            plan,
+            public_research_allowed=intake.public_research_allowed,
+            available_toolpacks=intake.toolpack_ids,
+        )
 
 
 def _atomic_json(path: Path, value: BaseModel | dict[str, object]) -> None:
@@ -350,9 +410,12 @@ class TeamAssembler:
             {
                 "goal": intake.goal,
                 "desired_output": intake.desired_output,
+                "output_target": intake.output_target.value,
                 "deliverables": requirements.deliverables,
                 "acceptance_criteria": requirements.acceptance_criteria,
                 "public_research_allowed": intake.public_research_allowed,
+                "available_toolpack_candidates": [item.value for item in intake.toolpack_ids],
+                "selected_toolpacks": [item.value for item in plan.toolpack_ids],
             },
         )
         _atomic_json(
@@ -423,7 +486,11 @@ class TeamPlanningCoordinator:
         )
         if plan_path.exists():
             plan = TeamPlan.model_validate_json(plan_path.read_text(encoding="utf-8"))
-            validate_team_plan(plan, public_research_allowed=intake.public_research_allowed)
+            validate_team_plan(
+                plan,
+                public_research_allowed=intake.public_research_allowed,
+                available_toolpacks=intake.toolpack_ids,
+            )
         else:
             plan = self.owner.run(
                 project_id=project_id,

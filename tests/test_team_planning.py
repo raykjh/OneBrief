@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from onebrief.agent_registry import AgentType, PackGrant, TemperamentAssignment
-from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis, SourcePriority
+from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis, SourcePriority, ToolPackId
 from onebrief.team_planning import (
     ProjectOwnerAgent,
     TeamAssembler,
@@ -111,7 +111,33 @@ def test_project_owner_selects_and_validates_minimal_team() -> None:
     assert gateway.calls == 1
     assert [member.agent_type for member in result.members] == [
         AgentType.PROJECT_OWNER, AgentType.ANALYST, AgentType.MAKER, AgentType.CRITIC,
+
     ]
+def test_project_owner_makes_the_final_toolpack_selection() -> None:
+    plan = _plan().model_copy(update={"toolpack_ids": [ToolPackId.EXCHANGE]})
+    result = ProjectOwnerAgent(FakeGateway(plan)).run(
+        project_id="job-123",
+        intake=IntakeRequest(
+            goal="Analyze exchange evidence.", toolpack_ids=[ToolPackId.EXCHANGE]
+        ),
+        requirements=_requirements(),
+        sources=[_source()],
+    )
+    assert result.toolpack_ids == [ToolPackId.EXCHANGE]
+
+
+def test_project_owner_cannot_activate_an_unavailable_toolpack() -> None:
+    plan = _plan().model_copy(update={"toolpack_ids": [ToolPackId.EXCHANGE_DEVELOPMENT]})
+    with pytest.raises(ValueError, match="unavailable ToolPacks"):
+        ProjectOwnerAgent(FakeGateway(plan)).run(
+            project_id="job-123",
+            intake=IntakeRequest(
+                goal="Analyze exchange evidence.", toolpack_ids=[ToolPackId.EXCHANGE]
+            ),
+            requirements=_requirements(),
+            sources=[_source()],
+        )
+
 
 
 def test_wrong_stage_owner_is_rejected() -> None:

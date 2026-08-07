@@ -54,6 +54,7 @@ class TemperamentAssignment(BaseModel):
 
 class PackGrant(BaseModel):
     knowledge_packs: list[str] = Field(default_factory=list)
+    skill_packs: list[str] = Field(default_factory=list)
     tool_packs: list[str] = Field(default_factory=list)
     template_packs: list[str] = Field(default_factory=list)
     rule_packs: list[str] = Field(default_factory=list)

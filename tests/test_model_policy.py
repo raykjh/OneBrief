@@ -98,6 +98,24 @@ def test_gateway_allows_only_exact_stage_model_binding() -> None:
     assert raw.calls == [("evidence_analysis", "gemini-3.5-flash-lite")]
 
 
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "evidence_analysis_r1",
+        "evidence_analysis_compact_retry",
+        "evidence_analysis_verification_retry",
+        "evidence_analysis_verification_retry_compact_retry",
+    ],
+)
+def test_gateway_maps_revision_and_retry_stages_to_the_approved_base_model(stage: str) -> None:
+    raw = RecordingGateway()
+    gateway = ModelPolicyGateway(raw, _policy())
+
+    gateway.generate_json(stage=stage, model="gemini-3.5-flash-lite", schema=dict)
+
+    assert raw.calls == [(stage, "gemini-3.5-flash-lite")]
+
+
 def test_model_approval_records_are_immutable(tmp_path: Path) -> None:
     estimate = _estimate()
     decision, policy = evaluate_model_budget(

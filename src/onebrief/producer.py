@@ -7,13 +7,14 @@ from math import ceil
 
 from onebrief.execution_limits import (
     ANALYST_OUTPUT_CAP,
+    DEVELOPER_OUTPUT_CAP,
     PUBLIC_RESEARCH_OUTPUT_CAP,
     REVISION_OUTPUT_CAP,
     VERIFIER_OUTPUT_CAP,
     WRITER_OUTPUT_CAP,
 )
 from onebrief.requirements_gate import require_ready_for_estimate
-from onebrief.schemas import BudgetEnvelope, BudgetStatus, IntakeRequest, RequirementsAnalysis, StageEstimate
+from onebrief.schemas import BudgetEnvelope, BudgetStatus, IntakeRequest, RequirementsAnalysis, StageEstimate, ToolPackId
 from onebrief.team_planning import TEAM_PLANNING_OUTPUT_CAP
 
 PRICE_CARD_VERSION = "google-agent-platform-global-standard-search-2026-08-05"
@@ -121,20 +122,22 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
                 base + 1800, 1800, (0, 1, 1), 2,
             )
         )
+    development = ToolPackId.EXCHANGE_DEVELOPMENT in intake.toolpack_ids
+    draft_output_cap = DEVELOPER_OUTPUT_CAP if development else WRITER_OUTPUT_CAP
     stages.extend([
         _stage("evidence_analysis", "gemini-3.5-flash", base, ANALYST_OUTPUT_CAP, (1, 1, 1), 4),
         _stage(
             "long_form_draft",
             "gemini-3.5-flash",
             base + ANALYST_OUTPUT_CAP,
-            WRITER_OUTPUT_CAP,
-            (1, 1, 1),
-            6,
+            draft_output_cap,
+            (1, 2, 2) if development else (1, 1, 1),
+            12 if development else 6,
         ),
         _stage(
             "independent_verification",
             "gemini-3.5-flash",
-            base + ANALYST_OUTPUT_CAP + WRITER_OUTPUT_CAP,
+            base + ANALYST_OUTPUT_CAP + draft_output_cap,
             VERIFIER_OUTPUT_CAP,
             (1, 1 + recommended_revisions, 1 + revisions),
             3,
@@ -142,7 +145,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
         _stage(
             "revision",
             "gemini-3.5-flash",
-            base + ANALYST_OUTPUT_CAP + WRITER_OUTPUT_CAP + VERIFIER_OUTPUT_CAP,
+            base + ANALYST_OUTPUT_CAP + draft_output_cap + VERIFIER_OUTPUT_CAP,
             REVISION_OUTPUT_CAP,
             (0, recommended_revisions, revisions),
             5,
@@ -150,7 +153,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
         _stage(
             "final_approval",
             "gemini-3.5-flash",
-            base + ANALYST_OUTPUT_CAP + WRITER_OUTPUT_CAP + VERIFIER_OUTPUT_CAP,
+            base + ANALYST_OUTPUT_CAP + draft_output_cap + VERIFIER_OUTPUT_CAP,
             1200,
             (1, 1, 1),
             2,

@@ -12,6 +12,7 @@ from onebrief.toolpacks import (
     EXCHANGE_EVIDENCE,
     ExchangeToolPack,
     ToolCommandResult,
+    route_toolpack_candidates,
     attach_toolpack_descriptors,
     execute_toolpacks,
 )
@@ -89,10 +90,20 @@ def test_exchange_toolpack_adds_tool_execution_before_analysis() -> None:
     assert graph.node_for_stage("long_form_draft").depends_on == ["evidence_analysis"]
 
 
-def test_web_ui_exposes_exchange_as_readonly_toolpack() -> None:
+def test_web_ui_hides_toolpack_controls_entirely() -> None:
     response = TestClient(app).get("/")
     assert response.status_code == 200
-    assert 'name="toolpack_ids" value="exchange"' in response.text
+    assert 'name="toolpack_ids"' not in response.text
+    assert "실행 도구" not in response.text
+
+
+def test_exchange_toolpack_is_routed_as_an_internal_candidate() -> None:
+    intake = route_toolpack_candidates(IntakeRequest(goal="Build an FX research package."))
+    assert intake.toolpack_ids == [ToolPackId.EXCHANGE]
+    development = route_toolpack_candidates(IntakeRequest(
+        goal="Improve the existing Exchange web application.", output_target="existing_project"
+    ))
+    assert development.toolpack_ids == [ToolPackId.EXCHANGE_DEVELOPMENT]
 
 
 def test_inspect_persists_selected_toolpack_and_descriptor(monkeypatch) -> None:
@@ -117,7 +128,7 @@ def test_inspect_persists_selected_toolpack_and_descriptor(monkeypatch) -> None:
     try:
         response = TestClient(app).post(
             "/api/inspect",
-            data={"goal": "Build an FX research package.", "toolpack_ids": "exchange"},
+            data={"goal": "Build an FX research package."},
         )
     finally:
         app.dependency_overrides.clear()

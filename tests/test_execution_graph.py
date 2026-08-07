@@ -49,3 +49,20 @@ def test_runtime_rejects_state_from_changed_plan(tmp_path: Path) -> None:
     changed = minimal_team_plan("graph-job", public_research=True)
     with pytest.raises(RuntimeError, match="different TeamPlan"):
         ExecutionGraphRuntime(compile_execution_graph(changed), path)
+
+
+def test_tool_and_public_research_share_a_parallel_context_group() -> None:
+    plan = minimal_team_plan("parallel-job", public_research=True)
+    graph = compile_execution_graph(plan, ["exchange"])
+    tool = graph.node_for_stage("tool_execution")
+    research = graph.node_for_stage("public_research")
+
+    assert tool.parallel_group == "context_fanout"
+    assert research.parallel_group == "context_fanout"
+    runtime = ExecutionGraphRuntime(graph, Path("parallel-state-not-used.json"))
+    try:
+        assert {node.node_id for node in runtime.ready_nodes()} >= {
+            "tool_execution", "public_research"
+        }
+    finally:
+        runtime.state_path.unlink(missing_ok=True)

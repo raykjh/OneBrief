@@ -2,9 +2,13 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 import pytest
 
-from onebrief.schemas import IntakeRequest, RequirementsAnalysis
+from onebrief.producer import estimate_budget
+from onebrief.jobs import JobRecord, JobStatus
+from onebrief.project_catalog import RegisteredProject
+from onebrief.schemas import IntakeRequest, OutputTarget, RequirementsAnalysis, ToolPackId
+from onebrief.toolpacks import attach_toolpack_descriptors
 from onebrief.web_service import (
-    ExecutionLink, InMemoryWebSessionStore, WebSession, app, get_session_store,
+    ExecutionLink, InMemoryWebSessionStore, LocalWebSessionStore, WebSession, app, get_session_store,
     validate_approval,
 )
 
@@ -34,15 +38,64 @@ def test_home_serves_the_real_workflow() -> None:
     response = TestClient(app).get("/")
     assert response.status_code == 200
     assert "OneBrief" in response.text
+    assert 'class="identity-hero"' in response.text
+    assert 'id="completionContract"' in response.text
+    assert 'id="qualityCriteria"' in response.text
+    assert '.checks label:has(select[name=max_revision_rounds]){display:none}' in response.text
+    assert "retrySelect.disabled=true" in response.text
     assert "/api/inspect" in response.text
-    assert "Math.min(x.recommended_approval_usd,ceiling)" in response.text
+    assert 'id="choiceMin"' in response.text
+    assert 'id="choiceRec"' in response.text
+    assert 'id="choiceMax"' in response.text
+    assert 'name="budget_limit_usd"' not in response.text
+    assert 'name="desired_output"' not in response.text
+    assert 'id="approval" type="number" min=".01" max="10"' in response.text
     assert 'form.delete("uploads")' in response.text
     assert 'this.disabled=true;q("#status").textContent=""' in response.text
+    assert 'name="toolpack_ids"' not in response.text
+    assert 'name="public_research_disabled"' in response.text
+    assert 'id="dropZone"' in response.text
+    assert "파일당 1MB · 전체 3MB" in response.text
+    assert 'id="supplement"' in response.text
+    assert 'id="supplementButton"' in response.text
+    assert "/reinspect" in response.text
+    assert "답변 반영하여 다시 검수" in response.text
+    assert 'if(p.requirements.ready_for_estimate){q("#supplement").value=""}' in response.text
+    assert "입력한 답변은 반영됐습니다" in response.text
     assert "/api/sessions/" in response.text and "/graph" in response.text
     assert "에이전트 실행 흐름" in response.text
     assert 'new URLSearchParams(location.search).get("session")' in response.text
     assert "terminalWaits>=5" in response.text
 
+    assert 'name="output_target"' in response.text
+    assert "기존 프로젝트 개선" in response.text
+    assert "웹프로그램" in response.text
+    assert "확정 결과물" in response.text
+    assert 'p.requirements.deliverables.join(" · ")' in response.text
+    assert 'id="projectPicker"' in response.text
+    assert 'id="projectGoalRevision"' in response.text
+    assert 'id="projectSupplement"' in response.text
+    assert 'id="applyProjectSupplement"' in response.text
+    assert 'id="projectImport"' in response.text
+    assert 'id="projectManifest"' in response.text
+    assert 'id="importProject"' in response.text
+    assert 'fetch("/api/projects/import"' in response.text
+    assert 'id="selectProjectFolder"' in response.text
+    assert 'id="folderDraftPanel"' in response.text
+    assert 'id="registerProjectFolder"' in response.text
+    assert 'fetch("/api/projects/pick-folder"' in response.text
+    assert 'fetch("/api/projects/register-folder"' in response.text
+    assert 'p.continuation?.canonical_goal' in response.text
+    assert 'if(p.canonical_goal)q("#goal").value=p.canonical_goal' in response.text
+    assert 'name="existing_project_id"' in response.text
+    assert 'id="projectSearch"' in response.text
+    assert 'id="repeatNotice"' in response.text
+    assert 'id="continuationNotice"' in response.text
+    assert 'id="projectLatestResult"' in response.text
+    assert 'id="projectPreviewResult"' in response.text
+    assert "기술자료 ZIP 다운로드" in response.text
+    assert 'fetch("/api/projects?q="' in response.text
+    assert "p.previous_attempt" in response.text
 
 @pytest.mark.parametrize("ready", [False, True])
 def test_inspect_returns_questions_or_budget(monkeypatch, ready: bool) -> None:
@@ -56,7 +109,11 @@ def test_inspect_returns_questions_or_budget(monkeypatch, ready: bool) -> None:
     try:
         response = TestClient(app).post(
             "/api/inspect",
-            data={"goal": "Create a grounded policy summary.", "budget_limit_usd": "0.5"},
+            data={
+                "goal": "Create a grounded policy summary.",
+                "output_target": "web_app",
+                "budget_limit_usd": "0.5",
+            },
             files={"uploads": ("policy.md", b"Manager approval is required.", "text/markdown")},
         )
     finally:
@@ -66,10 +123,104 @@ def test_inspect_returns_questions_or_budget(monkeypatch, ready: bool) -> None:
     payload = response.json()
     assert (payload["budget"] is not None) is ready
     assert payload["requirements"]["ready_for_estimate"] is ready
-    assert store.read(payload["session_id"]).intake.internal_sources[0].name == "policy.md"
+    session = store.read(payload["session_id"])
+    assert session.intake.internal_sources[0].name == "policy.md"
+    assert session.intake.output_target is OutputTarget.WEB_APP
+    assert session.intake.public_research_allowed is True
+
+def test_public_research_can_be_explicitly_disabled(monkeypatch) -> None:
+    store = InMemoryWebSessionStore()
+
+    async def fake_inspect(_intake):
+        return requirements(False)
+
+    monkeypatch.setattr("onebrief.web_service.inspect_requirements", fake_inspect)
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).post(
+            "/api/inspect",
+            data={
+                "goal": "Create a private-only summary.",
+                "public_research_disabled": "true",
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 200
+    session = store.read(response.json()["session_id"])
+    assert session.intake.public_research_allowed is False
+
+def test_supplement_answers_are_reinspected_as_authoritative_input(monkeypatch) -> None:
+    store = InMemoryWebSessionStore()
+    store.create(
+        WebSession(
+            session_id="needs-answers",
+            created_at="2026-08-06T00:00:00+00:00",
+            intake=IntakeRequest(goal="Build a live currency research web application."),
+            requirements=requirements(False),
+        )
+    )
+
+    async def fake_reinspect(intake, previous):
+        assert previous.ready_for_estimate is False
+        assert intake.goal.startswith("Build a live currency research web application.")
+        assert "[\ucd94\uac00 \ud655\uc815\u00b7\ubcf4\uc644\uc0ac\ud56d]" in intake.goal
+        supplement = intake.internal_sources[-1]
+        assert supplement.priority.value == "mandatory"
+        assert supplement.requirement_keys == ["policy"]
+        assert "무료 공개 API" in supplement.content
+        assert "표준 기술 지표" in supplement.content
+        return requirements(True)
+
+    monkeypatch.setattr("onebrief.web_service.reinspect_requirements", fake_reinspect)
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).post(
+            "/api/sessions/needs-answers/reinspect",
+            data={
+                "answers": (
+                    "모의 데이터는 안 됨. 무료 공개 API를 사용하고, "
+                    "표준 기술 지표를 적용해줘. 선호 프레임워크는 없음."
+                )
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["session_id"] != "needs-answers"
+    assert payload["canonical_goal"].startswith("Build a live currency research web application.")
+    assert "[\ucd94\uac00 \ud655\uc815\u00b7\ubcf4\uc644\uc0ac\ud56d]" in payload["canonical_goal"]
+    assert payload["requirements"]["ready_for_estimate"] is True
+    assert payload["budget"] is not None
+    updated = store.read(payload["session_id"])
+    assert updated.intake.goal == payload["canonical_goal"]
+    assert len(updated.intake.internal_sources) == 1
 
 
-def test_approval_cannot_exceed_the_user_limit(monkeypatch) -> None:
+
+
+def test_upload_limit_accepts_a_file_larger_than_the_previous_cap(monkeypatch) -> None:
+    store = InMemoryWebSessionStore()
+    async def fake_inspect(_intake):
+        return requirements(False)
+    monkeypatch.setattr("onebrief.web_service.inspect_requirements", fake_inspect)
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).post(
+            "/api/inspect", data={"goal": "Summarize the supplied material."},
+            files={"uploads": ("large.md", b"a" * 750_000, "text/markdown")},
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 200
+    payload = response.json()
+    source = store.read(payload["session_id"]).intake.internal_sources[0]
+    assert source.name == "large.md" and source.size_bytes == 750_000
+
+
+def test_final_approval_replaces_the_preflight_budget_hint(monkeypatch) -> None:
     monkeypatch.setenv("ONEBRIEF_WEB_MAX_APPROVAL_USD", "0.10")
     session = WebSession(
         session_id="test",
@@ -86,12 +237,51 @@ def test_approval_cannot_exceed_the_user_limit(monkeypatch) -> None:
             "estimated_minutes_maximum": 3, "notes": [],
         },
     )
-    validate_approval(session, 0.05)
+    validate_approval(session, 0.10)
     with pytest.raises(ValueError):
-        validate_approval(session, 0.0501)
+        validate_approval(session, 0.1001)
 
+
+def test_exchange_development_is_queued_as_a_local_job(monkeypatch, tmp_path) -> None:
+    store = InMemoryWebSessionStore()
+    intake = IntakeRequest(
+        goal="Improve the existing Exchange web application.",
+        output_target=OutputTarget.EXISTING_PROJECT,
+        toolpack_ids=[ToolPackId.EXCHANGE_DEVELOPMENT],
+        budget_limit_usd=2.0,
+    )
+    analysis = requirements(True)
+    budget = estimate_budget(intake, analysis)
+    intake = attach_toolpack_descriptors(intake)
+    store.create(WebSession(
+        session_id="local-development",
+        created_at="2026-08-06T00:00:00+00:00",
+        intake=intake,
+        requirements=analysis,
+        budget=budget,
+    ))
+    monkeypatch.setenv("ONEBRIEF_LOCAL_JOBS_ROOT", str(tmp_path / "jobs"))
+    monkeypatch.setattr("onebrief.web_service.run_job", lambda _job_dir: None)
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).post(
+            "/api/sessions/local-development/run",
+            json={"approved_usd": budget.recommended_approval_usd},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "queued"
+    link = store.read_execution("local-development")
+    assert link.operation_name == "local"
+    assert (tmp_path / "jobs").is_dir()
 def test_graph_endpoint_returns_selected_team_and_node_history(monkeypatch) -> None:
     store = InMemoryWebSessionStore()
+    store.create(WebSession(
+        session_id="download-local", created_at="2026-08-06T00:00:00+00:00",
+        intake=IntakeRequest(goal="Download result."), requirements=requirements(True),
+    ))
     store.save_execution(ExecutionLink(
         session_id="session-1",
         job_uri="gs://test/jobs/job-1",
@@ -101,6 +291,8 @@ def test_graph_endpoint_returns_selected_team_and_node_history(monkeypatch) -> N
 
     class FakeRepository:
         def read_job(self):
+
+
             return SimpleNamespace(
                 job_id="job-1",
                 status=SimpleNamespace(value="running"),
@@ -139,6 +331,10 @@ def test_graph_endpoint_returns_selected_team_and_node_history(monkeypatch) -> N
 
 def test_graph_endpoint_reports_team_planning_before_artifacts_exist(monkeypatch) -> None:
     store = InMemoryWebSessionStore()
+    store.create(WebSession(
+        session_id="download-local", created_at="2026-08-06T00:00:00+00:00",
+        intake=IntakeRequest(goal="Download result."), requirements=requirements(True),
+    ))
     store.save_execution(ExecutionLink(
         session_id="session-2",
         job_uri="gs://test/jobs/job-2",
@@ -166,3 +362,227 @@ def test_graph_endpoint_reports_team_planning_before_artifacts_exist(monkeypatch
     assert response.status_code == 200
     assert response.json()["nodes"] == []
     assert response.json()["job_status"] == "queued"
+
+
+def test_project_catalog_endpoint_and_existing_project_requirement(monkeypatch) -> None:
+    project = RegisteredProject(
+        project_id="exchange",
+        name="Exchange Flow",
+        summary="FX application",
+        root_path="C:/exchange",
+        project_type="web",
+        branch="main",
+        head_sha="a" * 40,
+        worktree_status="clean",
+        ready_for_isolated_edit=True,
+        toolpack_id=ToolPackId.EXCHANGE_DEVELOPMENT,
+    )
+
+    class FakeCatalog:
+        def list(self, query=""):
+            return [project] if not query or query.casefold() in "exchange flow" else []
+
+        def get(self, project_id):
+            if project_id != "exchange":
+                raise KeyError(project_id)
+            return project
+
+    monkeypatch.setattr("onebrief.web_service.ProjectCatalog", FakeCatalog)
+    response = TestClient(app).get("/api/projects?q=exchange")
+    assert response.status_code == 200
+    assert response.json()["projects"][0]["project_id"] == "exchange"
+
+    missing = TestClient(app).post(
+        "/api/inspect",
+        data={
+            "goal": "Improve the approved existing application.",
+            "output_target": "existing_project",
+        },
+    )
+    assert missing.status_code == 422
+
+
+def test_local_result_endpoint_archives_result_directory(tmp_path) -> None:
+    job_dir = tmp_path / "job"
+    package = job_dir / "packages" / "result-v001"
+    package.mkdir(parents=True)
+    (package / "package_manifest.json").write_text('{"ok":true}', encoding="utf-8")
+    record = JobRecord(
+        job_id="job",
+        status=JobStatus.COMPLETE,
+        created_at="2026-08-06T00:00:00+00:00",
+        updated_at="2026-08-06T00:00:00+00:00",
+        attempts=1,
+        current_stage="complete",
+        message="Complete",
+        run_id="run",
+        result_package="packages/result-v001",
+    )
+    (job_dir / "job.json").write_text(record.model_dump_json(), encoding="utf-8")
+    store = InMemoryWebSessionStore()
+    store.create(WebSession(
+        session_id="download-local", created_at="2026-08-06T00:00:00+00:00",
+        intake=IntakeRequest(goal="Download result."), requirements=requirements(True),
+    ))
+    store.save_execution(ExecutionLink(
+        session_id="download-local",
+        job_uri=str(job_dir),
+        operation_name="local",
+        created_at="2026-08-06T00:00:00+00:00",
+    ))
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).get("/api/sessions/download-local/result")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    assert response.content.startswith(b"PK")
+
+
+def test_local_web_session_store_survives_process_restart(tmp_path) -> None:
+    first = LocalWebSessionStore(tmp_path / "sessions")
+    session = WebSession(
+        session_id="restart-safe",
+        created_at="2026-08-06T00:00:00+00:00",
+        intake=IntakeRequest(goal="Continue the approved project."),
+        requirements=requirements(True),
+    )
+    first.create(session)
+    first.claim_run(session.session_id)
+    first.save_execution(ExecutionLink(
+        session_id=session.session_id,
+        job_uri="C:/tmp/job",
+        operation_name="local",
+        created_at="2026-08-06T00:00:00+00:00",
+    ))
+
+    restarted = LocalWebSessionStore(tmp_path / "sessions")
+    assert restarted.read(session.session_id).intake.goal == session.intake.goal
+    assert restarted.read_execution(session.session_id).job_uri == "C:/tmp/job"
+    with pytest.raises(RuntimeError, match="already submitted"):
+        restarted.claim_run(session.session_id)
+
+def test_latest_project_result_recovers_completed_local_package(tmp_path, monkeypatch) -> None:
+    project_root = tmp_path / "exchange"
+    project_root.mkdir()
+    jobs_root = tmp_path / "jobs"
+    job_dir = jobs_root / "completed-job"
+    package = job_dir / "packages" / "result-v001"
+    (job_dir / "inputs").mkdir(parents=True)
+    (job_dir / "work").mkdir()
+    package.mkdir(parents=True)
+    (package / "final.md").write_text("# Complete", encoding="utf-8")
+    intake = IntakeRequest(
+        goal="Complete Exchange.",
+        output_target=OutputTarget.EXISTING_PROJECT,
+        existing_project_id="exchange",
+    )
+    (job_dir / "inputs" / "intake.json").write_text(intake.model_dump_json(), encoding="utf-8")
+    (job_dir / "inputs" / "requirements.json").write_text(
+        requirements(True).model_dump_json(), encoding="utf-8"
+    )
+    record = JobRecord(
+        job_id="completed-job",
+        status=JobStatus.COMPLETE,
+        created_at="2026-08-06T00:00:00+00:00",
+        updated_at="2026-08-06T01:00:00+00:00",
+        attempts=1,
+        current_stage="finished",
+        message="Complete",
+        run_id="run",
+        result_package="packages/result-v001",
+    )
+    (job_dir / "job.json").write_text(record.model_dump_json(), encoding="utf-8")
+    project = RegisteredProject(
+        project_id="exchange", name="Exchange", summary="FX", root_path=str(project_root),
+        project_type="web", branch="main", head_sha="a" * 40, worktree_status="clean",
+        ready_for_isolated_edit=True, toolpack_id=ToolPackId.EXCHANGE_DEVELOPMENT,
+    )
+
+    class FakeCatalog:
+        def get(self, project_id):
+            assert project_id == "exchange"
+            return project
+
+    monkeypatch.setattr("onebrief.web_service.ProjectCatalog", FakeCatalog)
+    monkeypatch.setattr("onebrief.web_service._local_jobs_root", lambda: jobs_root.resolve())
+    response = TestClient(app).get("/api/projects/exchange/latest-result")
+
+    assert response.status_code == 200
+    assert response.content.startswith(b"PK")
+
+def test_existing_project_inspect_injects_restored_continuation_context(tmp_path, monkeypatch) -> None:
+    project_root = tmp_path / "exchange"
+    project_root.mkdir()
+    jobs_root = tmp_path / "jobs"
+    project = RegisteredProject(
+        project_id="exchange", name="Exchange", summary="FX", root_path=str(project_root),
+        project_type="web", branch="main", head_sha="a" * 40, worktree_status="clean",
+        ready_for_isolated_edit=True, toolpack_id=ToolPackId.EXCHANGE_DEVELOPMENT,
+    )
+
+    class FakeCatalog:
+        def get(self, project_id):
+            assert project_id == "exchange"
+            return project
+
+    async def fake_inspect(intake):
+        restored = [
+            source for source in intake.internal_sources
+            if source.requirement_keys == ["existing_project_continuation"]
+        ]
+        assert len(restored) == 1
+        assert "canonical_goal" in restored[0].content
+        return requirements(True)
+
+    store = InMemoryWebSessionStore()
+    monkeypatch.setattr("onebrief.web_service.ProjectCatalog", FakeCatalog)
+    monkeypatch.setattr("onebrief.web_service._local_jobs_root", lambda: jobs_root.resolve())
+    monkeypatch.setattr("onebrief.web_service.inspect_requirements", fake_inspect)
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).post("/api/inspect", data={
+            "goal": "Continue the unfinished work.",
+            "output_target": "existing_project",
+            "existing_project_id": "exchange",
+        })
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    assert response.json()["continuation"]["state"]["project_id"] == "exchange"
+
+def test_spreadsheet_result_returns_xlsx_instead_of_audit_zip(tmp_path) -> None:
+    job_dir = tmp_path / "sheet-job"
+    (job_dir / "work").mkdir(parents=True)
+    (job_dir / "work" / "result.xlsx").write_bytes(b"PK spreadsheet")
+    record = JobRecord(
+        job_id="sheet-job", status=JobStatus.COMPLETE,
+        created_at="2026-08-06T00:00:00+00:00", updated_at="2026-08-06T00:00:00+00:00",
+        attempts=1, current_stage="finished", message="Complete", run_id="run",
+    )
+    (job_dir / "job.json").write_text(record.model_dump_json(), encoding="utf-8")
+    store = InMemoryWebSessionStore()
+    session = WebSession(
+        session_id="sheet-session", created_at="2026-08-06T00:00:00+00:00",
+        intake=IntakeRequest(goal="Create workbook.", output_target=OutputTarget.SPREADSHEET),
+        requirements=requirements(True),
+    )
+    store.create(session)
+    store.save_execution(ExecutionLink(
+        session_id=session.session_id, job_uri=str(job_dir), operation_name="local",
+        created_at="2026-08-06T00:00:00+00:00",
+    ))
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).get("/api/sessions/sheet-session/result")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert response.content == b"PK spreadsheet"

@@ -15,6 +15,44 @@ class SourcePriority(StrEnum):
 
 class ToolPackId(StrEnum):
     EXCHANGE = "exchange"
+    EXCHANGE_DEVELOPMENT = "exchange_development"
+
+
+class OutputTarget(StrEnum):
+    """The native form the user expects to receive and use."""
+
+    AUTO = "auto"
+    EXISTING_PROJECT = "existing_project"
+    WEB_APP = "web_app"
+    UNITY_APP = "unity_app"
+    SPREADSHEET = "spreadsheet"
+    DOCUMENT = "document"
+    TEXT_FILE = "text_file"
+
+
+class EvaluationMode(StrEnum):
+    """How a completion criterion can be proven."""
+
+    DETERMINISTIC = "deterministic"
+    INDEPENDENT_REVIEW = "independent_review"
+
+
+class QualityCriterion(BaseModel):
+    criterion_id: Annotated[str, Field(pattern=r"^Q[0-9]{2}$")]
+    description: Annotated[str, Field(min_length=3, max_length=300)]
+    evaluation_mode: EvaluationMode = EvaluationMode.INDEPENDENT_REVIEW
+    evidence_required: Annotated[str, Field(min_length=3, max_length=300)]
+    required: bool = True
+
+
+class CompletionContract(BaseModel):
+    """Observable definition of done, independent of any example or agent roster."""
+
+    target_state: Annotated[str, Field(min_length=3, max_length=1000)]
+    quality_criteria: list[QualityCriterion] = Field(min_length=1, max_length=12)
+    pass_condition: Annotated[str, Field(min_length=3, max_length=300)] = (
+        "All required criteria pass with the specified evidence."
+    )
 
 
 class InternalSource(BaseModel):
@@ -27,7 +65,7 @@ class InternalSource(BaseModel):
         max_length=10,
     )
     summary: Annotated[str, Field(max_length=2000)] = ""
-    content: Annotated[str, Field(max_length=500_000)] = ""
+    content: Annotated[str, Field(max_length=1_000_000)] = ""
     media_type: Annotated[str, Field(max_length=100)] = "text/plain"
     size_bytes: Annotated[int, Field(ge=0)] = 0
     sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")] | None = None
@@ -35,13 +73,16 @@ class InternalSource(BaseModel):
 
 class IntakeRequest(BaseModel):
     goal: Annotated[str, Field(min_length=3, max_length=8000)]
+    output_target: OutputTarget = OutputTarget.AUTO
+    existing_project_id: Annotated[
+        str | None, Field(pattern=r"^[a-z][a-z0-9_-]{1,63}$")
+    ] = None
     desired_output: Annotated[str | None, Field(max_length=2000)] = None
     internal_sources: list[InternalSource] = Field(default_factory=list, max_length=50)
     public_research_allowed: bool = False
     budget_limit_usd: Annotated[float | None, Field(gt=0)] = None
     max_revision_rounds: Annotated[int, Field(ge=0, le=2)] = 2
     toolpack_ids: list[ToolPackId] = Field(default_factory=list, max_length=5)
-
 
 class InformationRequirement(BaseModel):
     key: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")]
@@ -67,6 +108,7 @@ class RequirementsAnalysis(BaseModel):
         min_length=1,
         max_length=12,
     )
+    completion_contract: CompletionContract | None = None
     assumptions: list[Annotated[str, Field(min_length=1, max_length=300)]] = Field(max_length=10)
     consolidated_questions: list[Annotated[str, Field(min_length=3, max_length=500)]] = Field(
         max_length=10
@@ -81,6 +123,20 @@ class RequirementsAnalysis(BaseModel):
             raise ValueError("missing mandatory information blocks estimation")
         if self.mandatory_information and not self.consolidated_questions:
             raise ValueError("mandatory gaps must be surfaced in one question set")
+        if self.completion_contract is None:
+            self.completion_contract = CompletionContract(
+                target_state=(
+                    f"{self.normalized_goal} The listed deliverables are usable in their requested form."
+                ),
+                quality_criteria=[
+                    QualityCriterion(
+                        criterion_id=f"Q{index:02d}",
+                        description=criterion,
+                        evidence_required="Independent evidence showing the criterion is satisfied.",
+                    )
+                    for index, criterion in enumerate(self.acceptance_criteria, start=1)
+                ],
+            )
         return self
 
 

@@ -370,3 +370,18 @@ class BudgetStore:
             self._save_unlocked(ledger)
             return ledger
 
+    def fail(self, reason: str = "execution failed") -> CostLedger:
+        """Close a failed run and release any unfinished call reservations."""
+        with self.lock:
+            ledger = self._load_unlocked()
+            now = utc_now()
+            for entry in ledger.entries:
+                if entry.status == CallStatus.RESERVED:
+                    ledger.reserved_usd_micros -= entry.reserved_usd_micros
+                    entry.status = CallStatus.RELEASED
+                    entry.reason = reason[:500]
+                    entry.settled_at = now
+            ledger.status = RunStatus.FAILED
+            self._save_unlocked(ledger)
+            return ledger
+
