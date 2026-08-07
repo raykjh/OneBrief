@@ -242,6 +242,10 @@ class ProjectToolPackLifecycle:
         systems = set(inventory.detected_ecosystems)
         if "unity" in systems:
             editor = self._unity_editor(root)
+            has_editmode_tests = any(
+                "test" in path.name.casefold()
+                for path in root.glob("Assets/**/*.asmdef")
+            )
             adapters.extend([
                 ToolAdapter(
                     adapter_id=AdapterId.UNITY_COMPILE,
@@ -252,8 +256,11 @@ class ProjectToolPackLifecycle:
                 ToolAdapter(
                     adapter_id=AdapterId.UNITY_EDITMODE_TESTS,
                     label="Run Unity EditMode tests when the project exposes them",
-                    enabled=editor is not None,
-                    evidence=str(editor) if editor else "A compatible Unity Editor was not found.",
+                    enabled=editor is not None and has_editmode_tests,
+                    evidence=(
+                        str(editor) if editor is not None and has_editmode_tests
+                        else "No compatible Unity Editor and EditMode test assembly pair was found."
+                    ),
                 ),
             ])
         adapters.extend(self._node_adapters(root))
@@ -392,12 +399,17 @@ class ProjectToolPackLifecycle:
             blockers.append("The source repository has uncommitted changes that must be preserved or isolated.")
         if inventory.head_sha != generated.repository_head_sha:
             blockers.append("The repository HEAD changed after ToolPack generation.")
-        # Runtime wiring remains a separate explicit boundary from capability approval.
-        blockers.append("The generic isolated development runtime is not connected yet.")
+        if not generated.allowed_write_prefixes:
+            blockers.append("The generated ToolPack has no approved write boundary.")
+        if not any(
+            item.enabled and item.adapter_id != AdapterId.REPOSITORY_SNAPSHOT
+            for item in generated.adapters
+        ):
+            blockers.append("The generated ToolPack has no approved deterministic validation adapter.")
         return ToolPackLifecycleState(
             project_id=self.project_id,
             status=status,
-            execution_ready=False,
+            execution_ready=not blockers,
             execution_blockers=blockers,
             generated=generated,
             qualification=qualification,

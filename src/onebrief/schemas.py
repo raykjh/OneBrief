@@ -16,6 +16,7 @@ class SourcePriority(StrEnum):
 class ToolPackId(StrEnum):
     EXCHANGE = "exchange"
     EXCHANGE_DEVELOPMENT = "exchange_development"
+    PROJECT_DEVELOPMENT = "project_development"
 
 
 class OutputTarget(StrEnum):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Protocol, TypeVar
+from typing import Any, Callable, Protocol, TypeVar
 
 from pydantic import BaseModel, ValidationError
 from onebrief.development_toolpack import CodeChangeSet, approved_edit_path
@@ -133,9 +133,21 @@ class DeveloperAgent:
 
     stage = "long_form_draft"
 
-    def __init__(self, gateway: StructuredGateway, model: str = "gemini-3.5-flash", skill_ids: list[str] | None = None):
+    def __init__(
+        self,
+        gateway: StructuredGateway,
+        model: str = "gemini-3.5-flash",
+        skill_ids: list[str] | None = None,
+        *,
+        change_set_schema: type[BaseModel] = CodeChangeSet,
+        source_prefix: str = "exchange-source/",
+        path_approver: Callable[[str], str | None] = approved_edit_path,
+    ):
         self.gateway = gateway
         self.model = model
+        self.change_set_schema = change_set_schema
+        self.source_prefix = source_prefix
+        self.path_approver = path_approver
         self.skill_context = skill_instruction(skill_ids or [])
         self.recovery_policy = RecoveryPolicy()
         self.last_recovery_decisions: list[RecoveryDecision] = []
@@ -146,20 +158,18 @@ class DeveloperAgent:
         analysis: AnalysisPackage,
         sources: list[dict[str, Any]],
         verification_feedback: str | None = None,
-        previous_change_set: CodeChangeSet | None = None,
-    ) -> CodeChangeSet:
+        previous_change_set: BaseModel | None = None,
+    ) -> BaseModel:
         self.last_recovery_decisions = []
         developer_sources = []
         for source in sources:
             prepared = dict(source)
             name = str(prepared.get("name", ""))
-            candidate = (
-                name.removeprefix("exchange-source/") if name.startswith("exchange-source/") else ""
-            )
-            repository_path = approved_edit_path(candidate) if candidate else None
+            candidate = name.removeprefix(self.source_prefix) if name.startswith(self.source_prefix) else ""
+            repository_path = self.path_approver(candidate) if candidate else None
             prepared["repository_path"] = repository_path
             normalized_name = name.casefold().replace("\\", "/")
-            if "/tests/" in normalized_name or normalized_name.startswith("exchange-source/tests/"):
+            if "/tests/" in normalized_name or normalized_name.startswith(f"{self.source_prefix}tests/"):
                 prepared["source_role"] = "immutable_acceptance_contract"
             elif repository_path is not None:
                 prepared["source_role"] = "editable_source"
@@ -178,7 +188,7 @@ class DeveloperAgent:
         base_instruction = (
             "You are OneBrief's software maker. Return the smallest complete source changes that "
             "implement the requested executable artifact. For an existing file, path must exactly equal its "
-            "repository_path; never copy the provenance name beginning with exchange-source/. Only edit files "
+            f"repository_path; never copy the provenance name beginning with {self.source_prefix}. Only edit files "
             "with a non-null repository_path in approved_repository_files or add a necessary text source file "
             "under the same project. For an existing file, copy its exact "
             "sha256 into base_sha256 and return the complete replacement content. For a new file use null. "
@@ -201,7 +211,7 @@ class DeveloperAgent:
                 instruction += (
                     " The previous response failed structured-output or repository-path validation. Retry from "
                     "scratch with at most three changed files. Every existing-file path must exactly equal the "
-                    "repository_path field and must not include exchange-source/. Prefer the smallest existing "
+                    f"repository_path field and must not include {self.source_prefix}. Prefer the smallest existing "
                     "source files, remove comments and repetition, and keep all "
                     "replacement content below 55000 characters while preserving a runnable implementation."
                 )
@@ -210,7 +220,7 @@ class DeveloperAgent:
                     stage=stage_base if not attempt else f"{stage_base}_compact_retry",
                     model=self.model,
                     contents=contents,
-                    schema=CodeChangeSet,
+                    schema=self.change_set_schema,
                     max_output_tokens=DEVELOPER_OUTPUT_CAP,
                     system_instruction=instruction + (("\n\n" + self.skill_context) if self.skill_context else ""),
                     temperature=0.1,
@@ -223,7 +233,7 @@ class DeveloperAgent:
                 self.last_recovery_decisions.append(decision)
                 if decision.action != RecoveryAction.AUTO_RETRY or not decision.retry_allowed:
                     raise
-        if not isinstance(result, CodeChangeSet):
+        if not isinstance(result, self.change_set_schema):
             raise TypeError("developer returned an invalid code change set")
         return result
 

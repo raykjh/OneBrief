@@ -18,6 +18,10 @@ from onebrief.deterministic_verification import (
     validate_draft_grounding,
 )
 from onebrief.development_toolpack import CodeChangeSet, DevelopmentRun, ExchangeDevelopmentToolPack
+from onebrief.generic_development_toolpack import (
+    ApprovedProjectDevelopmentToolPack,
+    ProjectCodeChangeSet,
+)
 from onebrief.dynamic_role_agents import DynamicRoleAgent, GovernanceAgent, GovernanceDecision, RoleHandoff
 from onebrief.execution_agents import (
     AnalystAgent,
@@ -60,6 +64,7 @@ class ExecutionPipeline:
         selected = stage_models or {}
         self.stage_models = selected
         assigned_skills = stage_skills or {}
+        self.stage_skills = assigned_skills
         self.execution_graph = execution_graph
         self.analyst = AnalystAgent(
             self.gateway, selected.get("evidence_analysis", "gemini-3.5-flash"), assigned_skills.get("evidence_analysis")
@@ -75,6 +80,29 @@ class ExecutionPipeline:
         )
         self.recovery_policy = RecoveryPolicy()
         self.recovery_decisions: list[RecoveryDecision] = []
+
+    @staticmethod
+    def _is_development(intake: IntakeRequest) -> bool:
+        return any(
+            item in intake.toolpack_ids
+            for item in (ToolPackId.EXCHANGE_DEVELOPMENT, ToolPackId.PROJECT_DEVELOPMENT)
+        )
+
+    def _development_components(self, intake: IntakeRequest):
+        if ToolPackId.PROJECT_DEVELOPMENT in intake.toolpack_ids:
+            if not intake.existing_project_id:
+                raise ValueError("project development requires a selected imported project")
+            pack = ApprovedProjectDevelopmentToolPack(intake.existing_project_id)
+            developer = DeveloperAgent(
+                self.gateway,
+                self.stage_models.get("long_form_draft", "gemini-3.5-flash"),
+                self.stage_skills.get("long_form_draft"),
+                change_set_schema=ProjectCodeChangeSet,
+                source_prefix="project-source/",
+                path_approver=pack.approved_edit_path,
+            )
+            return ProjectCodeChangeSet, pack, developer
+        return CodeChangeSet, ExchangeDevelopmentToolPack(), self.developer
 
     def _write(self, path: Path, text: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,8 +142,9 @@ class ExecutionPipeline:
         if all(item.model_dump_json() != key for item in self.recovery_decisions):
             self.recovery_decisions.append(decision)
 
-    def _capture_developer_recoveries(self) -> None:
-        for decision in self.developer.last_recovery_decisions:
+    def _capture_developer_recoveries(self, developer: DeveloperAgent | None = None) -> None:
+        active = developer or self.developer
+        for decision in active.last_recovery_decisions:
             self._append_recovery(decision)
 
     def _persist_recoveries(self, output_dir: Path) -> None:
@@ -133,8 +162,12 @@ class ExecutionPipeline:
     def _development_evidence(self, output_dir: Path) -> dict[str, object] | None:
         development_dir = output_dir / "development"
         run = self._load(development_dir / "development_run.json", DevelopmentRun)
-        change_set = self._load(output_dir / "code_change_set.json", CodeChangeSet)
-        if run is None or change_set is None:
+        change_set_path = output_dir / "code_change_set.json"
+        if run is None or not change_set_path.is_file():
+            return None
+        try:
+            change_set = json.loads(change_set_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
             return None
         changed_files: list[dict[str, str]] = []
         remaining = 70_000
@@ -147,7 +180,7 @@ class ExecutionPipeline:
             remaining -= len(excerpt)
             changed_files.append({"path": relative, "content": excerpt})
         return {
-            "change_set": change_set.model_dump(mode="json"),
+            "change_set": change_set,
             "development_run": run.model_dump(mode="json"),
             "changed_files": changed_files,
             "verification_rule": (
@@ -283,11 +316,15 @@ class ExecutionPipeline:
                     self._checkpoint(
                         output_dir, PipelineStatus.RUNNING, "parallel_context", completed, 0
                     )
-                    parallel_work["tool_execution"] = executor.submit(
-                        execute_toolpacks,
-                        intake.toolpack_ids,
-                        output_dir / "toolpacks",
-                    )
+                    if ToolPackId.PROJECT_DEVELOPMENT in intake.toolpack_ids:
+                        parallel_work["tool_execution"] = executor.submit(
+                            execute_toolpacks, intake.toolpack_ids,
+                            output_dir / "toolpacks", intake.existing_project_id,
+                        )
+                    else:
+                        parallel_work["tool_execution"] = executor.submit(
+                            execute_toolpacks, intake.toolpack_ids, output_dir / "toolpacks"
+                        )
 
                 if intake.public_research_allowed:
                     research_path = output_dir / "public_research.json"
@@ -379,12 +416,13 @@ class ExecutionPipeline:
             draft = self._load(draft_path, DraftArtifact)
             if draft is None:
                 self._checkpoint(output_dir, PipelineStatus.RUNNING, "long_form_draft", completed, 0)
-                if ToolPackId.EXCHANGE_DEVELOPMENT in intake.toolpack_ids:
+                if self._is_development(intake):
+                    change_schema, development_pack, developer = self._development_components(intake)
                     change_set_path = output_dir / "code_change_set.json"
-                    change_set = self._load(change_set_path, CodeChangeSet)
+                    change_set = self._load(change_set_path, change_schema)
                     if change_set is None:
-                        change_set = self.developer.run(contract, analysis, source_payload)
-                        self._capture_developer_recoveries()
+                        change_set = developer.run(contract, analysis, source_payload)
+                        self._capture_developer_recoveries(developer)
                         self._persist_recoveries(output_dir)
                         self._write(change_set_path, change_set.model_dump_json(indent=2))
                     development_dir = output_dir / "development"
@@ -392,7 +430,6 @@ class ExecutionPipeline:
                         development_dir / "development_run.json", DevelopmentRun
                     )
                     if development_run is None:
-                        development_pack = ExchangeDevelopmentToolPack()
                         try:
                             development_run = development_pack.apply_and_verify(
                                 change_set, development_dir
@@ -413,14 +450,14 @@ class ExecutionPipeline:
                                 output_dir / "development_verification_failure_r0.txt",
                                 feedback,
                             )
-                            retry_change_set = self.developer.run(
+                            retry_change_set = developer.run(
                                 contract,
                                 analysis,
                                 source_payload,
                                 verification_feedback=feedback,
                                 previous_change_set=change_set,
                             )
-                            self._capture_developer_recoveries()
+                            self._capture_developer_recoveries(developer)
                             self._persist_recoveries(output_dir)
                             self._write(
                                 output_dir / "code_change_set_retry_r1.json",
@@ -500,7 +537,8 @@ class ExecutionPipeline:
 
             while report.verdict == Verdict.REVISE and revision_round < intake.max_revision_rounds:
                 revision_round += 1
-                if ToolPackId.EXCHANGE_DEVELOPMENT in intake.toolpack_ids:
+                if self._is_development(intake):
+                    change_schema, development_pack, developer = self._development_components(intake)
                     revision_stage = f"development_revision_r{revision_round}"
                     self._checkpoint(
                         output_dir,
@@ -510,7 +548,7 @@ class ExecutionPipeline:
                         revision_round,
                     )
                     previous_change_set = self._load(
-                        output_dir / "code_change_set.json", CodeChangeSet
+                        output_dir / "code_change_set.json", change_schema
                     )
                     if previous_change_set is None:
                         raise RuntimeError("development revision lost the prior change set")
@@ -518,14 +556,14 @@ class ExecutionPipeline:
                         *report.blocking_issues,
                         *report.revision_instructions,
                     ])
-                    retry_change_set = self.developer.run(
+                    retry_change_set = developer.run(
                         contract,
                         analysis,
                         source_payload,
                         verification_feedback=feedback,
                         previous_change_set=previous_change_set,
                     )
-                    self._capture_developer_recoveries()
+                    self._capture_developer_recoveries(developer)
                     self._persist_recoveries(output_dir)
                     self._write(
                         output_dir / f"code_change_set_revision_r{revision_round}.json",
@@ -538,7 +576,7 @@ class ExecutionPipeline:
                     development_dir = output_dir / "development"
                     if development_dir.exists():
                         shutil.rmtree(development_dir)
-                    ExchangeDevelopmentToolPack().apply_and_verify(
+                    development_pack.apply_and_verify(
                         retry_change_set, development_dir
                     )
                     draft = DraftArtifact(

@@ -26,10 +26,18 @@ The manifest and the generated profile cannot supply arbitrary commands. Depende
 installation, source-repository writes, deployment, release, Git push, credentials, accounts,
 payments, personal data, and destructive Git operations remain outside the boundary.
 
-## Current runtime boundary
+## Connected runtime boundary
 
-Generation, qualification, exact-hash approval, and execution gating are implemented. The
-generic isolated development runtime is deliberately still a separate boundary. An approved
-profile is not reported as execution-ready until that runtime can enforce the generated path
-policy while creating and verifying a reviewable patch. Existing uncommitted project changes
-also keep execution blocked until they are preserved or safely isolated.
+An exact-hash-approved profile becomes execution-ready only while the registered repository
+is clean and remains at the approved Git HEAD. OneBrief then:
+
+1. reads bounded committed text from the approved Git commit;
+2. gives the maker only canonical paths inside approved write prefixes;
+3. verifies every existing file's committed base hash;
+4. clones the repository into a disposable directory and writes only there;
+5. executes only the enabled generated adapters;
+6. returns the patch, complete changed files, command evidence, and safety record.
+
+The source repository is never patched by the runtime. A changed HEAD, dirty worktree,
+changed approval hash, missing validation adapter, stale file hash, blocked path, or failed
+test/build stops execution before any result is accepted.

@@ -717,10 +717,13 @@ async def run_session(
         raise HTTPException(409, str(exc)) from exc
 
     try:
-        if ToolPackId.EXCHANGE_DEVELOPMENT in session.intake.toolpack_ids:
+        if any(
+            item in session.intake.toolpack_ids
+            for item in (ToolPackId.EXCHANGE_DEVELOPMENT, ToolPackId.PROJECT_DEVELOPMENT)
+        ):
             if not isinstance(store, InMemoryWebSessionStore):
                 raise RuntimeError(
-                    "Exchange development is local-only because the approved repository is on this PC."
+                    "Imported-project development is local-only because the approved repository is on this PC."
                 )
             local_root = _local_jobs_root()
             local_root.mkdir(parents=True, exist_ok=True)

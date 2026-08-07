@@ -132,7 +132,10 @@ def normalize_team_plan(raw: TeamPlanDraft | TeamPlan, *, project_id: str) -> Te
     )
     for member in raw.members:
         skills = list(member.packs.skill_packs)
-        if ToolPackId.EXCHANGE_DEVELOPMENT in raw.toolpack_ids:
+        if any(
+            item in raw.toolpack_ids
+            for item in (ToolPackId.EXCHANGE_DEVELOPMENT, ToolPackId.PROJECT_DEVELOPMENT)
+        ):
             if member.agent_type in {AgentType.ARCHITECT, AgentType.MAKER}:
                 skills.append("existing-project-development")
             if member.agent_type == AgentType.CRITIC:

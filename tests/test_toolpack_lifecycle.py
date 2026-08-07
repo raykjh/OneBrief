@@ -71,14 +71,15 @@ def test_generated_toolpack_is_qualified_and_exact_hash_approved(tmp_path: Path,
 
     assert approved.status == "approved"
     assert approved.approval is not None
-    assert approved.execution_ready is False
-    assert any("runtime" in item for item in approved.execution_blockers)
+    assert approved.execution_ready is True
+    assert approved.execution_blockers == []
     project = ProjectCatalog(
         exchange_root=tmp_path / "missing-exchange",
         registry_root=registry,
     ).get("toolpack-game")
     assert project.toolpack_status == "approved"
-    assert project.ready_for_isolated_edit is False
+    assert project.ready_for_isolated_edit is True
+    assert project.toolpack_id.value == "project_development"
 
 
 def test_regeneration_invalidates_approval_when_repository_head_changes(tmp_path: Path, monkeypatch) -> None:
@@ -118,13 +119,5 @@ def test_toolpack_web_generate_review_and_approve(tmp_path: Path, monkeypatch) -
     assert body["status"] == "validated"
     assert approved.status_code == 200
     assert approved.json()["state"]["status"] == "approved"
-    blocked = client.post(
-        "/api/inspect",
-        data={
-            "goal": "Improve the imported game.",
-            "output_target": "existing_project",
-            "existing_project_id": "toolpack-game",
-        },
-    )
-    assert blocked.status_code == 409
-    assert "not execution-ready" in blocked.json()["detail"]
+    assert approved.json()["state"]["execution_ready"] is True
+    assert approved.json()["state"]["execution_blockers"] == []

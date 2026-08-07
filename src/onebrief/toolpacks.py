@@ -14,6 +14,7 @@ from typing import Callable
 from pydantic import BaseModel, Field
 
 from onebrief.development_toolpack import ExchangeDevelopmentToolPack
+from onebrief.generic_development_toolpack import ApprovedProjectDevelopmentToolPack
 from onebrief.schemas import InternalSource, OutputTarget, SourcePriority, ToolPackId
 
 
@@ -97,7 +98,15 @@ def _command_runner(argv: list[str], cwd: Path, timeout_seconds: int) -> ToolCom
 
 
 def toolpack_descriptor(toolpack_id: ToolPackId) -> InternalSource:
-    if toolpack_id == ToolPackId.EXCHANGE_DEVELOPMENT:
+    if toolpack_id == ToolPackId.PROJECT_DEVELOPMENT:
+        content = (
+            "Project Development is an exact-hash-approved imported-project ToolPack. It reads only "
+            "bounded committed text, applies base-hash-checked changes in a disposable Git clone, and "
+            "runs only validation adapters generated and approved for that project. It cannot modify "
+            "the source repository, install dependencies, deploy, push, access secrets or run arbitrary commands."
+        )
+        summary = "Approved isolated development for the selected imported project."
+    elif toolpack_id == ToolPackId.EXCHANGE_DEVELOPMENT:
         content = (
             "Exchange Development is an approved isolated source-development ToolPack. It may read "
             "tracked source files, propose bounded text changes with exact base hashes, edit only an "
@@ -139,7 +148,9 @@ def route_toolpack_candidates(intake):
             "toolpack_ids": [ToolPackId.EXCHANGE_DEVELOPMENT]
         })
     if intake.existing_project_id:
-        return intake
+        return intake.model_copy(update={
+            "toolpack_ids": [ToolPackId.PROJECT_DEVELOPMENT]
+        })
     text = "\n".join((intake.goal, intake.desired_output or "")).casefold()
     exchange_markers = (
         "exchange", "fx", "foreign exchange", "currency", "환율", "외환", "원화",
@@ -288,8 +299,44 @@ def _execute_exchange_development(
     )
     return run, sources
 
+def _execute_project_development(
+    project_id: str, output_dir: Path
+) -> tuple[ToolPackRun, list[InternalSource]]:
+    pack_dir = output_dir / ToolPackId.PROJECT_DEVELOPMENT.value
+    evidence_root = pack_dir / "evidence"
+    inspection, sources = ApprovedProjectDevelopmentToolPack(project_id).inspect(evidence_root)
+    inspection_path = evidence_root / "repository_inspection.json"
+    evidence = [ToolEvidence(
+        source_path="repository_inspection.json",
+        packaged_path=inspection_path.relative_to(output_dir.parent).as_posix(),
+        size_bytes=inspection_path.stat().st_size,
+        sha256=_sha256(inspection_path),
+    )]
+    for item in inspection.context_files:
+        path = evidence_root / "repository_context" / item.path
+        evidence.append(ToolEvidence(
+            source_path=f"repository_context/{item.path}",
+            packaged_path=path.relative_to(output_dir.parent).as_posix(),
+            size_bytes=path.stat().st_size,
+            sha256=_sha256(path),
+        ))
+    run = ToolPackRun(
+        toolpack_id=ToolPackId.PROJECT_DEVELOPMENT,
+        readonly=False,
+        status="ready",
+        commands=[],
+        evidence=evidence,
+        safety_boundary=inspection.safety_boundary,
+    )
+    pack_dir.mkdir(parents=True, exist_ok=True)
+    (pack_dir / "toolpack_run.json").write_text(
+        run.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
+    return run, sources
+
+
 def execute_toolpacks(
-    toolpack_ids: list[ToolPackId], output_dir: Path
+    toolpack_ids: list[ToolPackId], output_dir: Path, project_id: str | None = None
 ) -> tuple[list[ToolPackRun], list[InternalSource]]:
     existing_manifest = output_dir / "toolpack_execution.json"
     if existing_manifest.exists():
@@ -305,8 +352,15 @@ def execute_toolpacks(
                     raise RuntimeError(f"packaged ToolPack evidence changed: {evidence.source_path}")
                 if path.is_file() and path.stat().st_size <= 120_000:
                     content = path.read_text(encoding="utf-8")
+                    source_name = f"{run.toolpack_id.value}/{evidence.source_path}"
+                    if evidence.source_path.startswith("repository_context/"):
+                        relative = evidence.source_path.removeprefix("repository_context/")
+                        if run.toolpack_id == ToolPackId.PROJECT_DEVELOPMENT:
+                            source_name = f"project-source/{relative}"
+                        elif run.toolpack_id == ToolPackId.EXCHANGE_DEVELOPMENT:
+                            source_name = f"exchange-source/{relative}"
                     sources.append(InternalSource(
-                        name=f"{run.toolpack_id.value}/{evidence.source_path}", priority=SourcePriority.MANDATORY,
+                        name=source_name, priority=SourcePriority.MANDATORY,
                         requirement_keys=[f"{run.toolpack_id.value}_toolpack"], content=content,
                         media_type="application/json" if path.suffix == ".json" else "text/markdown",
                         size_bytes=path.stat().st_size, sha256=_sha256(path),
@@ -319,6 +373,10 @@ def execute_toolpacks(
             run, generated = ExchangeToolPack().execute(output_dir)
         elif toolpack_id == ToolPackId.EXCHANGE_DEVELOPMENT:
             run, generated = _execute_exchange_development(output_dir)
+        elif toolpack_id == ToolPackId.PROJECT_DEVELOPMENT:
+            if not project_id:
+                raise ValueError("project_development requires an imported project id")
+            run, generated = _execute_project_development(project_id, output_dir)
         else:
             raise ValueError(f"unsupported ToolPack: {toolpack_id}")
         runs.append(run)

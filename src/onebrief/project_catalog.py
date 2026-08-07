@@ -134,7 +134,10 @@ class ProjectCatalog:
                     head_sha=inventory.head_sha,
                     worktree_status=inventory.worktree_status,
                     ready_for_isolated_edit=lifecycle.execution_ready,
-                    toolpack_id=None,
+                    toolpack_id=(
+                        ToolPackId.PROJECT_DEVELOPMENT
+                        if lifecycle.execution_ready else None
+                    ),
                     toolpack_status=lifecycle.status,
                     toolpack_blockers=lifecycle.execution_blockers,
                     origin="imported",

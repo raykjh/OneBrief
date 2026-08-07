@@ -122,7 +122,10 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
                 base + 1800, 1800, (0, 1, 1), 2,
             )
         )
-    development = ToolPackId.EXCHANGE_DEVELOPMENT in intake.toolpack_ids
+    development = any(
+        item in intake.toolpack_ids
+        for item in (ToolPackId.EXCHANGE_DEVELOPMENT, ToolPackId.PROJECT_DEVELOPMENT)
+    )
     draft_output_cap = DEVELOPER_OUTPUT_CAP if development else WRITER_OUTPUT_CAP
     stages.extend([
         _stage("evidence_analysis", "gemini-3.5-flash", base, ANALYST_OUTPUT_CAP, (1, 1, 1), 4),
