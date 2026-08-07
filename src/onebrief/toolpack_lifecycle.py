@@ -1,0 +1,405 @@
+"""Deterministic generation, qualification, and approval of imported-project ToolPacks."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from datetime import UTC, datetime
+from enum import StrEnum
+from pathlib import Path, PurePosixPath
+from typing import Literal
+from uuid import uuid4
+
+from pydantic import BaseModel, Field, model_validator
+
+from onebrief.project_import import (
+    MANIFEST_NAME,
+    ImportedProjectRecord,
+    ProjectInventory,
+    default_project_registry_root,
+    inspect_project,
+)
+
+
+BLOCKED_PARTS = {
+    ".env", ".git", ".ssh", "credentials", "library", "logs", "node_modules",
+    "secrets", "service-account", "service_account", "temp", "userSettings",
+}
+SAFE_SUFFIXES = {
+    ".asmdef", ".asset", ".cs", ".css", ".html", ".ini", ".js", ".json",
+    ".jsx", ".md", ".mjs", ".py", ".shader", ".toml", ".ts", ".tsx",
+    ".txt", ".uss", ".uxml", ".xml", ".yaml", ".yml",
+}
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _canonical_hash(value: BaseModel) -> str:
+    canonical = value.model_dump(mode="json")
+    canonical.pop("generated_at", None)
+    payload = json.dumps(
+        canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _safe_prefix(value: str) -> str:
+    normalized = value.replace("\\", "/").strip("/") + "/"
+    path = PurePosixPath(normalized)
+    lowered = {part.casefold() for part in path.parts}
+    if path.is_absolute() or ".." in path.parts or lowered & {item.casefold() for item in BLOCKED_PARTS}:
+        raise ValueError(f"unsafe ToolPack prefix: {value}")
+    return normalized
+
+
+class AdapterId(StrEnum):
+    REPOSITORY_SNAPSHOT = "repository_snapshot"
+    UNITY_COMPILE = "unity_compile"
+    UNITY_EDITMODE_TESTS = "unity_editmode_tests"
+    NODE_SCRIPT = "node_script"
+    PYTHON_TESTS = "python_tests"
+
+
+class ToolAdapter(BaseModel):
+    adapter_id: AdapterId
+    label: str = Field(min_length=3, max_length=120)
+    enabled: bool = True
+    parameter: str | None = Field(default=None, max_length=120)
+    evidence: str = Field(min_length=1, max_length=1000)
+
+
+class GeneratedProjectToolPack(BaseModel):
+    schema_version: Literal["onebrief-generated-toolpack-v1"] = "onebrief-generated-toolpack-v1"
+    project_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,63}$")
+    project_root: str
+    manifest_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    repository_head_sha: str | None = Field(default=None, pattern=r"^[a-f0-9]{40}$")
+    generated_at: str
+    capabilities: list[str] = Field(min_length=1, max_length=20)
+    allowed_read_prefixes: list[str] = Field(min_length=1, max_length=20)
+    allowed_write_prefixes: list[str] = Field(max_length=20)
+    allowed_suffixes: list[str] = Field(min_length=1, max_length=80)
+    adapters: list[ToolAdapter] = Field(min_length=1, max_length=12)
+    blocked_boundaries: list[str] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_boundaries(self) -> "GeneratedProjectToolPack":
+        self.allowed_read_prefixes = [_safe_prefix(item) for item in self.allowed_read_prefixes]
+        self.allowed_write_prefixes = [_safe_prefix(item) for item in self.allowed_write_prefixes]
+        if not set(self.allowed_write_prefixes).issubset(set(self.allowed_read_prefixes)):
+            raise ValueError("write prefixes must be a subset of read prefixes")
+        suffixes = {item.casefold() for item in self.allowed_suffixes}
+        if not suffixes or not suffixes.issubset(SAFE_SUFFIXES):
+            raise ValueError("ToolPack requested an unsupported editable suffix")
+        if len(self.adapters) != len({(item.adapter_id, item.parameter) for item in self.adapters}):
+            raise ValueError("ToolPack adapters must be unique")
+        return self
+
+    @property
+    def sha256(self) -> str:
+        return _canonical_hash(self)
+
+
+class QualificationCheck(BaseModel):
+    check_id: str = Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")
+    passed: bool
+    message: str = Field(min_length=1, max_length=1000)
+
+
+class ToolPackQualification(BaseModel):
+    schema_version: Literal["onebrief-toolpack-qualification-v1"] = "onebrief-toolpack-qualification-v1"
+    project_id: str
+    toolpack_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    qualified_at: str
+    status: Literal["passed", "failed"]
+    checks: list[QualificationCheck] = Field(min_length=1, max_length=30)
+
+
+class ToolPackApproval(BaseModel):
+    schema_version: Literal["onebrief-toolpack-approval-v1"] = "onebrief-toolpack-approval-v1"
+    project_id: str
+    toolpack_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    approved_at: str
+    approved_by: Literal["local_user"] = "local_user"
+    status: Literal["approved"] = "approved"
+    constraints: list[str] = Field(min_length=1, max_length=20)
+
+
+class ToolPackLifecycleState(BaseModel):
+    project_id: str
+    status: Literal["needs_generation", "generated", "validation_failed", "validated", "approved"]
+    execution_ready: bool = False
+    execution_blockers: list[str] = Field(default_factory=list)
+    generated: GeneratedProjectToolPack | None = None
+    qualification: ToolPackQualification | None = None
+    approval: ToolPackApproval | None = None
+
+
+class ToolPackApprovalRequest(BaseModel):
+    toolpack_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class ProjectToolPackLifecycle:
+    def __init__(self, project_id: str, registry_root: Path | None = None):
+        self.registry_root = (registry_root or default_project_registry_root()).resolve()
+        self.project_dir = self.registry_root / project_id
+        self.project_id = project_id
+        self.toolpack_dir = self.project_dir / "toolpacks"
+
+    def _record(self) -> ImportedProjectRecord:
+        path = self.project_dir / "project.json"
+        if not path.is_file():
+            raise FileNotFoundError(f"imported project is not registered: {self.project_id}")
+        record = ImportedProjectRecord.model_validate_json(path.read_text(encoding="utf-8"))
+        if record.manifest.project_id != self.project_id:
+            raise ValueError("project registry identity mismatch")
+        return record
+
+    @staticmethod
+    def _atomic(path: Path, model: BaseModel) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + f".{uuid4().hex}.tmp")
+        temporary.write_text(model.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        os.replace(temporary, path)
+
+    def _load(self, name: str, model_type):
+        path = self.toolpack_dir / name
+        if not path.is_file():
+            return None
+        return model_type.model_validate_json(path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _prefixes(inventory: ProjectInventory) -> tuple[list[str], list[str]]:
+        systems = set(inventory.detected_ecosystems)
+        if "unity" in systems:
+            return ["Assets/", "Packages/", "ProjectSettings/"], ["Assets/", "Packages/"]
+        if "node" in systems:
+            roots = ["app/", "src/", "web/", "public/", "tests/"]
+            return roots, roots
+        if "python" in systems:
+            return ["src/", "tests/", "docs/"], ["src/", "tests/", "docs/"]
+        if "dotnet" in systems:
+            return ["src/", "tests/", "docs/"], ["src/", "tests/", "docs/"]
+        return ["docs/"], ["docs/"]
+
+    @staticmethod
+    def _node_adapters(root: Path) -> list[ToolAdapter]:
+        package = root / "package.json"
+        if not package.is_file():
+            return []
+        try:
+            scripts = json.loads(package.read_text(encoding="utf-8")).get("scripts", {})
+        except (OSError, json.JSONDecodeError):
+            return []
+        adapters: list[ToolAdapter] = []
+        for name in ("lint", "test", "build"):
+            if isinstance(scripts, dict) and isinstance(scripts.get(name), str):
+                adapters.append(ToolAdapter(
+                    adapter_id=AdapterId.NODE_SCRIPT,
+                    label=f"Run package script: {name}",
+                    parameter=name,
+                    evidence=f"package.json defines the {name!r} script.",
+                ))
+        return adapters
+
+    @staticmethod
+    def _unity_editor(root: Path) -> Path | None:
+        configured = os.environ.get("ONEBRIEF_UNITY_EDITOR")
+        candidates: list[Path] = [Path(configured)] if configured else []
+        if os.name == "nt":
+            version_file = root / "ProjectSettings" / "ProjectVersion.txt"
+            version = ""
+            if version_file.is_file():
+                for line in version_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                    if line.startswith("m_EditorVersion:"):
+                        version = line.split(":", 1)[1].strip()
+                        break
+            if version:
+                candidates.append(Path(r"C:\Program Files\Unity\Hub\Editor") / version / "Editor" / "Unity.exe")
+            candidates.extend(sorted(Path(r"C:\Program Files\Unity\Hub\Editor").glob("*/Editor/Unity.exe"), reverse=True))
+        return next((item.resolve() for item in candidates if item and item.is_file()), None)
+
+    def generate_and_qualify(self) -> ToolPackLifecycleState:
+        record = self._record()
+        manifest = record.manifest
+        inventory = inspect_project(manifest)
+        root = Path(inventory.root_path)
+        read_prefixes, write_prefixes = self._prefixes(inventory)
+        read_prefixes = [item for item in read_prefixes if (root / item.rstrip("/")).exists()]
+        write_prefixes = [item for item in write_prefixes if item in read_prefixes]
+        if not read_prefixes:
+            read_prefixes = ["docs/"]
+            write_prefixes = []
+        adapters = [ToolAdapter(
+            adapter_id=AdapterId.REPOSITORY_SNAPSHOT,
+            label="Verify repository identity and create an isolated snapshot",
+            evidence="The imported project inventory records a Git repository and immutable HEAD." if inventory.git_repository else "No Git repository was detected.",
+            enabled=inventory.git_repository and inventory.head_sha is not None,
+        )]
+        systems = set(inventory.detected_ecosystems)
+        if "unity" in systems:
+            editor = self._unity_editor(root)
+            adapters.extend([
+                ToolAdapter(
+                    adapter_id=AdapterId.UNITY_COMPILE,
+                    label="Compile the isolated Unity project in batch mode",
+                    enabled=editor is not None,
+                    evidence=str(editor) if editor else "A compatible Unity Editor was not found.",
+                ),
+                ToolAdapter(
+                    adapter_id=AdapterId.UNITY_EDITMODE_TESTS,
+                    label="Run Unity EditMode tests when the project exposes them",
+                    enabled=editor is not None,
+                    evidence=str(editor) if editor else "A compatible Unity Editor was not found.",
+                ),
+            ])
+        adapters.extend(self._node_adapters(root))
+        if "python" in systems:
+            adapters.append(ToolAdapter(
+                adapter_id=AdapterId.PYTHON_TESTS,
+                label="Run project Python tests",
+                enabled=(root / "tests").is_dir(),
+                evidence="tests/ directory detected" if (root / "tests").is_dir() else "tests/ directory not found",
+            ))
+        resident = root / MANIFEST_NAME
+        manifest_digest = hashlib.sha256(resident.read_bytes()).hexdigest()
+        generated = GeneratedProjectToolPack(
+            project_id=self.project_id,
+            project_root=str(root),
+            manifest_sha256=manifest_digest,
+            repository_head_sha=inventory.head_sha,
+            generated_at=_now(),
+            capabilities=[
+                "read bounded project context",
+                "prepare changes only in an isolated repository snapshot",
+                "verify exact base hashes before applying changes",
+                "run only approved deterministic validation adapters",
+                "return a reviewable patch without modifying the source repository",
+            ],
+            allowed_read_prefixes=read_prefixes,
+            allowed_write_prefixes=write_prefixes,
+            allowed_suffixes=sorted(SAFE_SUFFIXES),
+            adapters=adapters,
+            blocked_boundaries=[
+                "source repository writes",
+                "credentials, secret stores, accounts, payments, and personal data",
+                "network deployment, release, publishing, and Git push",
+                "dependency installation and arbitrary shell commands",
+                "destructive Git operations and generated build directories",
+            ],
+        )
+        self._atomic(self.toolpack_dir / "generated.json", generated)
+        qualification = self._qualify(generated, record, inventory)
+        self._atomic(self.toolpack_dir / "qualification.json", qualification)
+        approval_path = self.toolpack_dir / "approval.json"
+        previous = self._load("approval.json", ToolPackApproval)
+        if previous is not None and previous.toolpack_sha256 != generated.sha256:
+            approval_path.unlink(missing_ok=True)
+        return self.state()
+
+    def _qualify(
+        self,
+        generated: GeneratedProjectToolPack,
+        record: ImportedProjectRecord,
+        inventory: ProjectInventory,
+    ) -> ToolPackQualification:
+        root = Path(generated.project_root).resolve()
+        resident = root / MANIFEST_NAME
+        checks = [
+            QualificationCheck(
+                check_id="registry_root_match",
+                passed=root == Path(record.manifest.project_root).resolve(),
+                message="Generated ToolPack root matches the imported project registry.",
+            ),
+            QualificationCheck(
+                check_id="resident_manifest_match",
+                passed=resident.is_file() and hashlib.sha256(resident.read_bytes()).hexdigest() == generated.manifest_sha256,
+                message="Resident project manifest matches the generated ToolPack identity.",
+            ),
+            QualificationCheck(
+                check_id="bounded_write_paths",
+                passed=bool(generated.allowed_write_prefixes) and set(generated.allowed_write_prefixes).issubset(set(generated.allowed_read_prefixes)),
+                message="Write paths are non-empty, relative, bounded, and included in the read boundary.",
+            ),
+            QualificationCheck(
+                check_id="isolated_snapshot_adapter",
+                passed=any(item.adapter_id == AdapterId.REPOSITORY_SNAPSHOT and item.enabled for item in generated.adapters),
+                message="A Git-backed isolated snapshot adapter is available.",
+            ),
+            QualificationCheck(
+                check_id="repository_head_match",
+                passed=inventory.head_sha is not None and inventory.head_sha == generated.repository_head_sha,
+                message="The current repository HEAD matches the generated ToolPack base.",
+            ),
+            QualificationCheck(
+                check_id="validation_adapter_available",
+                passed=any(item.enabled and item.adapter_id != AdapterId.REPOSITORY_SNAPSHOT for item in generated.adapters),
+                message="At least one deterministic project validation adapter is available.",
+            ),
+        ]
+        return ToolPackQualification(
+            project_id=self.project_id,
+            toolpack_sha256=generated.sha256,
+            qualified_at=_now(),
+            status="passed" if all(item.passed for item in checks) else "failed",
+            checks=checks,
+        )
+
+    def approve(self, toolpack_sha256: str) -> ToolPackLifecycleState:
+        generated = self._load("generated.json", GeneratedProjectToolPack)
+        qualification = self._load("qualification.json", ToolPackQualification)
+        if generated is None or qualification is None:
+            raise ValueError("ToolPack must be generated and qualified before approval")
+        if generated.sha256 != toolpack_sha256 or qualification.toolpack_sha256 != toolpack_sha256:
+            raise ValueError("ToolPack changed after review; regenerate and review it again")
+        if qualification.status != "passed" or not all(item.passed for item in qualification.checks):
+            raise ValueError("ToolPack qualification did not pass")
+        approval = ToolPackApproval(
+            project_id=self.project_id,
+            toolpack_sha256=toolpack_sha256,
+            approved_at=_now(),
+            constraints=generated.blocked_boundaries,
+        )
+        self._atomic(self.toolpack_dir / "approval.json", approval)
+        return self.state()
+
+    def state(self) -> ToolPackLifecycleState:
+        generated = self._load("generated.json", GeneratedProjectToolPack)
+        qualification = self._load("qualification.json", ToolPackQualification)
+        approval = self._load("approval.json", ToolPackApproval)
+        if generated is None:
+            return ToolPackLifecycleState(project_id=self.project_id, status="needs_generation")
+        status = "generated"
+        if qualification is not None:
+            status = "validated" if qualification.status == "passed" else "validation_failed"
+        valid_approval = (
+            approval is not None
+            and qualification is not None
+            and qualification.status == "passed"
+            and approval.toolpack_sha256 == generated.sha256 == qualification.toolpack_sha256
+        )
+        if valid_approval:
+            status = "approved"
+        record = self._record()
+        inventory = inspect_project(record.manifest)
+        blockers: list[str] = []
+        if not valid_approval:
+            blockers.append("ToolPack generation, qualification, and exact-hash approval are incomplete.")
+        if inventory.worktree_status != "clean":
+            blockers.append("The source repository has uncommitted changes that must be preserved or isolated.")
+        if inventory.head_sha != generated.repository_head_sha:
+            blockers.append("The repository HEAD changed after ToolPack generation.")
+        # Runtime wiring remains a separate explicit boundary from capability approval.
+        blockers.append("The generic isolated development runtime is not connected yet.")
+        return ToolPackLifecycleState(
+            project_id=self.project_id,
+            status=status,
+            execution_ready=False,
+            execution_blockers=blockers,
+            generated=generated,
+            qualification=qualification,
+            approval=approval if valid_approval else None,
+        )

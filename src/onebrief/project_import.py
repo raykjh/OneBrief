@@ -175,7 +175,10 @@ def inspect_project(manifest: ProjectManifest) -> ProjectInventory:
         ecosystems.append("dotnet")
     branch = _git(root, "branch", "--show-current") or None if git_repository else None
     head = _git(root, "rev-parse", "HEAD") if git_repository else ""
-    porcelain = _git(root, "status", "--porcelain") if git_repository else ""
+    porcelain = "\n".join(
+        line for line in _git(root, "status", "--porcelain").splitlines()
+        if line[3:].replace("\\", "/") != MANIFEST_NAME
+    ) if git_repository else ""
     return ProjectInventory(
         project_id=manifest.project_id,
         root_path=str(root),

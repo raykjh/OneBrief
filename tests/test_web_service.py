@@ -83,6 +83,12 @@ def test_home_serves_the_real_workflow() -> None:
     assert 'id="selectProjectFolder"' in response.text
     assert 'id="folderDraftPanel"' in response.text
     assert 'id="registerProjectFolder"' in response.text
+    assert 'id="toolpackPanel"' in response.text
+    assert 'id="generateToolpack"' in response.text
+    assert 'id="approveToolpack"' in response.text
+    assert '/toolpack/generate' in response.text
+    assert '/toolpack/approve' in response.text
+    assert 'toolpack_sha256' in response.text
     assert 'fetch("/api/projects/pick-folder"' in response.text
     assert 'fetch("/api/projects/register-folder"' in response.text
     assert 'p.continuation?.canonical_goal' in response.text

@@ -16,6 +16,7 @@ from onebrief.project_import import (
     default_project_registry_root,
     inspect_project,
 )
+from onebrief.toolpack_lifecycle import ProjectToolPackLifecycle
 
 class ProjectHistoryEntry(BaseModel):
     commit: str = Field(pattern=r"^[a-f0-9]{7,40}$")
@@ -36,6 +37,7 @@ class RegisteredProject(BaseModel):
     ready_for_isolated_edit: bool
     toolpack_id: ToolPackId | None
     toolpack_status: str = "approved"
+    toolpack_blockers: list[str] = Field(default_factory=list)
     origin: str = "built_in"
     workspace_path: str | None = None
     recent_history: list[ProjectHistoryEntry] = Field(default_factory=list, max_length=8)
@@ -117,6 +119,9 @@ class ProjectCatalog:
                 if manifest.project_id == "exchange":
                     continue
                 inventory = inspect_project(manifest)
+                lifecycle = ProjectToolPackLifecycle(
+                    manifest.project_id, self.registry_root
+                ).state()
                 summary = manifest.summary.strip() or manifest.canonical_goal[:500]
                 projects.append(RegisteredProject(
                     project_id=manifest.project_id,
@@ -128,9 +133,10 @@ class ProjectCatalog:
                     branch=inventory.branch,
                     head_sha=inventory.head_sha,
                     worktree_status=inventory.worktree_status,
-                    ready_for_isolated_edit=False,
+                    ready_for_isolated_edit=lifecycle.execution_ready,
                     toolpack_id=None,
-                    toolpack_status=record.toolpack_preparation.status,
+                    toolpack_status=lifecycle.status,
+                    toolpack_blockers=lifecycle.execution_blockers,
                     origin="imported",
                     workspace_path=str(record_path.parent),
                     recent_history=[],

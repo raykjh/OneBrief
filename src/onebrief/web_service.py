@@ -38,6 +38,7 @@ from onebrief.project_import import (
     MANIFEST_NAME,
     MAX_MANIFEST_BYTES,
 )
+from onebrief.toolpack_lifecycle import ProjectToolPackLifecycle, ToolPackApprovalRequest
 from onebrief.project_continuity import ProjectContinuationContext, ProjectContinuityStore
 from onebrief.result_delivery import ExchangePreviewManager
 from onebrief.request_reuse import (
@@ -492,6 +493,56 @@ def register_external_project_folder(
         "registry_path": result.registry_path,
     }
 
+def _toolpack_project(project_id: str) -> RegisteredProject:
+    try:
+        project = ProjectCatalog().get(project_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    if project.origin != "imported":
+        raise HTTPException(409, "Built-in ToolPacks are managed by the application release.")
+    return project
+
+
+@app.get("/api/projects/{project_id}/toolpack")
+def project_toolpack_state(project_id: str) -> dict[str, object]:
+    _toolpack_project(project_id)
+    try:
+        state = ProjectToolPackLifecycle(project_id).state()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"state": state.model_dump(mode="json")}
+
+
+@app.post("/api/projects/{project_id}/toolpack/generate")
+def generate_project_toolpack(project_id: str) -> dict[str, object]:
+    _toolpack_project(project_id)
+    try:
+        state = ProjectToolPackLifecycle(project_id).generate_and_qualify()
+        project = ProjectCatalog().get(project_id)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {
+        "state": state.model_dump(mode="json"),
+        "project": project.model_dump(mode="json"),
+    }
+
+
+@app.post("/api/projects/{project_id}/toolpack/approve")
+def approve_project_toolpack(
+    project_id: str,
+    request: ToolPackApprovalRequest,
+) -> dict[str, object]:
+    _toolpack_project(project_id)
+    try:
+        state = ProjectToolPackLifecycle(project_id).approve(request.toolpack_sha256)
+        project = ProjectCatalog().get(project_id)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {
+        "state": state.model_dump(mode="json"),
+        "project": project.model_dump(mode="json"),
+    }
+
 @app.get("/api/projects")
 def projects(q: str = "") -> dict[str, object]:
     items: list[dict[str, object]] = []
@@ -527,10 +578,14 @@ async def inspect(
             selected_project = ProjectCatalog().get(existing_project_id)
         except KeyError as exc:
             raise HTTPException(422, str(exc)) from exc
-        if selected_project.toolpack_status != "approved":
+        if (
+            selected_project.toolpack_status != "approved"
+            or not selected_project.ready_for_isolated_edit
+        ):
+            blockers = " ".join(selected_project.toolpack_blockers)
             raise HTTPException(
                 409,
-                "\ud504\ub85c\uc81d\ud2b8 \ub4f1\ub85d\uacfc \uc870\uc0ac\ub294 \uc644\ub8cc\ub418\uc5c8\uc9c0\ub9cc ToolPack \uc0dd\uc131\u00b7\uac80\uc99d\u00b7\uc2b9\uc778\uc774 \ud544\uc694\ud569\ub2c8\ub2e4.",
+                "ToolPack is not execution-ready. " + blockers,
             )
         continuation_context = ProjectContinuityStore(
             selected_project, _local_jobs_root()

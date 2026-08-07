@@ -1,0 +1,130 @@
+import json
+import subprocess
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from onebrief.project_catalog import ProjectCatalog
+from onebrief.project_import import ExternalProjectImporter, MANIFEST_NAME
+from onebrief.toolpack_lifecycle import ProjectToolPackLifecycle
+from onebrief.web_service import app
+
+
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+
+def _registered_unity(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
+    root = tmp_path / "game"
+    registry = tmp_path / "registry"
+    (root / "ProjectSettings").mkdir(parents=True)
+    (root / "Packages").mkdir()
+    (root / "Assets" / "Scripts").mkdir(parents=True)
+    (root / "ProjectSettings" / "ProjectVersion.txt").write_text(
+        "m_EditorVersion: 6000.3.11f1", encoding="utf-8"
+    )
+    (root / "Packages" / "manifest.json").write_text("{}", encoding="utf-8")
+    (root / "Assets" / "Scripts" / "Game.cs").write_text(
+        "public class Game {}", encoding="utf-8"
+    )
+    _git(root, "init")
+    _git(root, "config", "user.name", "OneBrief Test")
+    _git(root, "config", "user.email", "onebrief@example.invalid")
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "Create Unity project")
+    manifest = {
+        "schema_version": "onebrief-project-v1",
+        "project_id": "toolpack-game",
+        "name": "ToolPack Game",
+        "project_type": "unity_project",
+        "project_root": str(root.resolve()),
+        "canonical_goal": "Safely improve the game.",
+        "summary": "Test Unity project.",
+        "authoritative_documents": ["ProjectSettings/ProjectVersion.txt"],
+    }
+    payload = json.dumps(manifest, indent=2).encode("utf-8")
+    (root / MANIFEST_NAME).write_bytes(payload)
+    ExternalProjectImporter(registry).import_bytes(payload)
+    editor = tmp_path / "Unity.exe"
+    editor.write_bytes(b"fake editor")
+    monkeypatch.setenv("ONEBRIEF_UNITY_EDITOR", str(editor))
+    return root, registry
+
+
+def test_generated_toolpack_is_qualified_and_exact_hash_approved(tmp_path: Path, monkeypatch) -> None:
+    _root, registry = _registered_unity(tmp_path, monkeypatch)
+    lifecycle = ProjectToolPackLifecycle("toolpack-game", registry)
+
+    generated = lifecycle.generate_and_qualify()
+
+    assert generated.status == "validated"
+    assert generated.qualification is not None
+    assert all(item.passed for item in generated.qualification.checks)
+    assert generated.generated is not None
+    assert generated.generated.allowed_write_prefixes == ["Assets/", "Packages/"]
+    assert any(item.adapter_id.value == "unity_compile" and item.enabled for item in generated.generated.adapters)
+    with pytest.raises(ValueError, match="changed after review"):
+        lifecycle.approve("0" * 64)
+
+    approved = lifecycle.approve(generated.qualification.toolpack_sha256)
+
+    assert approved.status == "approved"
+    assert approved.approval is not None
+    assert approved.execution_ready is False
+    assert any("runtime" in item for item in approved.execution_blockers)
+    project = ProjectCatalog(
+        exchange_root=tmp_path / "missing-exchange",
+        registry_root=registry,
+    ).get("toolpack-game")
+    assert project.toolpack_status == "approved"
+    assert project.ready_for_isolated_edit is False
+
+
+def test_regeneration_invalidates_approval_when_repository_head_changes(tmp_path: Path, monkeypatch) -> None:
+    root, registry = _registered_unity(tmp_path, monkeypatch)
+    lifecycle = ProjectToolPackLifecycle("toolpack-game", registry)
+    first = lifecycle.generate_and_qualify()
+    lifecycle.approve(first.qualification.toolpack_sha256)
+    (root / "Assets" / "Scripts" / "Added.cs").write_text(
+        "public class Added {}", encoding="utf-8"
+    )
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "Change repository head")
+
+    regenerated = lifecycle.generate_and_qualify()
+
+    assert regenerated.status == "validated"
+    assert regenerated.approval is None
+    assert regenerated.generated.repository_head_sha != first.generated.repository_head_sha
+
+
+def test_toolpack_web_generate_review_and_approve(tmp_path: Path, monkeypatch) -> None:
+    _root, registry = _registered_unity(tmp_path, monkeypatch)
+    monkeypatch.setenv("ONEBRIEF_PROJECTS_ROOT", str(registry))
+    client = TestClient(app)
+
+    initial = client.get("/api/projects/toolpack-game/toolpack")
+    generated = client.post("/api/projects/toolpack-game/toolpack/generate")
+    body = generated.json()["state"]
+    approved = client.post(
+        "/api/projects/toolpack-game/toolpack/approve",
+        json={"toolpack_sha256": body["qualification"]["toolpack_sha256"]},
+    )
+
+    assert initial.status_code == 200
+    assert initial.json()["state"]["status"] == "needs_generation"
+    assert generated.status_code == 200
+    assert body["status"] == "validated"
+    assert approved.status_code == 200
+    assert approved.json()["state"]["status"] == "approved"
+    blocked = client.post(
+        "/api/inspect",
+        data={
+            "goal": "Improve the imported game.",
+            "output_target": "existing_project",
+            "existing_project_id": "toolpack-game",
+        },
+    )
+    assert blocked.status_code == 409
+    assert "not execution-ready" in blocked.json()["detail"]
