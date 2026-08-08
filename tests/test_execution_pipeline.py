@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+from google.genai import types
 
 from onebrief.development_toolpack import CodeChangeSet, DevelopmentCommandResult, DevelopmentRun
 from onebrief.generic_development_toolpack import ProjectCodeChangeSet
@@ -9,11 +10,13 @@ from onebrief.budget_guard import BudgetExceeded, BudgetStore, RunStatus
 from onebrief.execution_pipeline import ExecutionPipeline
 from onebrief.execution_agents import DeveloperAgent
 from onebrief.execution_limits import DEVELOPER_OUTPUT_CAP
+from onebrief.guarded_gemini import BudgetedGeminiClient
 from onebrief.execution_schemas import (
     AnalysisPackage,
     DraftArtifact,
     PipelineStatus,
     VerificationReport,
+    Verdict,
 )
 from onebrief.producer import estimate_budget
 from onebrief.schemas import IntakeRequest, InternalSource, OutputTarget, RequirementsAnalysis, SourcePriority, ToolPackId
@@ -38,6 +41,20 @@ class FakeGateway:
 class BlockingGateway:
     def generate_json(self, **_: object):
         raise BudgetExceeded("blocked before generation")
+
+
+class FakeBudgetedGateway(BudgetedGeminiClient):
+    """Budgeted gateway type marker without a live Vertex client."""
+
+    def __init__(self, outputs: list[object]):
+        self.outputs = outputs
+        self.calls: list[tuple[str, str]] = []
+
+    def generate_json(self, *, stage: str, model: str, schema: type, **_: object):
+        self.calls.append((stage, model))
+        value = self.outputs.pop(0)
+        assert isinstance(value, schema)
+        return value
 
 
 def _requirements() -> RequirementsAnalysis:
@@ -172,6 +189,138 @@ def test_revision_is_always_reverified_through_same_gateway(tmp_path: Path) -> N
     assert retry_payload["verification_feedback"]["verdict"] == "REVISE"
 
 
+def test_production_gateway_selects_adk_convergence_without_legacy_writer_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    intake = IntakeRequest(goal="Create a guide.", max_revision_rounds=2)
+    source = _source()
+    run_dir = _approve(tmp_path, intake, source)
+    gateway = FakeBudgetedGateway([_analysis()])
+    output_dir = tmp_path / "adk-output"
+    calls: list[str] = []
+
+    def fake_adk(self, **_: object):
+        calls.append("adk")
+        draft = _draft()
+        report = _verification("PASS")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "draft_r1.json").write_text(
+            draft.model_dump_json(indent=2), encoding="utf-8"
+        )
+        (output_dir / "verification_r1.json").write_text(
+            report.model_dump_json(indent=2), encoding="utf-8"
+        )
+        (output_dir / "adk_convergence_trace.json").write_text(
+            json.dumps({"same_maker_reused": True}), encoding="utf-8"
+        )
+        return draft, report, 1
+
+    monkeypatch.setattr(ExecutionPipeline, "_run_adk_document_convergence", fake_adk)
+    result = ExecutionPipeline(run_dir, gateway=gateway).run(
+        intake=intake,
+        requirements=_requirements(),
+        sources=[source],
+        output_dir=output_dir,
+    )
+
+    assert result.status == PipelineStatus.COMPLETE
+    assert calls == ["adk"]
+    assert [stage for stage, _ in gateway.calls] == ["evidence_analysis"]
+    assert (output_dir / "final.md").is_file()
+
+
+def test_adk_software_loop_repairs_failed_isolated_test_before_independent_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initial = CodeChangeSet(summary="Initial implementation", changes=[{
+        "path": "web/src/status.ts", "base_sha256": None,
+        "content": "export const status = 'broken';\n", "reason": "Implement status.",
+    }])
+    corrected = CodeChangeSet(summary="Corrected implementation", changes=[{
+        "path": "web/src/status.ts", "base_sha256": None,
+        "content": "export const status = 'ready';\n", "reason": "Repair failed test.",
+    }])
+
+    class AdkSoftwareGateway(BudgetedGeminiClient):
+        def __init__(self) -> None:
+            self.stages: list[str] = []
+            self.outputs = [
+                initial.model_dump(mode="json"),
+                corrected.model_dump(mode="json"),
+                _verification("PASS").model_dump(mode="json"),
+            ]
+
+        def generate_adk_response(self, **kwargs: object) -> types.GenerateContentResponse:
+            self.stages.append(str(kwargs["stage"]))
+            payload = self.outputs.pop(0)
+            return types.GenerateContentResponse(candidates=[types.Candidate(
+                content=types.Content(
+                    role="model", parts=[types.Part(text=json.dumps(payload))]
+                ),
+                finish_reason=types.FinishReason.STOP,
+            )])
+
+    attempts: list[CodeChangeSet] = []
+
+    def fake_apply(
+        _self: ExecutionPipeline, _intake: IntakeRequest, _pack: object, supplied: CodeChangeSet,
+        development_dir: Path, _contract: dict[str, object],
+    ) -> DevelopmentRun:
+        attempts.append(supplied)
+        if len(attempts) == 1:
+            raise RuntimeError("development verification failed: web_tests expected ready status")
+        changed = development_dir / "changed_files" / "web" / "src" / "status.ts"
+        changed.parent.mkdir(parents=True, exist_ok=True)
+        changed.write_text(supplied.changes[0].content, encoding="utf-8")
+        (development_dir / "changes.patch").write_text("patch\n", encoding="utf-8")
+        run = DevelopmentRun(
+            status="verified", repository_name="exchange", base_head_sha="a" * 40,
+            summary=supplied.summary, changed_paths=["web/src/status.ts"],
+            commands=[DevelopmentCommandResult(
+                command_id="web_tests", argv=["npm", "test"], exit_code=0,
+                duration_seconds=0.1, output_tail="passed",
+            )],
+            patch_path="development/changes.patch", safety_boundary=["isolated clone only"],
+        )
+        (development_dir / "development_run.json").write_text(
+            run.model_dump_json(indent=2), encoding="utf-8"
+        )
+        return run
+
+    monkeypatch.setattr(ExecutionPipeline, "_apply_development_change_set", fake_apply)
+    intake = IntakeRequest(
+        goal="Repair the existing Exchange status module.",
+        output_target=OutputTarget.EXISTING_PROJECT,
+        toolpack_ids=[ToolPackId.EXCHANGE_DEVELOPMENT],
+        max_revision_rounds=2,
+    )
+    gateway = AdkSoftwareGateway()
+    output_dir = tmp_path / "software-adk"
+    pipeline = ExecutionPipeline(tmp_path / "run", gateway=gateway)
+    draft, report, revision_round = pipeline._run_adk_development_convergence(
+        intake=intake, requirements=_requirements(), sources=[_source()],
+        source_payload=[{
+            "name": "exchange-source/web/src/status.ts", "priority": "mandatory",
+            "requirement_keys": ["status"], "content": "export const status = 'old';",
+            "sha256": "b" * 64,
+        }],
+        contract={"goal": intake.goal, "acceptance_criteria": ["Tests pass."]},
+        analysis=_analysis(), output_dir=output_dir,
+    )
+
+    assert revision_round == 1
+    assert report.verdict == Verdict.PASS
+    assert "격리 빌드" in draft.title
+    assert [item.changes[0].content for item in attempts] == [
+        initial.changes[0].content, corrected.changes[0].content,
+    ]
+    assert gateway.stages == [
+        "long_form_draft", "long_form_draft", "independent_verification"
+    ]
+    trace = json.loads((output_dir / "adk_convergence_trace.json").read_text(encoding="utf-8"))
+    assert trace["agent_tree"]["same_maker_reused"] is True
+
+
 def test_budget_block_writes_resumable_checkpoint(tmp_path: Path) -> None:
     intake = IntakeRequest(goal="Create a guide.")
     source = _source()
@@ -229,7 +378,11 @@ def test_exchange_development_returns_verified_web_changes_without_replacing_the
                 DevelopmentCommandResult(
                     command_id="web_build", argv=["npm", "run", "build"],
                     exit_code=0, duration_seconds=0.1, output_tail="passed",
-                )
+                ),
+                DevelopmentCommandResult(
+                    command_id="web_tests", argv=["npm", "test"],
+                    exit_code=0, duration_seconds=0.1, output_tail="passed",
+                ),
             ],
             patch_path="development/changes.patch",
             safety_boundary=["isolated clone only"],
@@ -254,7 +407,7 @@ def test_exchange_development_returns_verified_web_changes_without_replacing_the
         "evidence_analysis", "long_form_draft", "independent_verification_r0"
     ]
 
-def test_exchange_development_repairs_a_failed_regression_check_once(
+def test_exchange_development_repairs_two_distinct_failed_regression_checks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     intake = IntakeRequest(
@@ -280,7 +433,17 @@ def test_exchange_development_repairs_a_failed_regression_check_once(
             "reason": "Repair the reported regression.",
         }],
     )
-    gateway = FakeGateway([_analysis(), initial, repaired, _verification("PASS")])
+    final_repair = CodeChangeSet(
+        summary="Compile-safe implementation.",
+        changes=[{
+            "path": "web/src/status.ts", "base_sha256": None,
+            "content": "export const status = 'verified';\n",
+            "reason": "Repair the second deterministic failure.",
+        }],
+    )
+    gateway = FakeGateway([
+        _analysis(), initial, repaired, final_repair, _verification("PASS")
+    ])
     monkeypatch.setattr(
         "onebrief.execution_pipeline.execute_toolpacks",
         lambda toolpack_ids, output_dir: ([], []),
@@ -289,8 +452,10 @@ def test_exchange_development_repairs_a_failed_regression_check_once(
 
     def fake_apply(_self, supplied: CodeChangeSet, output_dir: Path) -> DevelopmentRun:
         attempts.append(supplied)
-        if len(attempts) == 1:
-            raise RuntimeError("development verification failed: web_tests\nmissing required marker")
+        if len(attempts) <= 2:
+            raise RuntimeError(
+                f"development verification failed: web_tests\nattempt {len(attempts)} failed"
+            )
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "changes.patch").write_text("repaired patch\n", encoding="utf-8")
         run = DevelopmentRun(
@@ -316,15 +481,18 @@ def test_exchange_development_repairs_a_failed_regression_check_once(
     )
 
     assert result.status == PipelineStatus.COMPLETE
-    assert attempts == [initial, repaired]
+    assert attempts == [initial, repaired, final_repair]
     assert (output_dir / "development_verification_failure_r0.txt").is_file()
+    assert (output_dir / "development_verification_failure_r1.txt").is_file()
     assert (output_dir / "code_change_set_retry_r1.json").is_file()
+    assert (output_dir / "code_change_set_retry_r2.json").is_file()
     recovery = json.loads((output_dir / "recovery_decisions.json").read_text(encoding="utf-8"))
     assert recovery["decisions"][0]["error_class"] == "artifact_validation"
     assert recovery["decisions"][0]["action"] == "return_to_agent"
     assert recovery["decisions"][0]["responsible_party"] == "maker"
     assert [stage for stage, _ in gateway.calls] == [
         "evidence_analysis", "long_form_draft", "long_form_draft_verification_retry",
+        "long_form_draft_verification_retry",
         "independent_verification_r0",
     ]
 
@@ -403,7 +571,74 @@ def test_developer_retries_provenance_name_used_as_repository_path() -> None:
     )
     gateway = FakeGateway([path_error, corrected])
 
-    assert DeveloperAgent(gateway).run({}, _analysis(), []) == corrected
+    approved_source = {
+        "name": "exchange-source/web/app/page.tsx",
+        "sha256": "a" * 64,
+        "content": "export default function Page(){return null}\n",
+    }
+    assert DeveloperAgent(gateway).run({}, _analysis(), [approved_source]) == corrected
+    assert [stage for stage, _ in gateway.calls] == [
+        "long_form_draft", "long_form_draft_compact_retry"
+    ]
+
+
+def test_developer_preserves_new_file_provenance_during_verification_retry() -> None:
+    previous = CodeChangeSet(
+        summary="Add a bounded test assembly.",
+        changes=[{
+            "path": "web/app/new-visual-test.tsx",
+            "base_sha256": None,
+            "content": "export const visualTest = 'initial';\n",
+            "reason": "Add the visual test assembly.",
+        }],
+    )
+    mistaken_retry = CodeChangeSet(
+        summary="Repair the bounded test assembly.",
+        changes=[{
+            "path": "web/app/new-visual-test.tsx",
+            "base_sha256": "a" * 64,
+            "content": "export const visualTest = 'repaired';\n",
+            "reason": "Repair the visual test assembly.",
+        }],
+    )
+    gateway = FakeGateway([mistaken_retry])
+
+    result = DeveloperAgent(gateway).run(
+        {}, _analysis(), [], verification_feedback="compile failed", previous_change_set=previous
+    )
+
+    assert result.changes[0].base_sha256 is None
+    assert [stage for stage, _ in gateway.calls] == ["long_form_draft_verification_retry"]
+
+
+def test_developer_rejects_blind_existing_file_replacement_and_uses_sidecar() -> None:
+    blind = CodeChangeSet(
+        summary="Blind replacement.",
+        changes=[{
+            "path": "web/src/unseen.ts",
+            "base_sha256": "b" * 64,
+            "content": "export const unseen = true;\n",
+            "reason": "Attempt to replace an uninspected file.",
+        }],
+    )
+    sidecar = CodeChangeSet(
+        summary="Safe additive implementation.",
+        changes=[{
+            "path": "web/src/localization-sidecar.ts",
+            "base_sha256": None,
+            "content": "export const locales = ['ja'];\n",
+            "reason": "Add a bounded sidecar without replacing unseen source.",
+        }],
+    )
+    gateway = FakeGateway([blind, sidecar])
+
+    result = DeveloperAgent(gateway).run({}, _analysis(), [{
+        "name": "exchange-source/web/app/page.tsx",
+        "sha256": "a" * 64,
+        "content": "export default function Page(){return null}\n",
+    }])
+
+    assert result == sidecar
     assert [stage for stage, _ in gateway.calls] == [
         "long_form_draft", "long_form_draft_compact_retry"
     ]
@@ -452,7 +687,7 @@ def test_exchange_development_budget_includes_compact_retry_capacity() -> None:
     draft = next(stage for stage in estimate.stages if stage.stage == "long_form_draft")
     assert draft.output_tokens_per_call == DEVELOPER_OUTPUT_CAP
     assert DEVELOPER_OUTPUT_CAP >= 20_000
-    assert (draft.minimum_calls, draft.recommended_calls, draft.maximum_calls) == (1, 2, 2)
+    assert (draft.minimum_calls, draft.recommended_calls, draft.maximum_calls) == (1, 3, 3)
 
 
 def test_resume_reuses_completed_analysis_without_a_new_model_call(tmp_path: Path) -> None:

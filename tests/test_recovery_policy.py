@@ -45,6 +45,49 @@ def test_failed_artifact_verification_returns_to_maker_once() -> None:
     assert decision.action == RecoveryAction.RETURN_TO_AGENT
     assert decision.responsible_party == "maker"
 
+    second = RecoveryPolicy().decide(
+        RuntimeError("development verification failed: compile\nsecond distinct error"),
+        context="development_verification",
+        attempt_number=2,
+    )
+    third = RecoveryPolicy().decide(
+        RuntimeError("development verification failed: compile\nthird error"),
+        context="development_verification",
+        attempt_number=3,
+    )
+    assert second.action == RecoveryAction.RETURN_TO_AGENT
+    assert second.retry_allowed is True
+    assert third.action == RecoveryAction.STOP
+    assert third.retry_allowed is False
+
+
+def test_patch_hygiene_failure_returns_to_maker_once() -> None:
+    decision = RecoveryPolicy().decide(
+        RuntimeError(
+            "development patch hygiene failed: Assets/Locale.cs:12: trailing whitespace."
+        ),
+        context="development_verification",
+        attempt_number=1,
+    )
+
+    assert decision.error_class == ErrorClass.ARTIFACT_VALIDATION
+    assert decision.action == RecoveryAction.RETURN_TO_AGENT
+    assert decision.responsible_party == "maker"
+    assert decision.retry_allowed is True
+
+
+def test_missing_unity_runtime_screenshot_returns_to_maker() -> None:
+    decision = RecoveryPolicy().decide(
+        RuntimeError("Unity visual scenario locale_ko screenshot is unavailable"),
+        context="development_verification",
+        attempt_number=1,
+    )
+
+    assert decision.error_class == ErrorClass.ARTIFACT_VALIDATION
+    assert decision.action == RecoveryAction.RETURN_TO_AGENT
+    assert decision.responsible_party == "maker"
+    assert decision.retry_allowed is True
+
 
 def test_budget_failure_is_returned_to_the_user() -> None:
     decision = RecoveryPolicy().decide(

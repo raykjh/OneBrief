@@ -10,8 +10,55 @@ from onebrief.development_toolpack import (
     DevelopmentCommandResult,
     ExchangeDevelopmentToolPack,
     FileChange,
+    _bee_failure_diagnostics,
+    _unity_test_failure_diagnostics,
+    _verification_signals,
     sha256_file,
 )
+
+
+def test_unity_verification_signals_prioritize_compiler_errors() -> None:
+    log = "\n".join([
+        "[ScriptCompilation] Requested script compilation because Assembly Definition File changed",
+        "-reference:C:/very/long/package/path/compilation.dll",
+        "Assets/Tests/Visual.cs(52,31): error CS1525: Invalid expression term '{'",
+        "Scripts have compiler errors.",
+    ])
+
+    signals = _verification_signals(log)
+
+    assert any("error CS1525" in line for line in signals)
+    assert not any("-reference:" in line for line in signals)
+
+
+def test_bee_failure_diagnostics_collects_recent_compiler_error(tmp_path: Path) -> None:
+    log = tmp_path / "Library" / "Bee" / "artifacts" / "compile.log"
+    log.parent.mkdir(parents=True)
+    log.write_text(
+        "Assets/JULPAE/Tests/PlayMode/Test.cs(12,4): error CS0103: MissingName\n",
+        encoding="utf-8",
+    )
+
+    signals = _bee_failure_diagnostics(tmp_path, since=0)
+
+    assert len(signals) == 1
+    assert "error CS0103: MissingName" in signals[0]
+
+
+def test_unity_test_failure_diagnostics_extracts_assertion_message(tmp_path: Path) -> None:
+    results = tmp_path / "results.xml"
+    results.write_text(
+        '<test-run><test-suite><test-case fullname="OneBrief.Visual.Switch" result="Failed">'
+        '<failure><message>LanguageDropdown GameObject not found.</message></failure>'
+        '</test-case></test-suite></test-run>',
+        encoding="utf-8",
+    )
+
+    failures = _unity_test_failure_diagnostics(results)
+
+    assert failures == [
+        "OneBrief.Visual.Switch: LanguageDropdown GameObject not found."
+    ]
 
 
 def _git(root: Path, *args: str) -> None:

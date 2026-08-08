@@ -30,7 +30,6 @@ class ModelPrice:
 PRICES = {
     "gemini-3.5-flash": ModelPrice(1.50, 9.00),
     "gemini-3.5-flash-lite": ModelPrice(0.30, 2.50),
-    "gemini-2.5-flash": ModelPrice(0.30, 2.50),
 }
 
 
@@ -105,7 +104,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
     if intake.public_research_allowed:
         stages.append(
             _stage(
-                "public_research", "gemini-2.5-flash",
+                "public_research", "gemini-3.5-flash",
                 contract_tokens + 800, PUBLIC_RESEARCH_OUTPUT_CAP,
                 (1, 1, 1), 4, fixed_cost_usd=0.035,
             )
@@ -134,7 +133,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
             "gemini-3.5-flash",
             base + ANALYST_OUTPUT_CAP,
             draft_output_cap,
-            (1, 2, 2) if development else (1, 1, 1),
+            (1, 3, 3) if development else (1, 1, 1),
             12 if development else 6,
         ),
         _stage(
@@ -206,7 +205,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
             "Each revision round includes a new independent verification call.",
             "Role prompts and response-schema input overhead are included conservatively.",
             "Recommended and maximum totals include 20% and 25% contingency respectively.",
-            "Public research reserves one Gemini 2.5 grounded prompt at the $0.035 worst-case rate.",
+            "Public research reserves one Gemini 3.5 grounded prompt with a $0.035 Google Search fee cap.",
             "Actual execution records provider-reported usage and stops at the approved limit.",
         ],
     )

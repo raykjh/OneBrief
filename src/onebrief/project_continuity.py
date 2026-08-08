@@ -113,6 +113,13 @@ class ProjectContinuityStore:
             and ToolPackId.EXCHANGE_DEVELOPMENT in intake.toolpack_ids
         )
 
+    @staticmethod
+    def _failure_tail(value: object, limit: int = 1000) -> str:
+        text = str(value or "")
+        if len(text) <= limit:
+            return text
+        return "..." + text[-(limit - 3):]
+
     def _run_summary(self, job_dir: Path) -> PreviousRun | None:
         try:
             record = json.loads((job_dir / "job.json").read_text(encoding="utf-8"))
@@ -145,7 +152,7 @@ class ProjectContinuityStore:
             status=str(record.get("status", "unknown")),
             updated_at=str(record.get("updated_at", "")),
             stage=str(record.get("current_stage", "")),
-            message=str(record.get("message", ""))[:1000],
+            message=self._failure_tail(record.get("message", "")),
             result_package=record.get("result_package"),
             completed_stages=sorted(completed),
             incomplete_stages=sorted(incomplete),
@@ -191,7 +198,10 @@ class ProjectContinuityStore:
                 completed = [*completed, "verified result package produced"]
                 pending = [*pending, "review and apply the verified result to the source repository"]
             elif latest.status not in {"complete", "partial"}:
-                failed = [*failed, f"{latest.stage}: {latest.message}"[:500]]
+                failed = [
+                    *failed,
+                    f"{latest.stage}: {self._failure_tail(latest.message, 450)}",
+                ]
         goal = str((intake.goal if intake else None) or requirements.get("normalized_goal") or self.project.canonical_goal or self.project.summary)
         return ProjectContinuationState(
             project_id=self.project.project_id,

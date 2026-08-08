@@ -195,6 +195,10 @@ class ModelPolicyGateway:
     def store(self) -> Any:
         return getattr(self.gateway, "store")
 
+    @property
+    def supports_adk(self) -> bool:
+        return callable(getattr(self.gateway, "generate_adk_response", None))
+
     def model_for(self, stage: str) -> str:
         return self.policy.model_for(stage)
 
@@ -205,3 +209,8 @@ class ModelPolicyGateway:
     def generate_text(self, *, stage: str, model: str, **kwargs: Any) -> str:
         self.policy.enforce(stage, model)
         return self.gateway.generate_text(stage=stage, model=model, **kwargs)
+
+    def generate_adk_response(self, *, stage: str, model: str, **kwargs: Any) -> Any:
+        """Allow native ADK turns only through the same approved stage/model policy."""
+        self.policy.enforce(stage, model)
+        return self.gateway.generate_adk_response(stage=stage, model=model, **kwargs)

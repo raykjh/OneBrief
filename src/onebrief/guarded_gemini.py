@@ -157,3 +157,69 @@ class BudgetedGeminiClient:
             raise ValueError(f"{stage} returned no structured response")
         return schema.model_validate_json(response.text)
 
+    def generate_adk_response(
+        self,
+        *,
+        stage: str,
+        model: str,
+        contents: list[types.Content],
+        config: types.GenerateContentConfig | None,
+    ) -> Any:
+        """Execute an ADK model turn through the immutable OneBrief budget ledger.
+
+        ADK remains responsible for agent lifecycle, state, structured output and
+        events. This method is deliberately the only provider boundary so an ADK
+        agent cannot bypass the approved token and cost ceiling.
+        """
+
+        status = self.store.read().status
+        if status not in {RunStatus.APPROVED, RunStatus.RUNNING}:
+            raise BudgetGuardError(f"run cannot start a call while {status.value}")
+        generation = config.model_copy(deep=True) if config is not None else types.GenerateContentConfig()
+        generation.thinking_config = types.ThinkingConfig(thinking_budget=0)
+        max_output_tokens = int(generation.max_output_tokens or 4096)
+        count = self.client.models.count_tokens(
+            model=model,
+            contents=contents,
+            config=types.CountTokensConfig(
+                system_instruction=generation.system_instruction,
+                generation_config=generation,
+            ),
+        )
+        schema_text = str(generation.response_schema or "")
+        system_text = str(generation.system_instruction or "")
+        observed = int(count.total_tokens or 0)
+        local_overhead = approximate_tokens(schema_text) + approximate_tokens(system_text)
+        input_cap = ceil((observed + local_overhead) * 1.15) + 256
+        reservation = self.store.reserve_call(
+            stage=stage,
+            model=model,
+            input_token_cap=input_cap,
+            output_token_cap=max_output_tokens,
+        )
+        try:
+            response = self.client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=generation,
+            )
+        except Exception as exc:
+            self.store.release_call(
+                reservation.call_id, f"provider call failed: {type(exc).__name__}"
+            )
+            raise
+        usage: Any = response.usage_metadata
+        actual_input = int(getattr(usage, "prompt_token_count", 0) or observed)
+        candidate_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
+        thought_tokens = int(getattr(usage, "thoughts_token_count", 0) or 0)
+        actual_output = candidate_tokens + thought_tokens
+        if actual_output == 0:
+            total = int(getattr(usage, "total_token_count", 0) or actual_input)
+            actual_output = max(0, total - actual_input)
+        self.store.settle_call(
+            reservation.call_id,
+            input_tokens=actual_input,
+            output_tokens=actual_output,
+        )
+        return response
+

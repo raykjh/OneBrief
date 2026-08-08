@@ -59,6 +59,7 @@ class AdapterId(StrEnum):
     REPOSITORY_SNAPSHOT = "repository_snapshot"
     UNITY_COMPILE = "unity_compile"
     UNITY_EDITMODE_TESTS = "unity_editmode_tests"
+    UNITY_PLAYMODE_VISUAL_TESTS = "unity_playmode_visual_tests"
     NODE_SCRIPT = "node_script"
     PYTHON_TESTS = "python_tests"
 
@@ -246,6 +247,17 @@ class ProjectToolPackLifecycle:
                 "test" in path.name.casefold()
                 for path in root.glob("Assets/**/*.asmdef")
             )
+            package_manifest = root / "Packages" / "manifest.json"
+            has_test_framework = False
+            if package_manifest.is_file():
+                try:
+                    dependencies = json.loads(
+                        package_manifest.read_text(encoding="utf-8")
+                    ).get("dependencies", {})
+                    has_test_framework = "com.unity.test-framework" in dependencies
+                except (OSError, json.JSONDecodeError):
+                    has_test_framework = False
+
             adapters.extend([
                 ToolAdapter(
                     adapter_id=AdapterId.UNITY_COMPILE,
@@ -260,6 +272,15 @@ class ProjectToolPackLifecycle:
                     evidence=(
                         str(editor) if editor is not None and has_editmode_tests
                         else "No compatible Unity Editor and EditMode test assembly pair was found."
+                    ),
+                ),
+                ToolAdapter(
+                    adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+                    label="Run bounded OneBrief.Visual PlayMode tests and collect runtime evidence",
+                    enabled=editor is not None and has_test_framework,
+                    evidence=(
+                        str(editor) if editor is not None and has_test_framework
+                        else "A compatible Unity Editor and Unity Test Framework were not both found."
                     ),
                 ),
             ])

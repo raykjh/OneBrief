@@ -71,6 +71,13 @@ Rules:
     For scoring or ranking from raw fields, weights alone are insufficient. Require an
     approved conversion table or formula, aggregation method, and tie rule before
     marking the intake ready.
+    For a user-facing program, never define a successful compile or build as proof
+    of feature completion. Require evidence from the running artifact and at least
+    one representative user interaction. For visual or localization work, require
+    rendered-state evidence that every requested state is visibly distinct, text is
+    in the selected locale, and no missing-glyph placeholders are present. Existing
+    regression tests are not evidence for a newly requested behavior unless they
+    exercise that behavior.
 11. Mark ready_for_estimate true only when supported and no mandatory gap remains.
 12. Creative drafting is supported, including screenplays, stories, designs, and
     other long-form artifacts. Do not mark a task unsupported merely because it

@@ -1,0 +1,138 @@
+import json
+from pathlib import Path
+
+import pytest
+
+from onebrief.unity_runtime_evidence import validate_and_copy_unity_visual_evidence
+
+
+def png(width: int = 32, height: int = 32) -> bytes:
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + b"\x00\x00\x00\rIHDR"
+        + width.to_bytes(4, "big")
+        + height.to_bytes(4, "big")
+        + b"\x08\x06\x00\x00\x00"
+    )
+
+
+def write_results(path: Path, *, visual: bool = True) -> None:
+    name = "OneBrief.Visual.LanguageSwitch" if visual else "Project.LegacyTest"
+    path.write_text(
+        f'<test-run testcasecount="1" passed="1" failed="0">'
+        f'<test-suite><test-case fullname="{name}" result="Passed" /></test-suite>'
+        f'</test-run>',
+        encoding="utf-8",
+    )
+
+
+def write_evidence(root: Path, scenarios: list[dict[str, object]]) -> None:
+    evidence = root / "onebrief-evidence"
+    (evidence / "captures").mkdir(parents=True)
+    for scenario in scenarios:
+        (evidence / str(scenario["screenshot_path"])).write_bytes(
+            png() + str(scenario["scenario_id"]).encode("utf-8")
+        )
+    (evidence / "runtime-evidence.json").write_text(
+        json.dumps({
+            "schema_version": "onebrief-unity-visual-evidence-v1",
+            "scenarios": scenarios,
+        }),
+        encoding="utf-8",
+    )
+
+
+def scenario(locale: str, *, missing: int = 0) -> dict[str, object]:
+    return {
+        "scenario_id": f"locale-{locale}",
+        "expected_locale": locale,
+        "observed_locale": locale,
+        "changed_visible_text_count": 3,
+        "missing_glyph_count": missing,
+        "screenshot_path": f"captures/{locale}.png",
+    }
+
+
+def test_valid_visual_evidence_is_copied_and_summarized(tmp_path: Path) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results)
+    write_evidence(tmp_path, [scenario("zh-Hans"), scenario("ja"), scenario("es")])
+
+    summary = validate_and_copy_unity_visual_evidence(
+        tmp_path,
+        results,
+        tmp_path / "packaged",
+        "Add Chinese, Japanese, and Spanish multilingual UI.",
+    )
+
+    assert summary.test_count == 1
+    assert summary.observed_locales == ["es", "ja", "zh-hans"]
+    assert len(summary.screenshot_paths) == 3
+    assert (tmp_path / "packaged" / "runtime-evidence.json").is_file()
+
+
+def test_missing_glyphs_fail_even_when_playmode_test_claims_pass(tmp_path: Path) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results)
+    write_evidence(tmp_path, [scenario("zh-Hans", missing=4)])
+
+    with pytest.raises(RuntimeError, match="missing glyph"):
+        validate_and_copy_unity_visual_evidence(
+            tmp_path, results, tmp_path / "packaged", "Chinese UI"
+        )
+
+
+def test_every_explicitly_requested_locale_must_be_exercised(tmp_path: Path) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results)
+    write_evidence(tmp_path, [scenario("ja")])
+
+    with pytest.raises(RuntimeError, match="requested locale"):
+        validate_and_copy_unity_visual_evidence(
+            tmp_path, results, tmp_path / "packaged", "Japanese and Spanish UI"
+        )
+
+
+def test_legacy_or_zero_coverage_test_cannot_masquerade_as_visual_proof(tmp_path: Path) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results, visual=False)
+    write_evidence(tmp_path, [scenario("ja")])
+
+    with pytest.raises(RuntimeError, match="OneBrief.Visual"):
+        validate_and_copy_unity_visual_evidence(
+            tmp_path, results, tmp_path / "packaged", "Japanese UI"
+        )
+
+
+def test_identical_locale_screenshots_cannot_masquerade_as_visual_proof(tmp_path: Path) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results)
+    scenarios = [scenario("ja"), scenario("es")]
+    write_evidence(tmp_path, scenarios)
+    duplicate = (tmp_path / "onebrief-evidence" / str(scenarios[0]["screenshot_path"])).read_bytes()
+    (tmp_path / "onebrief-evidence" / str(scenarios[1]["screenshot_path"])).write_bytes(duplicate)
+
+    with pytest.raises(RuntimeError, match="identical screenshot"):
+        validate_and_copy_unity_visual_evidence(
+            tmp_path, results, tmp_path / "packaged", "Japanese and Spanish UI"
+        )
+
+
+def test_known_evidence_root_prefix_is_normalized_without_widening_path_access(tmp_path: Path) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results)
+    item = scenario("ja")
+    item["screenshot_path"] = "onebrief-evidence/captures/ja.png"
+    evidence = tmp_path / "onebrief-evidence"
+    (evidence / "captures").mkdir(parents=True)
+    (evidence / "captures" / "ja.png").write_bytes(png() + b"ja")
+    (evidence / "runtime-evidence.json").write_text(
+        json.dumps({"schema_version": "onebrief-unity-visual-evidence-v1", "scenarios": [item]}),
+        encoding="utf-8",
+    )
+
+    summary = validate_and_copy_unity_visual_evidence(
+        tmp_path, results, tmp_path / "packaged", "Japanese UI"
+    )
+
+    assert summary.screenshot_paths == ["screenshots/captures/ja.png"]

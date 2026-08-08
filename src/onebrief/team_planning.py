@@ -131,7 +131,21 @@ def normalize_team_plan(raw: TeamPlanDraft | TeamPlan, *, project_id: str) -> Te
         for token in ("환율", "통화", "금융", "투자", "exchange", "currency", "forex")
     )
     for member in raw.members:
-        skills = list(member.packs.skill_packs)
+        allowed_skill_roles = {
+            "existing-project-development": {AgentType.ARCHITECT, AgentType.MAKER},
+            "implementation-verification": {AgentType.CRITIC},
+            "financial-signal-validation": {
+                AgentType.ANALYST, AgentType.MAKER, AgentType.CRITIC, AgentType.GUARDIAN,
+            },
+        }
+        # Provider output may attach a known skill to the wrong role even when
+        # the selected team itself is valid. Remove only that redundant,
+        # unauthorized attachment; validation still rejects unknown skills.
+        skills = [
+            skill_id for skill_id in member.packs.skill_packs
+            if skill_id not in allowed_skill_roles
+            or member.agent_type in allowed_skill_roles[skill_id]
+        ]
         if any(
             item in raw.toolpack_ids
             for item in (ToolPackId.EXCHANGE_DEVELOPMENT, ToolPackId.PROJECT_DEVELOPMENT)
@@ -265,7 +279,7 @@ def validate_team_plan(
         raise ValueError("artifact creation and independent verification must be separated")
     if public_research_allowed:
         investigator = by_id[plan.stage_owners["public_research"]]
-        if investigator.model != ApprovedModel.GEMINI_2_5_FLASH:
+        if investigator.model != ApprovedModel.GEMINI_3_5_FLASH:
             raise ValueError("public_research must use the approved Google Search-grounded model")
     skill_roles = {
         "existing-project-development": {AgentType.ARCHITECT, AgentType.MAKER},
@@ -280,9 +294,6 @@ def validate_team_plan(
                 raise ValueError(
                     f"{skill_id} cannot be assigned to {member.agent_type.value}"
                 )
-    for stage, owner_id in plan.stage_owners.items():
-        if stage != "public_research" and by_id[owner_id].model == ApprovedModel.GEMINI_2_5_FLASH:
-            raise ValueError("gemini-2.5-flash is reserved for public_research")
     return plan
 
 
@@ -360,8 +371,8 @@ class ProjectOwnerAgent:
                 "when no candidate is needed. Choosing a ToolPack activates tool_execution and its evidence. "
                 "Use only pack IDs in pack_catalog. Assign skill_packs only when their specialized guidance is needed: existing-project-development to architect or maker, implementation-verification only to critic, and financial-signal-validation to analyst, maker, critic, or guardian. Assign APT-3 temperament "
                 "as a tie-breaker profile, not authority. Select one model for every member from "
-                "approved_model_catalog and explain the cost/capability reason. Use gemini-2.5-flash only "
-                "for the investigator that owns public_research; use gemini-3.5-flash for complex work and "
+                "approved_model_catalog and explain the cost/capability reason. Use gemini-3.5-flash "
+                "for the investigator that owns public_research and for complex work; use "
                 "gemini-3.5-flash-lite only for bounded simpler work. Model selection never changes role "
                 "authority. Use short safe lowercase IDs with hyphens and map every executable stage to "
                 "one selected instance. List every unselected type in "

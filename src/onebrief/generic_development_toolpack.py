@@ -27,8 +27,18 @@ from onebrief.development_toolpack import (
     RepositoryInspection,
     _default_runner,
 )
+from onebrief.unity_runtime_evidence import validate_and_copy_unity_visual_evidence
 from onebrief.schemas import InternalSource, SourcePriority
 from onebrief.toolpack_lifecycle import AdapterId, ProjectToolPackLifecycle
+
+
+def _csharp_code_only(value: str) -> str:
+    """Remove C# comments and string literals before structural identifier checks."""
+    token = re.compile(
+        r'(?:\$@|@\$|@)"(?:""|[^"])*"|(?:\$)?"(?:\\.|[^"\\])*"|//[^\r\n]*|/\*.*?\*/',
+        re.DOTALL,
+    )
+    return token.sub(" ", value)
 
 
 def generic_safe_relative(value: str) -> PurePosixPath:
@@ -51,6 +61,18 @@ class ProjectFileChange(BaseModel):
     @classmethod
     def validate_path(cls, value: str) -> str:
         return generic_safe_relative(value).as_posix()
+
+    @field_validator("base_sha256", mode="before")
+    @classmethod
+    def discard_untrusted_invalid_base_hash(cls, value: object) -> object:
+        if value is None:
+            return None
+        candidate = str(value).strip().casefold()
+        if re.fullmatch(r"[a-f0-9]{64}", candidate):
+            return candidate
+        # Model-provided hashes are provenance hints only. The trusted
+        # inspection binds the real Git blob hash before any edit can run.
+        return None
 
     @model_validator(mode="after")
     def block_host_runtime_access(self) -> "ProjectFileChange":
@@ -89,7 +111,12 @@ class ApprovedProjectDevelopmentToolPack:
             encoding="utf-8", errors="replace", timeout=timeout, shell=False, check=False,
         )
         if completed.returncode:
-            raise RuntimeError((completed.stderr or completed.stdout).strip()[:2000])
+            # Git may emit harmless platform warnings (for example LF -> CRLF)
+            # on stderr while placing the actionable diff failure on stdout.
+            detail = "\n".join(
+                part.strip() for part in (completed.stdout, completed.stderr) if part.strip()
+            )
+            raise RuntimeError(detail[:4000])
         return completed.stdout
 
     def _profile(self):
@@ -125,6 +152,62 @@ class ApprovedProjectDevelopmentToolPack:
             return None
         return normalized
 
+    @staticmethod
+    def _normalize_safe_generated_text(path: str, content: str) -> str:
+        """Repair deterministic generated-source contracts without widening access."""
+        pure = PurePosixPath(path)
+        suffix = pure.suffix.casefold()
+        lowered_parts = {part.casefold() for part in pure.parts}
+        if (
+            suffix == ".asmdef"
+            and "tests" in lowered_parts
+            and "playmode" in lowered_parts
+        ):
+            try:
+                payload = json.loads(content)
+            except (TypeError, json.JSONDecodeError):
+                return content
+            if isinstance(payload, dict):
+                optional = payload.get("optionalUnityReferences")
+                if not isinstance(optional, list):
+                    optional = []
+                if "TestAssemblies" not in optional:
+                    optional.append("TestAssemblies")
+                payload["optionalUnityReferences"] = optional
+                # Unity's TestAssemblies marker already supplies both runner
+                # assemblies. Keeping explicit runner references as well makes
+                # Unity reject the asmdef as having duplicate references.
+                references = payload.get("references")
+                if isinstance(references, list):
+                    duplicate_test_runners = {
+                        "UnityEngine.TestRunner",
+                        "UnityEditor.TestRunner",
+                    }
+                    payload["references"] = [
+                        item for item in references
+                        if item not in duplicate_test_runners
+                    ]
+                return json.dumps(payload, ensure_ascii=False, indent=4) + "\n"
+            return content
+        if suffix != ".cs":
+            return content
+        normalized: list[str] = []
+        generated_test_source = "tests" in lowered_parts and "playmode" in lowered_parts
+        for line in content.splitlines(keepends=True):
+            body = line.rstrip("\r\n")
+            newline = line[len(body):]
+            if generated_test_source:
+                # Models occasionally emit JavaScript-style `${"..."}` while
+                # constructing a C# interpolated JSON string.  In a generated,
+                # isolated PlayMode test this is an unambiguous one-character
+                # syntax repair; production sources remain untouched.
+                body = body.replace('${"', '$"')
+                body = body.rstrip(" \t")
+            if re.match(r"^\s*using\s+(?:static\s+)?[A-Za-z_][A-Za-z0-9_.]*(?:\s*=\s*[A-Za-z_][A-Za-z0-9_.]*)?;[ \t]+$", body):
+                body = body.rstrip(" \t")
+            normalized.append(body + newline)
+        return "".join(normalized)
+
     def _blob(self, head: str, relative: str) -> bytes:
         completed = subprocess.run(
             ["git", "show", f"{head}:{relative}"], cwd=self.root,
@@ -150,10 +233,14 @@ class ApprovedProjectDevelopmentToolPack:
                 "existing", "safely", "improve", "complete", "result", "unity",
             }
         }
-        if any(marker in focus_text.casefold() for marker in ("???", "??", "??", "localization", "language")):
+        localization_markers = (
+            "localization", "language", "locale", "i18n", "translation",
+            "언어", "다국어", "번역", "현지화", "중국어", "일본어", "스페인어",
+        )
+        if any(marker in focus_text.casefold() for marker in localization_markers):
             focus_terms.update({"localization", "language", "locale", "i18n", "string", "translation"})
         intrinsic = ("localization", "language", "locale", "i18n", "string", "translation")
-        localization_focus = any(term in focus_text.casefold() for term in intrinsic)
+        localization_focus = any(term in focus_text.casefold() for term in localization_markers)
         code_suffixes = {".cs", ".js", ".jsx", ".mjs", ".py", ".ts", ".tsx"}
 
         def rank(relative: str) -> tuple[int, int, int, int, int, str]:
@@ -216,26 +303,259 @@ class ApprovedProjectDevelopmentToolPack:
         (output_dir / "repository_inspection.json").write_text(inspection.model_dump_json(indent=2) + "\n", encoding="utf-8")
         return inspection, sources
 
-    def _commands(self, profile, clone: Path) -> list[tuple[str, list[str], int]]:
+    def _commands(
+        self, profile, clone: Path, goal_text: str
+    ) -> list[tuple[str, list[str], int]]:
         commands: list[tuple[str, list[str], int]] = []
         npm = "npm.cmd" if os.name == "nt" else "npm"
+        needs_visual_runtime = self._requires_unity_visual_runtime(goal_text)
         for adapter in profile.adapters:
             if not adapter.enabled or adapter.adapter_id == AdapterId.REPOSITORY_SNAPSHOT:
+                continue
+            if (
+                adapter.adapter_id == AdapterId.UNITY_PLAYMODE_VISUAL_TESTS
+                and not needs_visual_runtime
+            ):
                 continue
             if adapter.adapter_id == AdapterId.NODE_SCRIPT:
                 commands.append((f"node_{adapter.parameter}", [npm, "run", str(adapter.parameter)], 300))
             elif adapter.adapter_id == AdapterId.PYTHON_TESTS:
                 commands.append(("python_tests", [sys.executable, "-m", "pytest"], 300))
-            elif adapter.adapter_id in {AdapterId.UNITY_COMPILE, AdapterId.UNITY_EDITMODE_TESTS}:
+            elif adapter.adapter_id in {
+                AdapterId.UNITY_COMPILE,
+                AdapterId.UNITY_EDITMODE_TESTS,
+                AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+            }:
                 editor = self.lifecycle._unity_editor(self.root)
                 if editor is None or str(editor) != adapter.evidence:
                     raise PermissionError("the approved Unity Editor binding is unavailable or changed")
-                log = clone / ("onebrief-editmode.log" if adapter.adapter_id == AdapterId.UNITY_EDITMODE_TESTS else "onebrief-compile.log")
-                argv = [str(editor), "-batchmode", "-quit", "-projectPath", str(clone), "-logFile", str(log)]
+                log_names = {
+                    AdapterId.UNITY_COMPILE: "onebrief-compile.log",
+                    AdapterId.UNITY_EDITMODE_TESTS: "onebrief-editmode.log",
+                    AdapterId.UNITY_PLAYMODE_VISUAL_TESTS: "onebrief-playmode-visual.log",
+                }
+                log = clone / log_names[adapter.adapter_id]
+                argv = [str(editor), "-batchmode"]
+                if adapter.adapter_id == AdapterId.UNITY_COMPILE:
+                    argv.append("-quit")
+                argv += ["-projectPath", str(clone), "-logFile", str(log)]
                 if adapter.adapter_id == AdapterId.UNITY_EDITMODE_TESTS:
-                    argv += ["-runTests", "-testPlatform", "EditMode", "-testResults", str(clone / "onebrief-test-results.xml")]
+                    argv += [
+                        "-runTests", "-testPlatform", "EditMode", "-testResults",
+                        str(clone / "onebrief-editmode-test-results.xml"),
+                    ]
+                elif adapter.adapter_id == AdapterId.UNITY_PLAYMODE_VISUAL_TESTS:
+                    argv += [
+                        "-runTests", "-testPlatform", "PlayMode",
+                        "-testFilter", "OneBrief.Visual",
+                        "-testResults", str(clone / "onebrief-playmode-visual-results.xml"),
+                    ]
                 commands.append((adapter.adapter_id.value, argv, 900))
         return commands
+
+    @staticmethod
+    def _requires_unity_visual_runtime(goal_text: str) -> bool:
+        return bool(re.search(
+            r"(?:\bui\b|screen|visual|render|dropdown|locali[sz]ation|language|"
+            r"multilingual|화면|시각|드롭다운|다국어|언어|번역)",
+            goal_text,
+            re.IGNORECASE,
+        ))
+
+    def _unity_visual_contract_issues(self, profile, clone: Path, goal_text: str) -> list[str]:
+        if not self._requires_unity_visual_runtime(goal_text):
+            return []
+        if not any(
+            item.enabled and item.adapter_id == AdapterId.UNITY_PLAYMODE_VISUAL_TESTS
+            for item in profile.adapters
+        ):
+            return []
+
+        test_sources: list[str] = []
+        for path in (clone / "Assets").rglob("*.cs"):
+            if path.is_symlink() or not path.is_file():
+                continue
+            content = path.read_text(encoding="utf-8", errors="replace")
+            lowered = content.casefold()
+            if "onebrief.visual" in lowered and (
+                "[unitytest]" in lowered or "[test]" in lowered
+            ):
+                test_sources.append(content)
+
+        issues: list[str] = []
+        if not test_sources:
+            issues.append(
+                "add a discoverable Unity PlayMode test whose namespace/full name begins "
+                "with OneBrief.Visual"
+            )
+        else:
+            combined_source = "\n".join(test_sources)
+            combined = combined_source.casefold()
+            structural = _csharp_code_only(combined_source).casefold()
+            if '${"' in combined or "${'" in combined:
+                issues.append("use valid C# interpolation ($\"...\"), never JavaScript-style ${...}")
+            if "runtime-evidence.json" not in combined:
+                issues.append("the OneBrief.Visual test must write onebrief-evidence/runtime-evidence.json")
+            if ".png" not in combined and "capturescreenshot" not in combined:
+                issues.append("the OneBrief.Visual test must capture PNG runtime evidence")
+            if "screencapture.capturescreenshot" in structural and not all(
+                token in structural for token in ("readpixels", "encodetopng", "file.writeallbytes")
+            ):
+                issues.append(
+                    "Unity batchmode must not rely on asynchronous ScreenCapture.CaptureScreenshot; "
+                    "render the real scene UI to a RenderTexture, read pixels, EncodeToPNG, and "
+                    "File.WriteAllBytes synchronously"
+                )
+            if "scenemanager.loadscene" not in structural and "scenemanager.loadsceneasync" not in structural:
+                issues.append(
+                    "the OneBrief.Visual test must load and exercise an actual project scene, not an empty test scene"
+                )
+            requested_scenes = re.findall(
+                r"SceneManager\.LoadScene(?:Async)?\s*\(\s*\"([^\"]+)\"",
+                combined_source,
+            )
+            project_scenes = {
+                path.stem: path for path in (clone / "Assets").rglob("*.unity") if path.is_file()
+            }
+            if project_scenes and requested_scenes:
+                missing_scenes = [name for name in requested_scenes if name not in project_scenes]
+                if missing_scenes:
+                    issues.append(
+                        "the OneBrief.Visual test names a scene that does not exist; use an exact project scene name: "
+                        + ", ".join(missing_scenes)
+                        + "; available: "
+                        + ", ".join(sorted(project_scenes)[:12])
+                    )
+                settings_scenes = {
+                    name for name, path in project_scenes.items()
+                    if "LanguageDropdown" in path.read_text(encoding="utf-8", errors="replace")
+                }
+                if settings_scenes and not any(name in settings_scenes for name in requested_scenes):
+                    issues.append(
+                        "the OneBrief.Visual test must load a scene containing the real LanguageDropdown: "
+                        + ", ".join(sorted(settings_scenes))
+                    )
+            if re.search(r"new\s+(?:unityengine\.)?gameobject", structural) and re.search(
+                r"addcomponent<[^>]*(?:canvas|tmp_|text|image|button|recttransform)\s*>",
+                structural,
+            ):
+                issues.append(
+                    "the OneBrief.Visual test must not construct synthetic UI; find and interact with the real scene UI"
+                )
+            if not any(token in structural for token in (
+                "findobjectsbytype", "findobjectsoftype", "findobjectoftype", "gameobject.find", "getcomponent<tmp_",
+            )):
+                issues.append(
+                    "the OneBrief.Visual test must inspect and interact with visible UI objects from the loaded scene"
+                )
+            if (
+                re.search(r"(?:language|locali[sz]ation|다국어|언어)", goal_text, re.IGNORECASE)
+                and not re.search(r"GameObject\.Find\s*\(\s*\"LanguageDropdown\"", combined_source)
+                and "getcomponent<tmp_dropdown" not in structural
+                and "findobjectsoftypeall<tmp_dropdown" not in structural
+            ):
+                issues.append(
+                    "the OneBrief.Visual test must find and operate the real LanguageDropdown control"
+                )
+            if re.search(r"observed_locale\s*=\s*(?:lang|languages\s*\[)", structural):
+                issues.append(
+                    "observed_locale must come from the running localization state (for example reflected GetLanguage), "
+                    "not the requested loop variable"
+                )
+            if re.search(r"changed_visible_text_count\s*=\s*\w+(?:\.length|\.count)", structural):
+                issues.append(
+                    "changed_visible_text_count must compare visible text before and after the language interaction"
+                )
+            if (
+                "textinfo.characterinfo" not in structural
+                and ".hascharacter" not in structural
+                and "getmissingcharacters" not in structural
+            ):
+                issues.append(
+                    "missing_glyph_count must inspect TMP font glyph availability, not only search rendered text for a box character"
+                )
+
+            test_assembly_references: set[str] = set()
+            for asmdef in (clone / "Assets").rglob("*.asmdef"):
+                parts = {part.casefold() for part in asmdef.relative_to(clone).parts}
+                if "tests" not in parts or not asmdef.is_file():
+                    continue
+                try:
+                    payload = json.loads(asmdef.read_text(encoding="utf-8", errors="replace"))
+                except json.JSONDecodeError:
+                    continue
+                test_assembly_references.update(
+                    str(item) for item in payload.get("references", []) if isinstance(item, str)
+                )
+
+            direct_type_violations: list[str] = []
+            test_text = _csharp_code_only(combined_source)
+            assets_root = clone / "Assets"
+            for path in assets_root.rglob("*.cs"):
+                relative_parts = {part.casefold() for part in path.relative_to(clone).parts}
+                if "tests" in relative_parts or path.is_symlink() or not path.is_file():
+                    continue
+                source = path.read_text(encoding="utf-8", errors="replace")
+                declared_types = re.findall(
+                    r"\b(?:class|struct|interface|enum)\s+([A-Z][A-Za-z0-9_]*)",
+                    source,
+                )
+                referenced_types = [
+                    name for name in declared_types
+                    if re.search(rf"\b{re.escape(name)}\b", test_text)
+                ]
+                if not referenced_types:
+                    continue
+                owning_assembly: str | None = None
+                parent = path.parent
+                while parent.is_relative_to(assets_root):
+                    asmdefs = list(parent.glob("*.asmdef"))
+                    if asmdefs:
+                        try:
+                            payload = json.loads(asmdefs[0].read_text(encoding="utf-8", errors="replace"))
+                            owning_assembly = str(payload.get("name") or "") or None
+                        except json.JSONDecodeError:
+                            owning_assembly = None
+                        break
+                    if parent == assets_root:
+                        break
+                    parent = parent.parent
+                for name in referenced_types:
+                    if owning_assembly is None:
+                        direct_type_violations.append(f"{name} (Assembly-CSharp)")
+                    elif owning_assembly not in test_assembly_references:
+                        direct_type_violations.append(
+                            f"{name} (missing test reference to {owning_assembly})"
+                        )
+            if direct_type_violations:
+                issues.append(
+                    "the PlayMode test cannot directly reference production types outside its assembly; "
+                    "interact through the running scene/public UI or reflection instead: "
+                    + ", ".join(sorted(set(direct_type_violations))[:8])
+                )
+
+        test_assembly = False
+        unsafe_test_assemblies: list[str] = []
+        for path in (clone / "Assets").rglob("*.asmdef"):
+            if path.is_symlink() or not path.is_file():
+                continue
+            content = path.read_text(encoding="utf-8", errors="replace").casefold()
+            if "testassemblies" in content:
+                relative_parts = [part.casefold() for part in path.relative_to(clone).parts]
+                if "tests" not in relative_parts:
+                    unsafe_test_assemblies.append(path.relative_to(clone).as_posix())
+                else:
+                    test_assembly = True
+        if unsafe_test_assemblies:
+            issues.append(
+                "test .asmdef files must live under a dedicated Tests/PlayMode directory and must "
+                "never be placed above production scripts: " + ", ".join(unsafe_test_assemblies)
+            )
+        if not test_assembly:
+            issues.append(
+                "add a Unity test .asmdef with optionalUnityReferences containing TestAssemblies"
+            )
+        return issues
 
 
     def bind_change_set_to_inspection(
@@ -263,7 +583,12 @@ class ApprovedProjectDevelopmentToolPack:
                 "base_sha256": inspected[change.path] if exists else None,
             }))
         return change_set.model_copy(update={"changes": rebound})
-    def apply_and_verify(self, change_set: ProjectCodeChangeSet, output_dir: Path) -> DevelopmentRun:
+    def apply_and_verify(
+        self,
+        change_set: ProjectCodeChangeSet,
+        output_dir: Path,
+        verification_goal: str = "",
+    ) -> DevelopmentRun:
         profile, head = self._validate_root()
         for change in change_set.changes:
             if self.approved_edit_path(change.path) is None:
@@ -288,15 +613,51 @@ class ApprovedProjectDevelopmentToolPack:
                 else:
                     new_paths.append(change.path)
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(change.content, encoding="utf-8", newline="\n")
+                target.write_text(
+                    self._normalize_safe_generated_text(change.path, change.content),
+                    encoding="utf-8",
+                    newline="\n",
+                )
             if new_paths:
                 self._git("add", "-N", "--", *new_paths, cwd=clone)
             approved_paths = [item.path for item in change_set.changes]
+            goal_text = verification_goal or "\n".join([
+                change_set.summary,
+                *(item.reason for item in change_set.changes),
+            ])
+            hygiene_failure: RuntimeError | None = None
             try:
                 self._git("diff", "--check", "--", *approved_paths, cwd=clone)
             except RuntimeError as exc:
-                raise RuntimeError(f"development patch hygiene failed: {exc}") from exc
-            results = [self.runner(command_id, argv, clone, timeout) for command_id, argv, timeout in self._commands(profile, clone)]
+                hygiene_failure = exc
+            visual_issues = self._unity_visual_contract_issues(profile, clone, goal_text)
+            if visual_issues:
+                details = [f"Unity visual test contract: {item}" for item in visual_issues]
+                if hygiene_failure is not None:
+                    details.append(f"Patch hygiene: {hygiene_failure}")
+                raise RuntimeError("development verification failed: " + " | ".join(details))
+            if hygiene_failure is not None:
+                raise RuntimeError(
+                    f"development patch hygiene failed: {hygiene_failure}"
+                ) from hygiene_failure
+            commands = self._commands(profile, clone, goal_text)
+            results = [
+                self.runner(command_id, argv, clone, timeout)
+                for command_id, argv, timeout in commands
+            ]
+            evidence_paths: list[str] = []
+            if any(
+                item.command_id == AdapterId.UNITY_PLAYMODE_VISUAL_TESTS.value
+                for item in results
+            ):
+                evidence_dir = output_dir / "unity_visual_evidence"
+                validate_and_copy_unity_visual_evidence(
+                    clone,
+                    clone / "onebrief-playmode-visual-results.xml",
+                    evidence_dir,
+                    goal_text,
+                )
+                evidence_paths.append(evidence_dir.relative_to(output_dir.parent).as_posix())
             patch = self._git("diff", "--binary", "--no-ext-diff", "--", *approved_paths, cwd=clone)
             if not patch.strip():
                 raise ValueError("development change set produced no repository diff")
@@ -311,6 +672,7 @@ class ApprovedProjectDevelopmentToolPack:
                 status="verified", repository_name=self.root.name, base_head_sha=head,
                 summary=change_set.summary, changed_paths=[item.path for item in change_set.changes],
                 commands=results, patch_path=patch_path.relative_to(output_dir.parent).as_posix(),
+                evidence_paths=evidence_paths,
                 safety_boundary=[
                     "original repository remained read-only",
                     "exact approved HEAD and per-file base hashes were enforced",

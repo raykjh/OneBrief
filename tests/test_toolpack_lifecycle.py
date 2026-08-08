@@ -24,7 +24,12 @@ def _registered_unity(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     (root / "ProjectSettings" / "ProjectVersion.txt").write_text(
         "m_EditorVersion: 6000.3.11f1", encoding="utf-8"
     )
-    (root / "Packages" / "manifest.json").write_text("{}", encoding="utf-8")
+    (root / "Packages" / "manifest.json").write_text(
+        json.dumps({
+            "dependencies": {"com.unity.test-framework": "1.6.0"}
+        }),
+        encoding="utf-8",
+    )
     (root / "Assets" / "Scripts" / "Game.cs").write_text(
         "public class Game {}", encoding="utf-8"
     )
@@ -67,6 +72,10 @@ def test_generated_toolpack_is_qualified_and_exact_hash_approved(tmp_path: Path,
     with pytest.raises(ValueError, match="changed after review"):
         lifecycle.approve("0" * 64)
 
+    assert any(
+        item.adapter_id.value == "unity_playmode_visual_tests" and item.enabled
+        for item in generated.generated.adapters
+    )
     approved = lifecycle.approve(generated.qualification.toolpack_sha256)
 
     assert approved.status == "approved"

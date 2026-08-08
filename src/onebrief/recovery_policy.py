@@ -80,6 +80,7 @@ class RecoveryPolicy:
         structured_markers = (
             "path is outside", "change path must", "base_sha256", "string_pattern_mismatch",
             "change set exceeds", "too_long", "validation error for codechangeset",
+            "absent from approved_repository_files",
         )
 
         if isinstance(error, BudgetExceeded):
@@ -103,12 +104,18 @@ class RecoveryPolicy:
                 "A required build artifact is missing; the runtime must repair command ordering rather "
                 "than asking the maker to alter product code."
             )
-        elif message.startswith("development verification failed:"):
+        elif message.startswith((
+            "development verification failed:",
+            "development patch hygiene failed:",
+        )) or message.startswith((
+            "unity visual scenario ",
+            "unity visual evidence ",
+        )):
             error_class = ErrorClass.ARTIFACT_VALIDATION
             action = RecoveryAction.RETURN_TO_AGENT
             responsible = "maker"
-            limit = 1
-            rationale = "The maker may correct its artifact once; the same deterministic checks must pass."
+            limit = 2
+            rationale = "The maker may correct its artifact within two bounded retries; the same deterministic checks must pass."
         elif context == "developer_structured_output" and any(
             marker in message for marker in structured_markers
         ):

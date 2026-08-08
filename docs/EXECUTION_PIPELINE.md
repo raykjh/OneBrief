@@ -5,28 +5,43 @@
 ```text
 Approved budget
   -> Analyst
-  -> Writer
-  -> Independent Verifier
-  -> Deterministic Grounding Gate (authoritative CSV + scoring rules)
-       -> PASS -> final package
-       -> NEEDS_INFORMATION -> user checkpoint
-       -> REVISE -> Revision Agent -> Independent Verifier
-                                      (maximum two rounds)
+  -> ADK Convergence Agent
+       -> Accountable Maker (ADK LlmAgent)
+       -> Independent Verifier (ADK LlmAgent)
+       -> Deterministic Grounding / Completion / Reality Gates
+            -> PASS -> final package
+            -> NEEDS_INFORMATION -> user checkpoint
+            -> REVISE -> the same Accountable Maker -> Independent Verifier
+                         (within the user-approved revision limit)
 ```
 
-All four role implementations receive only a `BudgetedGeminiClient`. They cannot call
-the Google model client directly. Every structured call therefore performs input token
+The maker and verifier are native Google ADK agents coordinated by a custom ADK
+`BaseAgent`. Their model adapter receives only a `BudgetedGeminiClient`; it cannot call
+the Google model client directly. Every ADK turn therefore performs input token
 counting, worst-case reservation, provider generation, and actual-usage settlement.
 
 ## Role boundaries
 
 - Analyst extracts traceable `F01`-style findings and never drafts.
-- Writer creates the artifact from the contract, findings, and authoritative source
+- Accountable Maker creates the artifact from the contract, findings, and authoritative source
   payload but cannot approve it.
 - Verifier is independent, checks every acceptance criterion, and returns `PASS`,
   `REVISE`, or `NEEDS_INFORMATION`.
-- Revision Agent receives the authoritative source payload, applies only the verifier's
-  blocking instructions, and always returns to verification before completion.
+- The original Accountable Maker receives its prior artifact plus the verifier's
+  blocking instructions. A separate replacement agent is not introduced during revision.
+- The ADK session persists structured maker and verifier handoffs and emits a durable
+  event trace; deterministic OneBrief gates retain veto power over a model-issued PASS.
+
+## Software convergence
+
+For approved existing-project work, the Accountable Maker returns a bounded structured
+change set. OneBrief applies it only in the ToolPack's disposable repository and runs the
+allowlisted build, test, runtime, and observation commands. A correctable execution
+failure becomes a structured `REVISE` handoff directly to the same maker; the independent
+verifier is not billed for code that has already failed deterministic execution. After
+execution succeeds, the verifier receives the changed files and trusted evidence rather
+than the maker's summary. Unknown, policy, permission, and authority failures still stop
+through the recovery-policy layer instead of expanding agent authority.
 
 ## Deterministic grounding gate
 
@@ -54,6 +69,7 @@ written as a checkpoint so a crash or budget block leaves inspectable state.
 - `final.md`
 - `final_verification.json`
 - `execution_checkpoint.json`
+- `adk_convergence_trace.json`
 
 ## Commands
 

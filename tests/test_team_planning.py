@@ -28,7 +28,7 @@ def _member(instance_id: str, agent_type: AgentType, team_id: str = "delivery") 
         selection_reason="Required by the goal and execution contract.",
         temperament=TemperamentAssignment(pace="T", orientation="F", scope="G"),
         model=(
-            "gemini-2.5-flash"
+            "gemini-3.5-flash"
             if agent_type == AgentType.INVESTIGATOR
             else "gemini-3.5-flash"
         ),
@@ -198,3 +198,22 @@ def test_provider_team_membership_references_are_repaired_before_strict_validati
     assert team.lead_instance_id == "owner-01"
     assert team.member_instance_ids == [member.instance_id for member in result.members]
     assert result.stage_owners["final_approval"] == "owner-01"
+
+
+def test_provider_skill_assigned_to_wrong_role_is_repaired() -> None:
+    payload = _plan().model_dump(mode="json")
+    analyst = next(item for item in payload["members"] if item["agent_type"] == "analyst")
+    analyst["packs"]["skill_packs"] = ["implementation-verification"]
+    draft = TeamPlanDraft.model_validate(payload)
+
+    result = ProjectOwnerAgent(FakeGateway(draft)).run(
+        project_id="job-123",
+        intake=IntakeRequest(goal="Create a grounded guide."),
+        requirements=_requirements(),
+        sources=[_source()],
+    )
+
+    normalized_analyst = next(
+        member for member in result.members if member.agent_type == AgentType.ANALYST
+    )
+    assert "implementation-verification" not in normalized_analyst.packs.skill_packs

@@ -1,4 +1,4 @@
-"""One bounded Gemini 2.5 Flash request grounded with Google Search."""
+"""One bounded Gemini 3.5 Flash request grounded with Google Search."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def run_grounded_research(
     model = (
         gateway.model_for("public_research")
         if hasattr(gateway, "model_for")
-        else "gemini-2.5-flash"
+        else "gemini-3.5-flash"
     )
     fixed_cost_cap = 0.035
     system_instruction = (

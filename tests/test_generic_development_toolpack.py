@@ -3,17 +3,19 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from onebrief.generic_development_toolpack import (
     ApprovedProjectDevelopmentToolPack,
     ProjectCodeChangeSet,
+    ProjectFileChange,
 )
 from onebrief.development_toolpack import DevelopmentCommandResult
 from onebrief.project_import import ExternalProjectImporter, MANIFEST_NAME
 from onebrief.schemas import ToolPackId
-from onebrief.toolpack_lifecycle import ProjectToolPackLifecycle
+from onebrief.toolpack_lifecycle import AdapterId, ProjectToolPackLifecycle
 from onebrief.toolpacks import execute_toolpacks
 
 
@@ -154,6 +156,242 @@ def test_generic_inspection_prioritizes_goal_relevant_context(tmp_path: Path) ->
     assert sources[0].name.endswith("localization-manager.js")
 
 
+def test_generic_inspection_understands_korean_localization_goal(tmp_path: Path) -> None:
+    root, registry = _approved_node_project(tmp_path)
+    localization = root / "src" / "Localization"
+    localization.mkdir(parents=True)
+    settings = localization / "JulpaeLanguageSettings.cs"
+    settings.write_text("public class JulpaeLanguageSettings {}\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "add localization"], cwd=root, check=True)
+
+    ExternalProjectImporter(registry).import_bytes((root / MANIFEST_NAME).read_bytes())
+    lifecycle = ProjectToolPackLifecycle("generic-node", registry)
+    state = lifecycle.generate_and_qualify()
+    lifecycle.approve(state.qualification.toolpack_sha256)
+    inspection, _sources = ApprovedProjectDevelopmentToolPack(
+        "generic-node", registry
+    ).inspect(tmp_path / "korean-focused", "중국어 일본어 스페인어 다국어 언어 선택")
+
+    assert any(
+        item.path == "src/Localization/JulpaeLanguageSettings.cs"
+        for item in inspection.context_files
+    )
+
+
+def test_unity_visual_preflight_requires_discoverable_test_and_evidence(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-clone"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True,
+        adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    missing = pack._unity_visual_contract_issues(
+        profile, clone, "다국어 언어 선택 화면을 PlayMode에서 검증"
+    )
+    assert len(missing) == 2
+
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void SwitchLanguage() { "
+        "var json = ${\"runtime-evidence.json\"}; var png = \"ja.png\"; } }\n",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.PlayMode.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    invalid_csharp = pack._unity_visual_contract_issues(
+        profile, clone, "다국어 언어 선택 화면을 PlayMode에서 검증"
+    )
+    assert any("valid C# interpolation" in issue for issue in invalid_csharp)
+
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void SwitchLanguage() { "
+        "UnityEngine.SceneManagement.SceneManager.LoadScene(\"Lobby\"); "
+        "UnityEngine.GameObject.Find(\"LanguageDropdown\"); "
+        "var glyphOk = font.HasCharacter('A'); "
+        "var path = \"onebrief-evidence/runtime-evidence.json\"; "
+        "var png = \"onebrief-evidence/ja.png\"; } }\n",
+        encoding="utf-8",
+    )
+
+    assert pack._unity_visual_contract_issues(
+        profile, clone, "다국어 언어 선택 화면을 PlayMode에서 검증"
+    ) == []
+
+    unsafe = clone / "Assets" / "Scripts" / "Localization" / "OneBrief.Visual.asmdef"
+    unsafe.parent.mkdir(parents=True)
+    unsafe.write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    unsafe_issues = pack._unity_visual_contract_issues(
+        profile, clone, "다국어 언어 선택 화면을 PlayMode에서 검증"
+    )
+    assert any("never be placed above production scripts" in issue for issue in unsafe_issues)
+
+
+def test_unity_visual_preflight_allows_temporary_capture_camera_but_rejects_synthetic_canvas(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-capture-camera-clone"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    asmdef = tests / "OneBrief.Visual.Tests.asmdef"
+    asmdef.write_text('{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8")
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+    common = (
+        'UnityEngine.SceneManagement.SceneManager.LoadScene("Lobby"); '
+        'UnityEngine.GameObject.Find("LanguageDropdown"); '
+        'var evidence = "onebrief-evidence/runtime-evidence.json"; '
+        'var screenshot = "onebrief-evidence/ja.png"; '
+    )
+
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void SwitchLanguage() { "
+        + common
+        + 'new UnityEngine.GameObject("CaptureCamera").AddComponent<UnityEngine.Camera>(); } }\n',
+        encoding="utf-8",
+    )
+    camera_issues = pack._unity_visual_contract_issues(profile, clone, "Unity localization UI")
+    assert not any("synthetic UI" in issue for issue in camera_issues)
+
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void SwitchLanguage() { "
+        + common
+        + 'new UnityEngine.GameObject("FakeCanvas").AddComponent<UnityEngine.Canvas>(); } }\n',
+        encoding="utf-8",
+    )
+    canvas_issues = pack._unity_visual_contract_issues(profile, clone, "Unity localization UI")
+    assert any("synthetic UI" in issue for issue in canvas_issues)
+
+
+def test_unity_visual_preflight_rejects_direct_assembly_csharp_type_references(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-direct-type-clone"
+    production = clone / "Assets" / "JULPAE" / "Scripts" / "Localization"
+    tests = clone / "Assets" / "JULPAE" / "Tests" / "PlayMode"
+    production.mkdir(parents=True)
+    tests.mkdir(parents=True)
+    (production / "JulpaeLocalization.cs").write_text(
+        "public static class JulpaeLocalization { public static void SetLanguage(string value) {} }\n",
+        encoding="utf-8",
+    )
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void SwitchLanguage() { "
+        "UnityEngine.SceneManagement.SceneManager.LoadScene(\"Lobby\"); "
+        "UnityEngine.GameObject.Find(\"LanguageDropdown\"); "
+        "JulpaeLocalization.SetLanguage(\"ja\"); var evidence = \"runtime-evidence.json\"; "
+        "var screenshot = \"ja.png\"; } }\n",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True,
+        adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(profile, clone, "Unity localization UI")
+
+    assert any("cannot directly reference production types outside its assembly" in issue for issue in issues)
+    assert any("JulpaeLocalization" in issue for issue in issues)
+
+
+def test_unity_visual_preflight_allows_production_type_name_used_only_for_reflection(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-reflection-clone"
+    production = clone / "Assets" / "JULPAE" / "Scripts" / "Localization"
+    tests = clone / "Assets" / "JULPAE" / "Tests" / "PlayMode"
+    production.mkdir(parents=True)
+    tests.mkdir(parents=True)
+    (production / "JulpaeLocalization.cs").write_text(
+        "public static class JulpaeLocalization {}\n", encoding="utf-8"
+    )
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void SwitchLanguage() { "
+        "UnityEngine.SceneManagement.SceneManager.LoadScene(\"Lobby\"); "
+        "UnityEngine.GameObject.Find(\"LanguageDropdown\"); "
+        "var typeName = \"JulpaeLocalization\"; // JulpaeLocalization via reflection\n"
+        "var evidence = \"runtime-evidence.json\"; var screenshot = \"ja.png\"; } }\n",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(profile, clone, "Unity localization UI")
+
+    assert not any("JulpaeLocalization (Assembly-CSharp)" in issue for issue in issues)
+
+
+def test_unity_visual_preflight_rejects_async_batchmode_screenshot(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    tests = tmp_path / "unity-screenshot-clone" / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void SwitchLanguage() { "
+        "UnityEngine.SceneManagement.SceneManager.LoadScene(\"Lobby\"); "
+        "UnityEngine.GameObject.Find(\"LanguageDropdown\"); "
+        "UnityEngine.ScreenCapture.CaptureScreenshot(\"onebrief-evidence/ko.png\"); "
+        "var evidence = \"runtime-evidence.json\"; } }\n",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile, tests.parents[2], "Unity localization UI"
+    )
+
+    assert any("must not rely on asynchronous ScreenCapture" in issue for issue in issues)
+
+
+def test_unity_visual_preflight_requires_exact_real_settings_scene(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-settings-scene-clone"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (clone / "Assets" / "LobbyScene_All.unity").write_text(
+        "--- !u!1 &1\nGameObject:\n  m_Name: LanguageDropdown\n", encoding="utf-8"
+    )
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void SwitchLanguage() { "
+        "UnityEngine.SceneManagement.SceneManager.LoadScene(\"LoginScene\"); "
+        "UnityEngine.GameObject.Find(\"LanguageDropdown\"); "
+        "var evidence = \"runtime-evidence.json\"; var screenshot = \"ja.png\"; } }\n",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(profile, clone, "Unity localization UI")
+
+    assert any("scene that does not exist" in issue for issue in issues)
+    assert any("LobbyScene_All" in issue for issue in issues)
+    assert any("scene containing the real LanguageDropdown" in issue for issue in issues)
+
+
 def test_change_set_hashes_are_bound_to_trusted_inspection(tmp_path: Path) -> None:
     _root, registry = _approved_node_project(tmp_path)
     pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
@@ -185,6 +423,17 @@ def test_change_set_hashes_are_bound_to_trusted_inspection(tmp_path: Path) -> No
     assert bound.changes[0].base_sha256 == expected
     assert bound.changes[1].base_sha256 is None
     assert proposed.changes[0].base_sha256 == "0" * 64
+
+
+def test_project_file_change_discards_invalid_model_hash_before_trusted_binding() -> None:
+    change = ProjectFileChange(
+        path="Assets/JULPAE/Scripts/Localization/JulpaeLocalization.cs",
+        base_sha256="0060572e-9ec0-4fe4-aa6f-d7f9a01e6b00",
+        content="public static class JulpaeLocalization {}\n",
+        reason="Repair localization safely.",
+    )
+
+    assert change.base_sha256 is None
 
 
 def test_change_set_cannot_edit_existing_file_omitted_from_context(tmp_path: Path) -> None:
@@ -280,3 +529,69 @@ def test_generic_runner_rejects_patch_whitespace_before_project_validation(tmp_p
             "generic-node", registry, runner=runner
         ).apply_and_verify(change_set, tmp_path / "whitespace")
     assert validation_called is False
+
+
+def test_safe_csharp_normalization_only_trims_using_directives() -> None:
+    content = "using System;   \nvar text = @\"meaningful   \";   \n"
+
+    normalized = ApprovedProjectDevelopmentToolPack._normalize_safe_generated_text(
+        "Assets/Tests/Visual.cs", content
+    )
+
+    assert normalized == "using System;\nvar text = @\"meaningful   \";   \n"
+
+
+def test_safe_csharp_normalization_trims_test_source_whitespace_only_in_playmode_tests() -> None:
+    content = "using System;\n    \nvar text = \"test\";   \n"
+
+    generated = ApprovedProjectDevelopmentToolPack._normalize_safe_generated_text(
+        "Assets/JULPAE/Tests/PlayMode/OneBriefVisualTests.cs", content
+    )
+    production = ApprovedProjectDevelopmentToolPack._normalize_safe_generated_text(
+        "Assets/JULPAE/Scripts/Localization/LocalizedText.cs", content
+    )
+
+    assert generated == "using System;\n\nvar text = \"test\";\n"
+    assert production == content
+
+
+def test_safe_csharp_normalization_repairs_javascript_style_interpolation_only_in_playmode_tests() -> None:
+    content = 'string json = ${"{{\\"value\\":{value}}}";\n'
+
+    generated = ApprovedProjectDevelopmentToolPack._normalize_safe_generated_text(
+        "Assets/JULPAE/Tests/PlayMode/OneBriefVisualTests.cs", content
+    )
+    production = ApprovedProjectDevelopmentToolPack._normalize_safe_generated_text(
+        "Assets/JULPAE/Scripts/Localization/LocalizedText.cs", content
+    )
+
+    assert generated == 'string json = $"{{\\"value\\":{value}}}";\n'
+    assert production == content
+
+
+def test_safe_unity_test_asmdef_normalization_adds_test_assembly_marker() -> None:
+    content = (
+        '{"name":"OneBrief.Visual.Tests","references":['
+        '"UnityEngine.TestRunner","UnityEditor.TestRunner","Unity.TextMeshPro"]}\n'
+    )
+
+    normalized = ApprovedProjectDevelopmentToolPack._normalize_safe_generated_text(
+        "Assets/JULPAE/Tests/PlayMode/OneBrief.Visual.Tests.asmdef", content
+    )
+
+    payload = json.loads(normalized)
+    assert payload["name"] == "OneBrief.Visual.Tests"
+    assert payload["references"] == ["Unity.TextMeshPro"]
+    assert payload["optionalUnityReferences"] == ["TestAssemblies"]
+
+
+def test_asmdef_normalization_does_not_touch_production_or_invalid_json() -> None:
+    production = '{"name":"JULPAE.Localization"}\n'
+    invalid = '{"name":'
+
+    assert ApprovedProjectDevelopmentToolPack._normalize_safe_generated_text(
+        "Assets/JULPAE/Scripts/Localization/JULPAE.Localization.asmdef", production
+    ) == production
+    assert ApprovedProjectDevelopmentToolPack._normalize_safe_generated_text(
+        "Assets/JULPAE/Tests/PlayMode/Broken.asmdef", invalid
+    ) == invalid

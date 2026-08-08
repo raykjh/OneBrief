@@ -11,6 +11,9 @@ domain ToolPacks are validation cases; they do not define the product.
 ## Implemented milestones
 
 - Requirements Analyst built with Google ADK and Gemini 3.5 Flash
+- ADK-native Accountable Maker -> Independent Verifier -> original-maker revision loop
+- software convergence with isolated ToolPack build/test execution before independent review
+- deterministic grounding, completion-evidence, and reality gates that can overrule model PASS
 - mandatory versus optional information classification
 - local text-source upload with SHA-256 source manifests
 - semantic reinspection after upload
@@ -21,7 +24,7 @@ domain ToolPacks are validation cases; they do not define the product.
 - versioned result packages containing artifacts, evidence manifests, and cost audit data
 - asynchronous Cloud Run Job execution with a dedicated service identity
 - Cloud Storage job transport and verified result-package delivery
-- one bounded Gemini 2.5 Flash Google Search grounding step with preserved source URLs
+- one bounded Gemini 3.5 Flash Google Search grounding step with preserved source URLs
 - deterministic Markdown-table to `.xlsx` export with a separate public-source sheet
 - fixed grounded-search fee reservation inside the same immutable user budget
 

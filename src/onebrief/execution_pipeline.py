@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
 import os
@@ -13,7 +14,21 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from onebrief.budget_guard import BudgetExceeded, BudgetStore
+from onebrief.adk_convergence import (
+    MAKER_STATE_KEY,
+    ROUND_STATE_KEY,
+    SKIP_VERIFIER_STATE_KEY,
+    VERIFICATION_STATE_KEY,
+    VERIFIER_CONTEXT_STATE_KEY,
+    build_text_convergence_agent,
+    run_convergence_agent,
+)
+from onebrief.completion_evidence import (
+    apply_completion_evidence_override,
+    validate_completion_evidence,
+)
 from onebrief.deterministic_verification import (
+    DeterministicVerification,
     apply_deterministic_override,
     validate_draft_grounding,
 )
@@ -34,6 +49,7 @@ from onebrief.execution_agents import (
     VerifierAgent,
     WriterAgent,
 )
+from onebrief.execution_limits import DEVELOPER_OUTPUT_CAP, VERIFIER_OUTPUT_CAP, WRITER_OUTPUT_CAP
 from onebrief.execution_graph import ExecutionGraph, ExecutionGraphRuntime, NodeStatus
 from onebrief.execution_schemas import (
     AnalysisPackage,
@@ -46,11 +62,17 @@ from onebrief.execution_schemas import (
 from onebrief.guarded_gemini import BudgetedGeminiClient
 from onebrief.grounded_search import run_grounded_research
 from onebrief.recovery_policy import RecoveryAction, RecoveryDecision, RecoveryPolicy
+from onebrief.reality_check import apply_reality_check_override, evaluate_reality_check
 from onebrief.requirements_gate import require_ready_for_estimate
 from onebrief.schemas import IntakeRequest, InternalSource, OutputTarget, RequirementsAnalysis, ToolPackId
 from onebrief.public_research import PublicResearchResult
 from onebrief.toolpacks import execute_toolpacks
 from onebrief.workbook_export import export_workbook
+from onebrief.temperament import (
+    VERIFIER_PROFILE,
+    WRITER_PROFILE,
+    enforce_temperament_audit,
+)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -169,6 +191,22 @@ class ExecutionPipeline:
         if inspection is None:
             raise RuntimeError("approved project inspection is unavailable")
         return development_pack.bind_change_set_to_inspection(change_set, inspection)
+
+    @staticmethod
+    def _apply_development_change_set(
+        intake: IntakeRequest,
+        development_pack,
+        change_set,
+        development_dir: Path,
+        contract: dict[str, object],
+    ) -> DevelopmentRun:
+        if ToolPackId.PROJECT_DEVELOPMENT in intake.toolpack_ids:
+            return development_pack.apply_and_verify(
+                change_set,
+                development_dir,
+                verification_goal=json.dumps(contract, ensure_ascii=False),
+            )
+        return development_pack.apply_and_verify(change_set, development_dir)
     def _temperament_audit(self, output_dir: Path) -> list[dict[str, object]]:
         """Collect only APT-3 decisions that actually broke an equal-choice tie."""
         decisions: list[dict[str, object]] = []
@@ -233,15 +271,395 @@ class ExecutionPipeline:
             excerpt = content[:remaining]
             remaining -= len(excerpt)
             changed_files.append({"path": relative, "content": excerpt})
+        runtime_evidence: list[dict[str, str]] = []
+        for relative in run.evidence_paths:
+            evidence_root = (output_dir / Path(*relative.split("/"))).resolve()
+            if not evidence_root.is_relative_to(output_dir.resolve()) or not evidence_root.is_dir():
+                continue
+            for path in sorted(evidence_root.rglob("*")):
+                if not path.is_file() or path.suffix.casefold() not in {".json", ".xml"}:
+                    continue
+                runtime_evidence.append({
+                    "path": path.relative_to(output_dir).as_posix(),
+                    "content": path.read_text(encoding="utf-8", errors="replace")[:20_000],
+                })
+        trusted_observation_receipts: list[dict[str, object]] = []
+        observation_dir = output_dir / "independent_observations"
+        if observation_dir.is_dir():
+            for path in sorted(observation_dir.glob("*.json")):
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if isinstance(payload, dict):
+                    trusted_observation_receipts.append(payload)
         return {
             "change_set": change_set,
             "development_run": run.model_dump(mode="json"),
             "changed_files": changed_files,
+            "runtime_evidence": runtime_evidence,
+            "trusted_observation_receipts": trusted_observation_receipts,
             "verification_rule": (
                 "Compare every deliverable and claimed feature with the actual changed files. "
-                "Legacy tests prove regression safety only; new behavior needs relevant deterministic evidence."
+                "Legacy tests prove regression safety only; new behavior needs relevant deterministic evidence. "
+                "For user-facing work, require trusted runtime evidence and reject compile-only proof."
             ),
         }
+
+    def _run_adk_document_convergence(
+        self,
+        *,
+        intake: IntakeRequest,
+        requirements: RequirementsAnalysis,
+        sources: list[InternalSource],
+        source_payload: list[dict[str, object]],
+        contract: dict[str, object],
+        analysis: AnalysisPackage,
+        output_dir: Path,
+    ) -> tuple[DraftArtifact, VerificationReport, int]:
+        """Run the real ADK maker/verifier loop while deterministic gates retain veto power."""
+
+        def after_maker(raw: object, _ctx, round_number: int) -> dict[str, object]:
+            draft = enforce_temperament_audit(
+                DraftArtifact.model_validate(raw), WRITER_PROFILE
+            )
+            self._write(
+                output_dir / f"draft_r{round_number}.json",
+                draft.model_dump_json(indent=2),
+            )
+            return {MAKER_STATE_KEY: draft.model_dump(mode="json")}
+
+        def verification_gate(
+            raw_report: VerificationReport, _ctx, round_number: int
+        ) -> VerificationReport:
+            model_report = enforce_temperament_audit(raw_report, VERIFIER_PROFILE)
+            self._write(
+                output_dir / f"model_verification_r{round_number}.json",
+                model_report.model_dump_json(indent=2),
+            )
+            draft = DraftArtifact.model_validate(_ctx.session.state[MAKER_STATE_KEY])
+            grounding = validate_draft_grounding(sources, draft)
+            self._write(
+                output_dir / f"deterministic_verification_r{round_number}.json",
+                grounding.model_dump_json(indent=2),
+            )
+            completion = validate_completion_evidence(intake, requirements, None)
+            self._write(
+                output_dir / f"completion_evidence_r{round_number}.json",
+                completion.model_dump_json(indent=2),
+            )
+            report = apply_completion_evidence_override(model_report, completion)
+            report = apply_deterministic_override(report, grounding)
+            reality = evaluate_reality_check(intake, requirements, None)
+            self._write(
+                output_dir / f"reality_check_r{round_number}.json",
+                reality.model_dump_json(indent=2),
+            )
+            report = apply_reality_check_override(report, reality)
+            self._write(
+                output_dir / f"verification_r{round_number}.json",
+                report.model_dump_json(indent=2),
+            )
+            return report
+
+        maker_instruction = (
+            "You are OneBrief's accountable artifact maker. Create the complete requested artifact from "
+            "the work contract, analysis package, and authoritative sources in the user payload. On later "
+            "iterations revise your own prior artifact, address every blocking issue, and preserve passing "
+            "content. Every material claim must cite supplied F-prefixed finding IDs. Never change the goal, "
+            "invent evidence, or make a high-impact human decision. Return only the required structured object. "
+            + WRITER_PROFILE.instruction()
+        )
+        verifier_instruction = (
+            "You are OneBrief's independent verifier and did not create the artifact. Test every acceptance "
+            "criterion, grounding, citation, consistency, completeness, and authority boundary against the "
+            "user payload and current artifact. PASS only with explicit evidence and no blocker. Use REVISE for "
+            "correctable maker work and NEEDS_INFORMATION only for missing authoritative user information. "
+            "Give exact revision instructions and never edit the artifact. Return only the structured object. "
+            + VERIFIER_PROFILE.instruction()
+        )
+        agent = build_text_convergence_agent(
+            gateway=self.gateway,
+            maker_model=self.stage_models.get("long_form_draft", "gemini-3.5-flash"),
+            verifier_model=self.stage_models.get(
+                "independent_verification", "gemini-3.5-flash"
+            ),
+            maker_schema=DraftArtifact,
+            max_revision_rounds=intake.max_revision_rounds,
+            maker_instruction=maker_instruction,
+            verifier_instruction=verifier_instruction,
+            maker_output_tokens=WRITER_OUTPUT_CAP,
+            verifier_output_tokens=VERIFIER_OUTPUT_CAP,
+            after_maker=after_maker,
+            verification_gate=verification_gate,
+        )
+        state, trace = asyncio.run(run_convergence_agent(agent, {
+            "work_contract": contract,
+            "analysis_package": analysis.model_dump(mode="json"),
+            "authoritative_sources": source_payload,
+        }))
+        self._write(
+            output_dir / "adk_convergence_trace.json",
+            json.dumps({
+                "schema_version": "onebrief-adk-convergence-trace-v1",
+                "agent_tree": {
+                    "root": agent.name,
+                    "maker": agent.maker.name,
+                    "verifier": agent.verifier.name,
+                    "same_maker_reused": True,
+                },
+                "events": trace,
+            }, ensure_ascii=False, indent=2),
+        )
+        round_number = int(state.get(ROUND_STATE_KEY, 0))
+        draft = DraftArtifact.model_validate(state[MAKER_STATE_KEY])
+        report = VerificationReport.model_validate(state[VERIFICATION_STATE_KEY])
+        return draft, report, round_number
+
+    def _run_adk_development_convergence(
+        self,
+        *,
+        intake: IntakeRequest,
+        requirements: RequirementsAnalysis,
+        sources: list[InternalSource],
+        source_payload: list[dict[str, object]],
+        contract: dict[str, object],
+        analysis: AnalysisPackage,
+        output_dir: Path,
+    ) -> tuple[DraftArtifact, VerificationReport, int]:
+        """Run code creation, isolated verification, review, and same-maker repair in ADK."""
+
+        change_schema, development_pack, developer = self._development_components(intake)
+        prepared_sources: list[dict[str, object]] = []
+        for source in source_payload:
+            prepared = dict(source)
+            name = str(prepared.get("name", ""))
+            candidate = (
+                name.removeprefix(developer.source_prefix)
+                if name.startswith(developer.source_prefix)
+                else ""
+            )
+            repository_path = developer.path_approver(candidate) if candidate else None
+            prepared["repository_path"] = repository_path
+            normalized = name.casefold().replace("\\", "/")
+            if "/tests/" in normalized or normalized.startswith(
+                f"{developer.source_prefix}tests/"
+            ):
+                prepared["source_role"] = "immutable_acceptance_contract"
+            elif repository_path is not None:
+                prepared["source_role"] = "editable_source"
+            else:
+                prepared["source_role"] = "read_only_context"
+            prepared_sources.append(prepared)
+
+        previous_change_set: BaseModel | None = None
+        latest_run: DevelopmentRun | None = None
+
+        def after_maker(raw: object, _ctx, round_number: int) -> dict[str, object]:
+            nonlocal previous_change_set, latest_run
+            delta = change_schema.model_validate(raw)
+            self._write(
+                output_dir / f"code_change_set_delta_r{round_number}.json",
+                delta.model_dump_json(indent=2),
+            )
+            candidate = (
+                self._merge_development_retry(previous_change_set, delta)
+                if previous_change_set is not None
+                else delta
+            )
+            candidate = self._bind_project_change_set(
+                intake, development_pack, candidate, output_dir
+            )
+            previous_change_set = candidate
+            self._write(
+                output_dir / f"code_change_set_r{round_number}.json",
+                candidate.model_dump_json(indent=2),
+            )
+            self._write(
+                output_dir / "code_change_set.json", candidate.model_dump_json(indent=2)
+            )
+            development_dir = output_dir / "development"
+            if development_dir.exists():
+                shutil.rmtree(development_dir)
+            try:
+                latest_run = self._apply_development_change_set(
+                    intake, development_pack, candidate, development_dir, contract
+                )
+            except RuntimeError as exc:
+                latest_run = None
+                decision = self.recovery_policy.decide(
+                    exc,
+                    context="development_verification",
+                    attempt_number=round_number + 1,
+                )
+                self._append_recovery(decision)
+                self._persist_recoveries(output_dir)
+                if (
+                    decision.action != RecoveryAction.RETURN_TO_AGENT
+                    or not decision.retry_allowed
+                ):
+                    raise
+                feedback = " ".join(str(exc).split())[:12_000]
+                self._write(
+                    output_dir / f"development_verification_failure_r{round_number}.txt",
+                    feedback,
+                )
+                report = VerificationReport(
+                    verdict=Verdict.REVISE,
+                    criterion_checks=[{
+                        "criterion": "Isolated build and test execution",
+                        "passed": False,
+                        "evidence": feedback,
+                    }],
+                    blocking_issues=[feedback],
+                    revision_instructions=[
+                        "Correct the reported build or test failure without removing passing behavior."
+                    ],
+                    missing_information=[],
+                )
+                self._write(
+                    output_dir / f"verification_r{round_number}.json",
+                    report.model_dump_json(indent=2),
+                )
+                return {
+                    MAKER_STATE_KEY: candidate.model_dump(mode="json"),
+                    VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
+                    SKIP_VERIFIER_STATE_KEY: True,
+                }
+            evidence = self._development_evidence(output_dir)
+            return {
+                MAKER_STATE_KEY: candidate.model_dump(mode="json"),
+                VERIFIER_CONTEXT_STATE_KEY: evidence or {},
+                SKIP_VERIFIER_STATE_KEY: False,
+            }
+
+        def verification_gate(
+            raw_report: VerificationReport, ctx, round_number: int
+        ) -> VerificationReport:
+            model_report = enforce_temperament_audit(raw_report, VERIFIER_PROFILE)
+            if bool(ctx.session.state.get(SKIP_VERIFIER_STATE_KEY, False)):
+                return model_report
+            self._write(
+                output_dir / f"model_verification_r{round_number}.json",
+                model_report.model_dump_json(indent=2),
+            )
+            # Source-level product behavior is proven by the isolated implementation
+            # evidence. Markdown/CSV grounding applies only to document artifacts.
+            grounding = DeterministicVerification()
+            self._write(
+                output_dir / f"deterministic_verification_r{round_number}.json",
+                grounding.model_dump_json(indent=2),
+            )
+            evidence = self._development_evidence(output_dir)
+            completion = validate_completion_evidence(intake, requirements, evidence)
+            self._write(
+                output_dir / f"completion_evidence_r{round_number}.json",
+                completion.model_dump_json(indent=2),
+            )
+            report = apply_completion_evidence_override(model_report, completion)
+            report = apply_deterministic_override(report, grounding)
+            reality = evaluate_reality_check(intake, requirements, evidence)
+            self._write(
+                output_dir / f"reality_check_r{round_number}.json",
+                reality.model_dump_json(indent=2),
+            )
+            report = apply_reality_check_override(report, reality)
+            self._write(
+                output_dir / f"verification_r{round_number}.json",
+                report.model_dump_json(indent=2),
+            )
+            return report
+
+        maker_instruction = (
+            "You are OneBrief's accountable software maker. Return the smallest complete runnable source "
+            "change set that satisfies the work contract. Existing-file paths must exactly match a non-null "
+            "repository_path and retain its exact sha256 as base_sha256; new text source files use null. "
+            "Files marked immutable_acceptance_contract may not be changed. Never touch secrets, dependencies, "
+            "Git metadata, deployment, accounts, financial transactions, or paths outside the approved project. "
+            "On revision, repair every build, test, runtime, or independent-review failure while preserving all "
+            "previously passing behavior. Return complete replacement file content, not prose or a patch fragment. "
+            "The combined replacement content must remain below 60000 UTF-8 bytes. Return only the schema."
+            + (("\n\n" + developer.skill_context) if developer.skill_context else "")
+        )
+        verifier_instruction = (
+            "You are OneBrief's independent software verifier. You did not author the code. Compare every "
+            "deliverable and acceptance criterion against the changed source, isolated build and test commands, "
+            "runtime evidence, and trusted observation receipts. Legacy regression tests alone do not prove new "
+            "behavior. PASS only when the implementation evidence proves the requested behavior and no blocker "
+            "remains. Use REVISE for correctable code and NEEDS_INFORMATION only for an absent authoritative user "
+            "decision. Never edit the code. Return exact, actionable revision instructions and only the schema. "
+            + VERIFIER_PROFILE.instruction()
+        )
+        agent = build_text_convergence_agent(
+            gateway=self.gateway,
+            maker_model=self.stage_models.get("long_form_draft", "gemini-3.5-flash"),
+            verifier_model=self.stage_models.get(
+                "independent_verification", "gemini-3.5-flash"
+            ),
+            maker_schema=change_schema,
+            max_revision_rounds=intake.max_revision_rounds,
+            maker_instruction=maker_instruction,
+            verifier_instruction=verifier_instruction,
+            maker_output_tokens=DEVELOPER_OUTPUT_CAP,
+            verifier_output_tokens=VERIFIER_OUTPUT_CAP,
+            after_maker=after_maker,
+            verification_gate=verification_gate,
+        )
+        state, trace = asyncio.run(run_convergence_agent(agent, {
+            "work_contract": contract,
+            "analysis_package": analysis.model_dump(mode="json"),
+            "approved_repository_files": prepared_sources,
+        }))
+        self._write(
+            output_dir / "adk_convergence_trace.json",
+            json.dumps({
+                "schema_version": "onebrief-adk-convergence-trace-v1",
+                "workflow": "software_creation_isolated_verification_review_revision",
+                "agent_tree": {
+                    "root": agent.name,
+                    "maker": agent.maker.name,
+                    "verifier": agent.verifier.name,
+                    "same_maker_reused": True,
+                },
+                "events": trace,
+            }, ensure_ascii=False, indent=2),
+        )
+        round_number = int(state.get(ROUND_STATE_KEY, 0))
+        report = VerificationReport.model_validate(state[VERIFICATION_STATE_KEY])
+        if latest_run is None:
+            draft = DraftArtifact(
+                title="소프트웨어 제작 검증 미완료",
+                body_markdown=(
+                    "격리된 빌드 또는 테스트가 아직 통과하지 못했습니다. 검증 기록과 수정 지시를 "
+                    "보존했으며 승인된 수정 횟수 안에서 더 이상 수렴하지 못했습니다."
+                ),
+                cited_finding_ids=[item.finding_id for item in analysis.findings],
+                drafting_decisions=["실행 증거가 없는 코드를 완성본으로 표시하지 않았습니다."],
+            )
+        else:
+            commands = "\n".join(
+                f"- `{item.command_id}`: 통과 (종료 코드 {item.exit_code})"
+                for item in latest_run.commands
+            )
+            changed = "\n".join(f"- `{item}`" for item in latest_run.changed_paths)
+            draft = DraftArtifact(
+                title="격리 빌드·테스트를 통과한 소프트웨어 개선본",
+                body_markdown=(
+                    "요청된 변경을 원본과 분리된 작업 공간에서 구현하고 검증했습니다.\n\n"
+                    f"## 변경 파일\n\n{changed}\n\n## 자동 검증\n\n{commands}\n\n"
+                    "## 전달물\n\n- `development/changes.patch`\n- `development/changed_files/`\n"
+                    "- `development/development_run.json`"
+                ),
+                cited_finding_ids=[item.finding_id for item in analysis.findings],
+                drafting_decisions=[
+                    "원본 대신 격리 복제본에서 변경했습니다.",
+                    "실제 빌드·테스트 증거를 독립 검증에 전달했습니다.",
+                ],
+            )
+        self._write(
+            output_dir / f"draft_r{round_number}.json", draft.model_dump_json(indent=2)
+        )
+        return draft, report, round_number
     def _checkpoint(
         self,
         output_dir: Path,
@@ -466,9 +884,55 @@ class ExecutionPipeline:
             if creative is not None:
                 contract["creative_direction"] = creative.model_dump(mode="json")
 
-            draft_path = output_dir / "draft_r0.json"
+            adk_report: VerificationReport | None = None
+            advertised_adk = getattr(self.gateway, "supports_adk", None)
+            use_adk_convergence = (
+                bool(advertised_adk)
+                if advertised_adk is not None
+                else callable(getattr(self.gateway, "generate_adk_response", None))
+            )
+            if use_adk_convergence and (output_dir / "adk_convergence_trace.json").is_file():
+                completed_rounds = sorted(
+                    int(path.stem.rsplit("r", 1)[1])
+                    for path in output_dir.glob("verification_r*.json")
+                    if path.stem.rsplit("r", 1)[-1].isdigit()
+                )
+                if not completed_rounds:
+                    raise RuntimeError("ADK convergence trace has no verification result")
+                revision_round = completed_rounds[-1]
+                draft = self._load(
+                    output_dir / f"draft_r{revision_round}.json", DraftArtifact
+                )
+                adk_report = self._load(
+                    output_dir / f"verification_r{revision_round}.json", VerificationReport
+                )
+                if draft is None or adk_report is None:
+                    raise RuntimeError("ADK convergence result is incomplete")
+            elif use_adk_convergence and not (output_dir / "draft_r0.json").exists():
+                self._checkpoint(
+                    output_dir, PipelineStatus.RUNNING, "adk_quality_convergence", completed, 0
+                )
+                convergence_runner = (
+                    self._run_adk_development_convergence
+                    if self._is_development(intake)
+                    else self._run_adk_document_convergence
+                )
+                draft, adk_report, revision_round = convergence_runner(
+                    intake=intake, requirements=requirements, sources=sources,
+                    source_payload=source_payload, contract=contract,
+                    analysis=analysis, output_dir=output_dir,
+                )
+            elif use_adk_convergence:
+                # A legacy or interrupted pre-ADK run has no durable ADK session.
+                # Resume it through the existing checkpointed path instead of
+                # repeating already billed model calls.
+                use_adk_convergence = False
+
+            draft_path = output_dir / (
+                f"draft_r{revision_round}.json" if adk_report is not None else "draft_r0.json"
+            )
             graph_begin("long_form_draft")
-            draft = self._load(draft_path, DraftArtifact)
+            draft = draft if adk_report is not None else self._load(draft_path, DraftArtifact)
             if draft is None:
                 self._checkpoint(output_dir, PipelineStatus.RUNNING, "long_form_draft", completed, 0)
                 if self._is_development(intake):
@@ -489,8 +953,8 @@ class ExecutionPipeline:
                     )
                     if development_run is None:
                         try:
-                            development_run = development_pack.apply_and_verify(
-                                change_set, development_dir
+                            development_run = self._apply_development_change_set(
+                                intake, development_pack, change_set, development_dir, contract
                             )
                         except RuntimeError as exc:
                             feedback = str(exc)
@@ -532,9 +996,61 @@ class ExecutionPipeline:
                                 retry_change_set.model_dump_json(indent=2),
                             )
                             self._write(change_set_path, retry_change_set.model_dump_json(indent=2))
-                            development_run = development_pack.apply_and_verify(
-                                retry_change_set, development_dir
-                            )
+                            try:
+                                development_run = self._apply_development_change_set(
+                                    intake, development_pack, retry_change_set, development_dir, contract
+                                )
+                            except RuntimeError as retry_exc:
+                                retry_feedback = str(retry_exc)
+                                retry_decision = self.recovery_policy.decide(
+                                    retry_exc,
+                                    context="development_verification",
+                                    attempt_number=2,
+                                )
+                                self._append_recovery(retry_decision)
+                                self._persist_recoveries(output_dir)
+                                if (
+                                    retry_decision.action != RecoveryAction.RETURN_TO_AGENT
+                                    or not retry_decision.retry_allowed
+                                ):
+                                    raise
+                                self._write(
+                                    output_dir / "development_verification_failure_r1.txt",
+                                    retry_feedback,
+                                )
+                                second_retry_delta = developer.run(
+                                    contract,
+                                    analysis,
+                                    source_payload,
+                                    verification_feedback=retry_feedback,
+                                    previous_change_set=retry_change_set,
+                                )
+                                self._write(
+                                    output_dir / "code_change_set_retry_delta_r2.json",
+                                    second_retry_delta.model_dump_json(indent=2),
+                                )
+                                second_retry = self._merge_development_retry(
+                                    retry_change_set, second_retry_delta
+                                )
+                                second_retry = self._bind_project_change_set(
+                                    intake, development_pack, second_retry, output_dir
+                                )
+                                self._capture_developer_recoveries(developer)
+                                self._persist_recoveries(output_dir)
+                                self._write(
+                                    output_dir / "code_change_set_retry_r2.json",
+                                    second_retry.model_dump_json(indent=2),
+                                )
+                                self._write(
+                                    change_set_path, second_retry.model_dump_json(indent=2)
+                                )
+                                development_run = self._apply_development_change_set(
+                                    intake,
+                                    development_pack,
+                                    second_retry,
+                                    development_dir,
+                                    contract,
+                                )
                     finding_ids = [item.finding_id for item in analysis.findings]
                     command_lines = "\n".join(
                         f"- `{item.command_id}`: 통과 (종료 코드 {item.exit_code})"
@@ -582,11 +1098,19 @@ class ExecutionPipeline:
                 contract["artifact_integration"] = integration.model_dump(mode="json")
 
             graph_begin("independent_verification")
-            verification_path = output_dir / "verification_r0.json"
-            grounding_path = output_dir / "deterministic_verification_r0.json"
-            model_verification_path = output_dir / "model_verification_r0.json"
-            report = self._load(verification_path, VerificationReport)
-            if report is None or not grounding_path.exists():
+            active_verification_round = revision_round if adk_report is not None else 0
+            verification_path = output_dir / f"verification_r{active_verification_round}.json"
+            grounding_path = output_dir / f"deterministic_verification_r{active_verification_round}.json"
+            completion_evidence_path = output_dir / f"completion_evidence_r{active_verification_round}.json"
+            reality_check_path = output_dir / f"reality_check_r{active_verification_round}.json"
+            model_verification_path = output_dir / f"model_verification_r{active_verification_round}.json"
+            report = adk_report or self._load(verification_path, VerificationReport)
+            if (
+                report is None
+                or not grounding_path.exists()
+                or not completion_evidence_path.exists()
+                or not reality_check_path.exists()
+            ):
                 self._checkpoint(output_dir, PipelineStatus.RUNNING, "verification_r0", completed, 0)
                 model_report = self._load(model_verification_path, VerificationReport)
                 if model_report is None:
@@ -599,7 +1123,22 @@ class ExecutionPipeline:
                     )
                 grounding = validate_draft_grounding(sources, draft)
                 self._write(grounding_path, grounding.model_dump_json(indent=2))
-                report = apply_deterministic_override(model_report, grounding)
+                completion_evidence = validate_completion_evidence(
+                    intake, requirements, self._development_evidence(output_dir)
+                )
+                self._write(
+                    completion_evidence_path,
+                    completion_evidence.model_dump_json(indent=2),
+                )
+                report = apply_completion_evidence_override(
+                    model_report, completion_evidence
+                )
+                report = apply_deterministic_override(report, grounding)
+                reality_check = evaluate_reality_check(
+                    intake, requirements, self._development_evidence(output_dir)
+                )
+                self._write(reality_check_path, reality_check.model_dump_json(indent=2))
+                report = apply_reality_check_override(report, reality_check)
                 self._write(verification_path, report.model_dump_json(indent=2))
             completed.append("verification_r0")
 
@@ -654,8 +1193,8 @@ class ExecutionPipeline:
                     development_dir = output_dir / "development"
                     if development_dir.exists():
                         shutil.rmtree(development_dir)
-                    development_pack.apply_and_verify(
-                        retry_change_set, development_dir
+                    self._apply_development_change_set(
+                        intake, development_pack, retry_change_set, development_dir, contract
                     )
                     draft = DraftArtifact(
                         title=draft.title,
@@ -703,7 +1242,25 @@ class ExecutionPipeline:
                         output_dir / f"deterministic_verification_r{revision_round}.json",
                         grounding.model_dump_json(indent=2),
                     )
-                    report = apply_deterministic_override(model_report, grounding)
+                    completion_evidence = validate_completion_evidence(
+                        intake, requirements, self._development_evidence(output_dir)
+                    )
+                    self._write(
+                        output_dir / f"completion_evidence_r{revision_round}.json",
+                        completion_evidence.model_dump_json(indent=2),
+                    )
+                    report = apply_completion_evidence_override(
+                        model_report, completion_evidence
+                    )
+                    report = apply_deterministic_override(report, grounding)
+                    reality_check = evaluate_reality_check(
+                        intake, requirements, self._development_evidence(output_dir)
+                    )
+                    self._write(
+                        output_dir / f"reality_check_r{revision_round}.json",
+                        reality_check.model_dump_json(indent=2),
+                    )
+                    report = apply_reality_check_override(report, reality_check)
                     self._write(
                         output_dir / f"verification_r{revision_round}.json",
                         report.model_dump_json(indent=2),
@@ -735,10 +1292,17 @@ class ExecutionPipeline:
 
                 verification_stage = f"verification_r{revision_round}"
                 verification_path = output_dir / f"verification_r{revision_round}.json"
+                completion_evidence_path = output_dir / f"completion_evidence_r{revision_round}.json"
+                reality_check_path = output_dir / f"reality_check_r{revision_round}.json"
                 grounding_path = output_dir / f"deterministic_verification_r{revision_round}.json"
                 model_verification_path = output_dir / f"model_verification_r{revision_round}.json"
                 next_report = self._load(verification_path, VerificationReport)
-                if next_report is None or not grounding_path.exists():
+                if (
+                    next_report is None
+                    or not grounding_path.exists()
+                    or not completion_evidence_path.exists()
+                    or not reality_check_path.exists()
+                ):
                     self._checkpoint(
                         output_dir,
                         PipelineStatus.RUNNING,
@@ -757,13 +1321,30 @@ class ExecutionPipeline:
                         )
                     grounding = validate_draft_grounding(sources, draft)
                     self._write(grounding_path, grounding.model_dump_json(indent=2))
-                    next_report = apply_deterministic_override(model_report, grounding)
+                    completion_evidence = validate_completion_evidence(
+                        intake, requirements, self._development_evidence(output_dir)
+                    )
+                    self._write(
+                        completion_evidence_path,
+                        completion_evidence.model_dump_json(indent=2),
+                    )
+                    next_report = apply_completion_evidence_override(
+                        model_report, completion_evidence
+                    )
+                    next_report = apply_deterministic_override(next_report, grounding)
+                    reality_check = evaluate_reality_check(
+                        intake, requirements, self._development_evidence(output_dir)
+                    )
+                    self._write(reality_check_path, reality_check.model_dump_json(indent=2))
+                    next_report = apply_reality_check_override(next_report, reality_check)
                     self._write(verification_path, next_report.model_dump_json(indent=2))
                 report = next_report
                 completed.append(verification_stage)
 
             graph_complete(
                 "independent_verification",
+                f"completion_evidence_r{revision_round}.json",
+                f"reality_check_r{revision_round}.json",
                 f"verification_r{revision_round}.json",
                 f"deterministic_verification_r{revision_round}.json",
             )
@@ -792,6 +1373,12 @@ class ExecutionPipeline:
             elif report.verdict == Verdict.PASS:
                 status = PipelineStatus.COMPLETE
                 message = "Independent verification passed."
+            elif report.verdict == Verdict.UNVERIFIABLE:
+                status = PipelineStatus.PARTIAL
+                message = (
+                    "A required independent observation capability was unavailable; "
+                    "the result was not accepted as complete."
+                )
             else:
                 status = PipelineStatus.PARTIAL
                 message = "Revision limit reached before verification passed."
@@ -894,4 +1481,3 @@ class ExecutionPipeline:
                 message=f"{type(exc).__name__}: {exc}",
             )
             raise
-

@@ -24,13 +24,11 @@ class AgentType(StrEnum):
 class ApprovedModel(StrEnum):
     GEMINI_3_5_FLASH = "gemini-3.5-flash"
     GEMINI_3_5_FLASH_LITE = "gemini-3.5-flash-lite"
-    GEMINI_2_5_FLASH = "gemini-2.5-flash"
 
 
 APPROVED_MODEL_CATALOG: dict[ApprovedModel, str] = {
     ApprovedModel.GEMINI_3_5_FLASH: "Primary model for complex planning, creation, and review.",
     ApprovedModel.GEMINI_3_5_FLASH_LITE: "Lower-cost model for bounded, simpler structured work.",
-    ApprovedModel.GEMINI_2_5_FLASH: "Model reserved for Google Search-grounded public research.",
 }
 
 

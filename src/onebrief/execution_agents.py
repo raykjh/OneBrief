@@ -198,13 +198,54 @@ class DeveloperAgent:
             "changes over redesigning or replacing a mature implementation. If verification_feedback is present, "
             "correct every reported failure while retaining all previously passing behavior. Do not return a report "
             "in place of runnable source code. Keep existing correct behavior, make no unsupported financial claim, "
-            "and stay within the acceptance criteria. Keep the combined replacement "
+            "and stay within the acceptance criteria. For Unity visual or localization work, include a real PlayMode "
+            "test whose full name begins with OneBrief.Visual. The test must perform the requested runtime interaction, "
+            "and must be placed in a discoverable Unity test assembly. When the project does not already expose one, "
+            "add a matching .asmdef whose optionalUnityReferences contains TestAssemblies. The test source and its "
+            ".asmdef must live under a dedicated Assets/.../Tests/PlayMode/ directory. Never put a test .asmdef in "
+            "a production Scripts or Localization directory because it would move production scripts into the test assembly. "
+            "Unity test assemblies cannot directly reference types compiled into the predefined Assembly-CSharp; "
+            "when production scripts have no asmdef, do not name those production types in test code; load the real "
+            "project scene and interact through discovered scene objects, public UI controls, or reflection. The test "
+            "must find visible UI objects from that loaded scene and must not construct a fake GameObject/TMP canvas. "
+            "Use valid C# interpolated strings beginning with $\" (never JavaScript-style ${). "
+            "capture a PNG under onebrief-evidence/, and write onebrief-evidence/runtime-evidence.json with schema_version "
+            "Unity batchmode does not reliably support ScreenCapture.CaptureScreenshot or yielding WaitForEndOfFrame. Do not "
+            "use either. Capture deterministically by rendering the real scene camera and UI Canvas to a RenderTexture, "
+            "calling Texture2D.ReadPixels, EncodeToPNG, and File.WriteAllBytes synchronously; restore modified camera/canvas "
+            "state afterwards. A camera RenderTexture does not include ScreenSpaceOverlay canvases: temporarily route every "
+            "active overlay Canvas that contains the measured UI through that camera (ScreenSpaceCamera, worldCamera and an "
+            "appropriate planeDistance), force Canvas/TMP layout updates, render, then restore every original canvas setting. "
+            "The resulting PNG must visibly contain the measured UI, and every locale screenshot must have different image "
+            "bytes; a blank, background-only, or duplicated capture is invalid. Never write the JSON manifest before every "
+            "referenced PNG has been durably created. "
+            "onebrief-unity-visual-evidence-v1. Each scenario must contain scenario_id, expected_locale, observed_locale, "
+            "changed_visible_text_count, missing_glyph_count, and an evidence-relative screenshot_path. Derive "
+            "observed_locale, changed text count, and missing glyph count from the running UI; do not hard-code a passing "
+            "claim. For every locale scenario, first switch the real UI to a deliberately different supported reference "
+            "locale and capture that scenario's own baseline, then operate the dropdown to select the target locale and "
+            "measure the target UI against that baseline. Never reuse one startup snapshot for all locales: the startup "
+            "locale may equal the first target and falsely report zero visible changes. The ToolPack independently rejects "
+            "missing tests, missing or invalid PNG files, duplicated screenshots, unchanged text, "
+            "locale mismatches, missing glyphs, and requested locales that were not exercised. "
+            "Keep the combined replacement "
             "content below 60000 UTF-8 bytes. Return only the schema."
         )
+        approved_existing_paths = {
+            str(item["repository_path"])
+            for item in developer_sources
+            if item.get("repository_path")
+        }
+        previous_new_paths = {
+            str(getattr(item, "path", ""))
+            for item in getattr(previous_change_set, "changes", [])
+            if getattr(item, "base_sha256", None) is None
+        }
         stage_base = (
             f"{self.stage}_verification_retry" if verification_feedback else self.stage
         )
         result = None
+        last_contract_error = ""
         for attempt in range(2):
             instruction = base_instruction
             if attempt:
@@ -215,8 +256,10 @@ class DeveloperAgent:
                     "source files, remove comments and repetition, and keep all "
                     "replacement content below 55000 characters while preserving a runnable implementation."
                 )
+                if last_contract_error:
+                    instruction += " Exact validation failure: " + last_contract_error
             try:
-                result = self.gateway.generate_json(
+                candidate = self.gateway.generate_json(
                     stage=stage_base if not attempt else f"{stage_base}_compact_retry",
                     model=self.model,
                     contents=contents,
@@ -225,8 +268,29 @@ class DeveloperAgent:
                     system_instruction=instruction + (("\n\n" + self.skill_context) if self.skill_context else ""),
                     temperature=0.1,
                 )
+                normalized_changes = []
+                for change in getattr(candidate, "changes", []):
+                    path = str(getattr(change, "path", ""))
+                    base_sha256 = getattr(change, "base_sha256", None)
+                    if path in previous_new_paths and base_sha256 is not None:
+                        # A retry may see its own prior overlay and mistake it for a
+                        # repository file. Its provenance is still "new relative to
+                        # approved HEAD", so preserve the trusted null base hash.
+                        change = change.model_copy(update={"base_sha256": None})
+                        base_sha256 = None
+                    if base_sha256 is not None and path not in approved_existing_paths:
+                        raise ValueError(
+                            "existing file is absent from approved_repository_files and cannot be replaced: "
+                            f"{path}. Use only a listed repository_path, or add a small new sidecar/partial "
+                            "source file with base_sha256 null."
+                        )
+                    normalized_changes.append(change)
+                if normalized_changes != list(getattr(candidate, "changes", [])):
+                    candidate = candidate.model_copy(update={"changes": normalized_changes})
+                result = candidate
                 break
             except (ValidationError, ValueError) as exc:
+                last_contract_error = " ".join(str(exc).split())[:1000]
                 decision = self.recovery_policy.decide(
                     exc, context="developer_structured_output", attempt_number=attempt + 1
                 )
@@ -326,4 +390,3 @@ class RevisionAgent:
             ),
         )
         return enforce_temperament_audit(result, REVISION_PROFILE)
-

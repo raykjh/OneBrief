@@ -54,6 +54,7 @@ class Verdict(StrEnum):
     PASS = "PASS"
     REVISE = "REVISE"
     NEEDS_INFORMATION = "NEEDS_INFORMATION"
+    UNVERIFIABLE = "UNVERIFIABLE"
 
 
 class CriterionCheck(BaseModel):
@@ -78,6 +79,8 @@ class VerificationReport(BaseModel):
             raise ValueError("PASS cannot retain blocking issues or missing information")
         if self.verdict == Verdict.REVISE and not self.revision_instructions:
             raise ValueError("REVISE requires instructions")
+        if self.verdict == Verdict.UNVERIFIABLE and not self.blocking_issues:
+            raise ValueError("UNVERIFIABLE requires a blocking issue")
         return self
 
 
@@ -113,4 +116,3 @@ class ExecutionCheckpoint(BaseModel):
     revision_round: int = Field(ge=0, le=2)
     final_verdict: Verdict | None = None
     message: str = ""
-

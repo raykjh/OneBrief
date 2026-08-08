@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 from typing import Callable
 
@@ -152,16 +153,97 @@ class DevelopmentRun(BaseModel):
     changed_paths: list[str]
     commands: list[DevelopmentCommandResult]
     patch_path: str
+    evidence_paths: list[str] = Field(default_factory=list)
     safety_boundary: list[str]
 
 
 CommandRunner = Callable[[str, list[str], Path, int], DevelopmentCommandResult]
 
 
+def _verification_signals(log_text: str) -> list[str]:
+    """Keep actionable verifier errors without drowning them in Unity command lines."""
+    lines = [line.strip() for line in log_text.splitlines() if line.strip()]
+    strong_pattern = re.compile(
+        r"(?:\berror\s+CS\d+\b|\berror\s+[A-Z]{2,}\d+\b|"
+        r"scripts have compiler errors|compilation failed|test(?:s| run)? failed|"
+        r"unhandled exception|\bexception:)",
+        re.IGNORECASE,
+    )
+    fallback_pattern = re.compile(
+        r"(?:\berror\b|\bfailed\b|\bexception\b|package manager)", re.IGNORECASE
+    )
+    strong = [line for line in lines if strong_pattern.search(line)]
+    selected = strong if strong else [line for line in lines if fallback_pattern.search(line)]
+    unique: list[str] = []
+    seen: set[str] = set()
+    for line in selected:
+        clipped = line[:1200]
+        if clipped not in seen:
+            seen.add(clipped)
+            unique.append(clipped)
+    return unique[-60:]
+
+
+def _bee_failure_diagnostics(cwd: Path, *, since: float) -> list[str]:
+    """Collect recent Unity Bee compiler diagnostics before the isolated clone is removed."""
+    bee_root = cwd / "Library" / "Bee"
+    if not bee_root.is_dir():
+        return []
+    collected: list[str] = []
+    inspected = 0
+    total_bytes = 0
+    for path in bee_root.rglob("*"):
+        if inspected >= 10_000 or total_bytes >= 30_000_000:
+            break
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        if not path.is_file() or stat.st_size > 2_000_000:
+            continue
+        inspected += 1
+        total_bytes += stat.st_size
+        try:
+            content = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        signals = _verification_signals(content)
+        if signals:
+            collected.extend(f"{path.relative_to(cwd).as_posix()}: {line}" for line in signals)
+    unique: list[str] = []
+    seen: set[str] = set()
+    for item in collected:
+        if item not in seen:
+            seen.add(item)
+            unique.append(item)
+    return unique[-80:]
+
+
+def _unity_test_failure_diagnostics(results_path: Path) -> list[str]:
+    """Extract failing Unity/NUnit test names and assertion messages."""
+    if not results_path.is_file():
+        return []
+    try:
+        root = ET.fromstring(results_path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ET.ParseError):
+        return []
+    failures: list[str] = []
+    for case in root.iter("test-case"):
+        result = str(case.attrib.get("result", "")).casefold()
+        if result not in {"failed", "failure", "error"}:
+            continue
+        name = case.attrib.get("fullname") or case.attrib.get("name") or "unknown test"
+        message = case.findtext("./failure/message") or case.findtext("./reason/message") or "failed"
+        compact = " ".join(message.split())[:1600]
+        failures.append(f"{name}: {compact}")
+    return failures[-40:]
+
+
 def _default_runner(
     command_id: str, argv: list[str], cwd: Path, timeout_seconds: int
 ) -> DevelopmentCommandResult:
     started = time.monotonic()
+    started_wall = time.time()
     environment = {
         key: value for key, value in os.environ.items()
         if key.casefold() in {
@@ -190,14 +272,19 @@ def _default_runner(
                 log_text = log_path.read_text(encoding="utf-8", errors="replace")
                 if log_text.strip():
                     output = (output + "\n" + log_text[-20_000:]).strip()
-                    signals = [
-                        line for line in log_text.splitlines()
-                        if any(marker in line.casefold() for marker in (
-                            "error", "failed", "exception", "compilation", "package manager"
-                        ))
-                    ]
+                    signals = _verification_signals(log_text)
                     if signals:
                         output = (output + "\nVERIFICATION SIGNALS\n" + "\n".join(signals[-60:])).strip()
+    if completed.returncode != 0:
+        bee_signals = _bee_failure_diagnostics(cwd, since=started_wall)
+        if bee_signals:
+            output = (output + "\nBEE COMPILER DIAGNOSTICS\n" + "\n".join(bee_signals)).strip()
+        if "-testResults" in argv:
+            results_index = argv.index("-testResults") + 1
+            if results_index < len(argv):
+                test_failures = _unity_test_failure_diagnostics(Path(argv[results_index]))
+                if test_failures:
+                    output = (output + "\nUNITY TEST FAILURES\n" + "\n".join(test_failures)).strip()
     result = DevelopmentCommandResult(
         command_id=command_id,
         argv=argv,

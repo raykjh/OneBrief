@@ -71,6 +71,10 @@ class RecordingGateway:
         self.calls.append((stage, model))
         return {"ok": True}
 
+    def generate_adk_response(self, *, stage: str, model: str, **_: object):
+        self.calls.append((stage, model))
+        return {"adk": True}
+
 
 def _policy() -> ModelExecutionPolicy:
     return ModelExecutionPolicy(
@@ -96,6 +100,26 @@ def test_gateway_allows_only_exact_stage_model_binding() -> None:
             stage="evidence_analysis", model="gemini-3.5-flash", schema=dict
         )
     assert raw.calls == [("evidence_analysis", "gemini-3.5-flash-lite")]
+
+
+def test_gateway_applies_the_same_model_policy_to_native_adk_turns() -> None:
+    raw = RecordingGateway()
+    policy = _policy().model_copy(update={
+        "stage_models": {
+            **_policy().stage_models,
+            "long_form_draft": ApprovedModel.GEMINI_3_5_FLASH,
+        }
+    })
+    gateway = ModelPolicyGateway(raw, policy)
+
+    assert gateway.generate_adk_response(
+        stage="long_form_draft", model="gemini-3.5-flash", contents=[]
+    ) == {"adk": True}
+    with pytest.raises(PermissionError, match="blocked before provider call"):
+        gateway.generate_adk_response(
+            stage="long_form_draft", model="gemini-3.5-flash-lite", contents=[]
+        )
+    assert raw.calls == [("long_form_draft", "gemini-3.5-flash")]
 
 
 @pytest.mark.parametrize(

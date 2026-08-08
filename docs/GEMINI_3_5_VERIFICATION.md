@@ -22,13 +22,19 @@
 
 ## 검증 범위
 
-이 검증은 다음 항목만 증명한다.
+최초 최소 호출은 다음 항목을 증명했다.
 
 - 현재 인증 계정에서 Vertex AI를 호출할 수 있다.
 - `gemini-3.5-flash` 모델에 접근할 수 있다.
 - OneBrief가 사용할 Google GenAI SDK가 정상 동작한다.
 
-Google ADK 연결, 구조화 출력, 도구 호출, 장문 입력, Firestore와 Cloud Run은 아직 검증하지 않았다.
+이후 OneBrief 통합 검증에서 Google ADK 2.6.2의 구조화된 요구사항 분석가와
+제작자 → 독립 검증자 → 원 제작자 수정 루프를 실행했다. Cloud Run Job과
+Cloud Storage 비동기 왕복, 전용 서비스 계정, 결과 패키지 무결성도 검증했다.
+Firestore는 현재 제품에 필요하지 않아 사용하지 않으며 필수 구성요소로 주장하지 않는다.
+
+최신 ADK 소프트웨어 수렴 버전의 Cloud Run 재배포와 실제 Gemini 포함 원격 실행은
+별도의 배포 증거로 갱신한다.
 
 ## 보안
 

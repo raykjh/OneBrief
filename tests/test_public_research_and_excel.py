@@ -39,7 +39,7 @@ def test_public_research_is_estimated_and_source_less_job_is_allowed(tmp_path: P
     estimate = estimate_budget(intake, _requirements())
     research = next(stage for stage in estimate.stages if stage.stage == "public_research")
     assert research.stage == "public_research"
-    assert research.model == "gemini-2.5-flash"
+    assert research.model == "gemini-3.5-flash"
     assert research.fixed_cost_usd_per_call == 0.035
     job = create_job(
         jobs_dir=tmp_path / "jobs",
@@ -59,7 +59,7 @@ def test_grounded_prompt_fixed_fee_is_reserved_and_settled(tmp_path: Path) -> No
     store.approve(estimate, 0.5)
     call = store.reserve_call(
         stage="public_research",
-        model="gemini-2.5-flash",
+        model="gemini-3.5-flash",
         input_token_cap=100,
         output_token_cap=100,
         fixed_cost_usd=0.035,

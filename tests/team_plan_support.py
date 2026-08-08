@@ -17,7 +17,7 @@ def minimal_team_plan(project_id: str, *, public_research: bool = False) -> Team
             selection_reason="Required by the executable workflow.",
             temperament=TemperamentAssignment(pace="T", orientation="F", scope="G"),
             model=(
-                "gemini-2.5-flash"
+                "gemini-3.5-flash"
                 if agent_type == AgentType.INVESTIGATOR
                 else (
                     "gemini-3.5-flash-lite"

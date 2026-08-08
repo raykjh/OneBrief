@@ -39,6 +39,10 @@ def test_home_serves_the_real_workflow() -> None:
     assert response.status_code == 200
     assert "OneBrief" in response.text
     assert 'class="identity-hero"' in response.text
+    assert 'id="languageToggle"' in response.text
+    assert 'localStorage.getItem("onebrief-language")||"en"' in response.text
+    assert '"What should OneBrief complete?"' in response.text
+    assert 'document.documentElement.lang=uiLanguage' in response.text
     assert 'id="completionContract"' in response.text
     assert 'id="qualityCriteria"' in response.text
     assert '.checks label:has(select[name=max_revision_rounds]){display:none}' in response.text
@@ -52,6 +56,7 @@ def test_home_serves_the_real_workflow() -> None:
     assert 'id="approval" type="number" min=".01" max="10"' in response.text
     assert 'form.delete("uploads")' in response.text
     assert 'this.disabled=true;q("#status").textContent=""' in response.text
+    assert 'if(!budgetPanel.hidden)runButton.disabled=false' in response.text
     assert 'name="toolpack_ids"' not in response.text
     assert 'name="public_research_disabled"' in response.text
     assert 'id="dropZone"' in response.text

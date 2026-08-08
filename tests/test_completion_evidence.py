@@ -1,0 +1,127 @@
+from onebrief.completion_evidence import (
+    CompletionEvidenceKind,
+    apply_completion_evidence_override,
+    validate_completion_evidence,
+)
+from onebrief.execution_schemas import CriterionCheck, VerificationReport, Verdict
+from onebrief.schemas import IntakeRequest, OutputTarget, RequirementsAnalysis
+
+
+def requirements(goal: str) -> RequirementsAnalysis:
+    return RequirementsAnalysis(
+        supported=True,
+        support_reason="The imported project can be improved safely.",
+        normalized_goal=goal,
+        deliverables=["A verified project patch"],
+        mandatory_information=[],
+        optional_information=[],
+        acceptance_criteria=["The requested behavior works in the running artifact."],
+        assumptions=[],
+        consolidated_questions=[],
+        ready_for_estimate=True,
+    )
+
+
+def evidence(*command_ids: str) -> dict[str, object]:
+    return {
+        "development_run": {
+            "commands": [
+                {"command_id": command_id, "exit_code": 0}
+                for command_id in command_ids
+            ]
+        }
+    }
+
+
+def passing_report() -> VerificationReport:
+    return VerificationReport(
+        verdict=Verdict.PASS,
+        criterion_checks=[
+            CriterionCheck(criterion="Model review", passed=True, evidence="Looks complete.")
+        ],
+        blocking_issues=[],
+        revision_instructions=[],
+        missing_information=[],
+    )
+
+
+def test_unity_localization_compile_only_cannot_claim_completion() -> None:
+    goal = "Unity 게임에 중국어, 일본어, 스페인어 다국어 화면과 언어 드롭다운을 추가한다."
+    result = validate_completion_evidence(
+        IntakeRequest(goal=goal, output_target=OutputTarget.UNITY_APP),
+        requirements(goal),
+        evidence("unity_compile"),
+    )
+
+    assert result.verdict_override == Verdict.REVISE
+    assert {item.kind for item in result.issues} == {
+        CompletionEvidenceKind.AUTOMATED_TEST,
+        CompletionEvidenceKind.RUNTIME_INTERACTION,
+        CompletionEvidenceKind.VISUAL_INTEGRITY,
+    }
+    overridden = apply_completion_evidence_override(passing_report(), result)
+    assert overridden.verdict == Verdict.REVISE
+    assert any("missing glyph" in item for item in overridden.blocking_issues)
+
+
+def test_unity_localization_requires_test_runtime_and_visual_evidence() -> None:
+    goal = "Unity multilingual UI localization with a visible language dropdown."
+    result = validate_completion_evidence(
+        IntakeRequest(goal=goal, output_target=OutputTarget.UNITY_APP),
+        requirements(goal),
+        evidence("unity_editmode_tests", "unity_playmode_tests", "unity_visual_glyph_check"),
+    )
+
+    assert result.verdict_override is None
+    assert result.issues == []
+
+
+def test_non_ui_code_work_is_not_forced_to_produce_screenshots() -> None:
+    goal = "Parser error handling and schema validation을 개선한다."
+    result = validate_completion_evidence(
+        IntakeRequest(goal=goal, output_target=OutputTarget.EXISTING_PROJECT),
+        requirements(goal),
+        evidence("python_tests"),
+    )
+
+    assert result.required == [CompletionEvidenceKind.AUTOMATED_TEST]
+    assert result.verdict_override is None
+
+
+def test_web_ui_runtime_smoke_is_enough_when_visual_localization_is_not_promised() -> None:
+    goal = "웹 화면에서 작업 상태를 조회할 수 있게 한다."
+    result = validate_completion_evidence(
+        IntakeRequest(goal=goal, output_target=OutputTarget.WEB_APP),
+
+        requirements(goal),
+        evidence("node_test", "production_http_smoke"),
+    )
+
+    assert CompletionEvidenceKind.VISUAL_INTEGRITY not in result.required
+    assert result.verdict_override is None
+
+
+def test_missing_user_information_still_outranks_missing_runtime_proof() -> None:
+    goal = "Implement a Unity multilingual user interface."
+    completion = validate_completion_evidence(
+        IntakeRequest(goal=goal, output_target=OutputTarget.UNITY_APP),
+        requirements(goal),
+        evidence("unity_compile"),
+    )
+    model_report = VerificationReport(
+        verdict=Verdict.NEEDS_INFORMATION,
+        criterion_checks=[
+            CriterionCheck(
+                criterion="Authoritative locale list",
+                passed=False,
+                evidence="The required locale list was not supplied.",
+            )
+        ],
+        blocking_issues=["Locale list is missing."],
+        revision_instructions=[],
+        missing_information=["Provide the required locale list."],
+    )
+
+    overridden = apply_completion_evidence_override(model_report, completion)
+    assert overridden.verdict == Verdict.NEEDS_INFORMATION
+    assert overridden.missing_information == ["Provide the required locale list."]
