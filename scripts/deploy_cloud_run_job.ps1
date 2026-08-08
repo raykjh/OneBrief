@@ -11,7 +11,7 @@ $ErrorActionPreference = "Stop"
 $serviceAccount = "$JobName@$ProjectId.iam.gserviceaccount.com"
 $image = "$Region-docker.pkg.dev/$ProjectId/$Repository/worker`:$ImageTag"
 
-gcloud services enable `
+gcloud.cmd services enable `
     run.googleapis.com `
     cloudbuild.googleapis.com `
     artifactregistry.googleapis.com `
@@ -21,9 +21,9 @@ gcloud services enable `
     --quiet
 if ($LASTEXITCODE -ne 0) { throw "API activation failed" }
 
-gcloud storage buckets describe "gs://$Bucket" --project=$ProjectId --format="value(name)" 2>$null
+gcloud.cmd storage buckets describe "gs://$Bucket" --project=$ProjectId --format="value(name)" 2>$null
 if ($LASTEXITCODE -ne 0) {
-    gcloud storage buckets create "gs://$Bucket" `
+    gcloud.cmd storage buckets create "gs://$Bucket" `
         --project=$ProjectId `
         --location=$Region `
         --uniform-bucket-level-access `
@@ -31,20 +31,20 @@ if ($LASTEXITCODE -ne 0) {
     if ($LASTEXITCODE -ne 0) { throw "Bucket creation failed" }
 }
 
-gcloud iam service-accounts describe $serviceAccount --project=$ProjectId --format="value(email)" 2>$null
+gcloud.cmd iam service-accounts describe $serviceAccount --project=$ProjectId --format="value(email)" 2>$null
 if ($LASTEXITCODE -ne 0) {
-    gcloud iam service-accounts create $JobName `
+    gcloud.cmd iam service-accounts create $JobName `
         --project=$ProjectId `
         --display-name="OneBrief Cloud Run worker"
     if ($LASTEXITCODE -ne 0) { throw "Service account creation failed" }
 }
 
-gcloud artifacts repositories describe $Repository `
+gcloud.cmd artifacts repositories describe $Repository `
     --project=$ProjectId `
     --location=$Region `
     --format="value(name)" 2>$null
 if ($LASTEXITCODE -ne 0) {
-    gcloud artifacts repositories create $Repository `
+    gcloud.cmd artifacts repositories create $Repository `
         --project=$ProjectId `
         --location=$Region `
         --repository-format=docker `
@@ -52,21 +52,21 @@ if ($LASTEXITCODE -ne 0) {
     if ($LASTEXITCODE -ne 0) { throw "Artifact Registry creation failed" }
 }
 
-gcloud storage buckets add-iam-policy-binding "gs://$Bucket" `
+gcloud.cmd storage buckets add-iam-policy-binding "gs://$Bucket" `
     --member="serviceAccount:$serviceAccount" `
     --role="roles/storage.objectUser" `
     --project=$ProjectId `
     --quiet
 if ($LASTEXITCODE -ne 0) { throw "Bucket IAM update failed" }
 
-gcloud projects add-iam-policy-binding $ProjectId `
+gcloud.cmd projects add-iam-policy-binding $ProjectId `
     --member="serviceAccount:$serviceAccount" `
     --role="roles/aiplatform.user" `
     --condition=None `
     --quiet
 if ($LASTEXITCODE -ne 0) { throw "Vertex AI IAM update failed" }
 
-gcloud builds submit `
+gcloud.cmd builds submit `
     --project=$ProjectId `
     --region=$Region `
     --tag=$image `
@@ -74,7 +74,7 @@ gcloud builds submit `
     --quiet
 if ($LASTEXITCODE -ne 0) { throw "Container build failed" }
 
-gcloud run jobs deploy $JobName `
+gcloud.cmd run jobs deploy $JobName `
     --project=$ProjectId `
     --region=$Region `
     --image=$image `
