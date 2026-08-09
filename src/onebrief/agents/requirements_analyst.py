@@ -60,6 +60,13 @@ Rules:
    SixSense question list. Each question asks exactly one decision; never combine audience,
    visual style, scope, or completion level in one prompt. Keep prompts and option labels
    short enough to scan and tap. When sixsense_completed is true, keep the list empty.
+   Vague upgrade phrases such as professional, official-service level, improve further,
+   polished, or make it better do not define the requested scope. For such goals, prefer
+   three to five decisions in this order when they remain unresolved: functional scope,
+   information or content structure, primary audience, localization or delivery breadth,
+   and only then visual direction. Do not reduce a broad product upgrade to a single style
+   question. Existing behavior tells you what must be preserved; it does not by itself
+   decide which new sections, capabilities, audiences, or languages the user wants.
 8. Separate mandatory gaps from optional improvements and name acceptable evidence.
 9. If a public fact can be researched later and public research is allowed, do not
    ask the user for it as mandatory internal information.

@@ -27,6 +27,13 @@ The target interaction time after the first inspection is 30 seconds. SixSense m
 become a chat interview. The server produces the whole sequence in one pass and the
 browser performs question-to-question navigation locally.
 
+For a vague web-product upgrade such as "make this an official service-level website",
+OneBrief applies a deterministic coverage policy after Gemini's inspection. It preserves
+Gemini's useful questions, but fills any missing material decisions in this order:
+functional scope, information structure, primary audience, service or localization
+breadth, and visual direction. This prevents an ambitious improvement request from being
+silently reduced to a single color or style choice while keeping specific requests short.
+
 ## What may be asked
 
 Questions are limited to choices that materially affect:
@@ -57,6 +64,7 @@ are not user questions. Safe ordinary implementation defaults remain internal.
 - one Gemini call to prepare the complete question sequence;
 - zero network waits between questions;
 - no more than five questions after the goal;
+- five material decisions for a vague web-product upgrade, with no duplicated axis;
 - a one-click path that accepts every recommendation;
 - one consolidated reinspection before budget calculation;
 - no repeated preference interview in the same stage-one lineage.
