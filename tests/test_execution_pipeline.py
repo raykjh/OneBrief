@@ -719,6 +719,38 @@ def test_project_developer_discards_unapproved_infrastructure_proposals() -> Non
     assert [change.path for change in result.changes] == ["src/index.html"]
     assert result.changes[0].content.endswith("JULPAE</main>\n")
 
+
+def test_project_developer_promotes_exact_search_replace_without_rewriting_file() -> None:
+    original = '<select id="langSelect">\n<option>한국어</option>\n</select>\n'
+    proposal = ProposedProjectCodeChangeSet.model_validate({
+        "summary": "Add one accessible label.",
+        "changes": [{
+            "path": "src/index.html",
+            "base_sha256": "a" * 64,
+            "search": '<select id="langSelect">',
+            "replace": '<select id="langSelect" aria-label="언어 선택 / Select Language">',
+            "reason": "Expose the control name to assistive technology.",
+        }],
+    })
+    developer = DeveloperAgent(
+        FakeGateway([proposal]),
+        change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/",
+        path_approver=lambda path: path if path == "src/index.html" else None,
+    )
+
+    result = developer.run({}, _analysis(), [{
+        "name": "project-source/src/index.html",
+        "sha256": "a" * 64,
+        "content": original,
+    }])
+
+    assert result.changes[0].content == original.replace(
+        '<select id="langSelect">',
+        '<select id="langSelect" aria-label="언어 선택 / Select Language">',
+    )
+    assert "<option>한국어</option>" in result.changes[0].content
+
 def test_exchange_development_budget_includes_compact_retry_capacity() -> None:
     intake = IntakeRequest(goal="Improve Exchange.", toolpack_ids=[ToolPackId.EXCHANGE_DEVELOPMENT])
     estimate = estimate_budget(intake, _requirements())

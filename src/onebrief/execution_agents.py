@@ -156,15 +156,49 @@ class DeveloperAgent:
         self.recovery_policy = RecoveryPolicy()
         self.last_recovery_decisions: list[RecoveryDecision] = []
 
-    def promote_candidate(self, raw: object) -> BaseModel:
+    def promote_candidate(
+        self,
+        raw: object,
+        approved_sources: list[dict[str, Any]] | None = None,
+        previous_change_set: BaseModel | None = None,
+    ) -> BaseModel:
         """Promote an untrusted proposal through the exact approved path boundary."""
         if self.change_set_schema is ProjectCodeChangeSet:
-            proposal = ProposedProjectCodeChangeSet.model_validate(raw).model_dump(mode="json")
-            proposal["changes"] = [
-                change
-                for change in proposal["changes"]
-                if self.path_approver(str(change.get("path", ""))) is not None
-            ]
+            proposed = ProposedProjectCodeChangeSet.model_validate(raw)
+            source_map = {
+                str(item.get("repository_path")): item
+                for item in (approved_sources or [])
+                if item.get("repository_path") and isinstance(item.get("content"), str)
+            }
+            previous_map = {
+                str(getattr(item, "path", "")): str(getattr(item, "content", ""))
+                for item in getattr(previous_change_set, "changes", [])
+            }
+            changes: list[dict[str, Any]] = []
+            for item in proposed.changes:
+                change = item.model_dump(mode="json")
+                path = str(change.get("path", ""))
+                if self.path_approver(path) is None:
+                    continue
+                if change.get("content") is None:
+                    baseline = previous_map.get(path)
+                    if baseline is None:
+                        baseline = str(source_map.get(path, {}).get("content", ""))
+                    needle = str(change.get("search") or "")
+                    if not baseline or baseline.count(needle) != 1:
+                        raise ValueError(
+                            f"exact search text must occur once in approved source: {path}"
+                        )
+                    change["content"] = baseline.replace(
+                        needle, str(change.get("replace") or ""), 1
+                    )
+                    if change.get("base_sha256") is None and path in source_map:
+                        change["base_sha256"] = source_map[path].get("sha256")
+                change.pop("search", None)
+                change.pop("replace", None)
+                changes.append(change)
+            proposal = proposed.model_dump(mode="json")
+            proposal["changes"] = changes
             return self.change_set_schema.model_validate(proposal)
         return self.change_set_schema.model_validate(raw)
 
@@ -207,7 +241,8 @@ class DeveloperAgent:
             f"repository_path; never copy the provenance name beginning with {self.source_prefix}. Only edit files "
             "with a non-null repository_path in approved_repository_files or add a necessary text source file "
             "under the same project. For an existing file, copy its exact "
-            "sha256 into base_sha256 and return the complete replacement content. For a new file use null. "
+            "sha256 into base_sha256. For a small existing-file edit, prefer one exact search/replace pair "
+            "instead of complete content; search must occur exactly once. For a new file use null and complete content. "
             "Never touch secrets, dependencies, generated data, Git metadata, deployment, accounts, or trading. "
             "Files marked immutable_acceptance_contract are binding regression contracts: do not edit them and "
             "preserve every behavior, marker, control, and data contract they assert. Prefer additive, localized "
@@ -304,7 +339,9 @@ class DeveloperAgent:
                     system_instruction=instruction + (("\n\n" + self.skill_context) if self.skill_context else ""),
                     temperature=0.1,
                 )
-                candidate = self.promote_candidate(candidate)
+                candidate = self.promote_candidate(
+                    candidate, developer_sources, previous_change_set
+                )
                 normalized_changes = []
                 for change in getattr(candidate, "changes", []):
                     path = str(getattr(change, "path", ""))

@@ -105,13 +105,25 @@ class ProposedProjectFileChange(BaseModel):
 
     path: str
     base_sha256: str | None = None
-    content: str = Field(max_length=MAX_CHANGE_BYTES)
+    content: str | None = Field(default=None, max_length=MAX_CHANGE_BYTES)
+    search: str | None = Field(default=None, min_length=1, max_length=8_000)
+    replace: str | None = Field(default=None, max_length=8_000)
     reason: str = Field(min_length=3, max_length=500)
 
     @field_validator("path")
     @classmethod
     def validate_path(cls, value: str) -> str:
         return generic_safe_relative(value).as_posix()
+
+    @model_validator(mode="after")
+    def validate_edit_mode(self) -> "ProposedProjectFileChange":
+        full_file = self.content is not None
+        exact_edit = self.search is not None and self.replace is not None
+        if full_file == exact_edit:
+            raise ValueError(
+                "provide either complete content or one exact search/replace edit"
+            )
+        return self
 
 
 class ProposedProjectCodeChangeSet(BaseModel):

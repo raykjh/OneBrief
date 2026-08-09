@@ -465,7 +465,9 @@ class ExecutionPipeline:
 
         def after_maker(raw: object, _ctx, round_number: int) -> dict[str, object]:
             nonlocal previous_change_set, latest_run
-            delta = developer.promote_candidate(raw)
+            delta = developer.promote_candidate(
+                raw, prepared_sources, previous_change_set
+            )
             self._write(
                 output_dir / f"code_change_set_delta_r{round_number}.json",
                 delta.model_dump_json(indent=2),
@@ -584,7 +586,9 @@ class ExecutionPipeline:
             "repository_path and retain its exact sha256 as base_sha256; new text source files use null. "
             "Files marked immutable_acceptance_contract may not be changed. Never touch secrets, dependencies, "
             "Git metadata, deployment, accounts, financial transactions, or paths outside the approved project. "
-            "On revision, repair every build, test, runtime, or independent-review failure while preserving all "
+            "For a small existing-file change, prefer one exact search/replace edit over returning the entire file; "
+            "the search text must occur exactly once in the approved source. On revision, repair every build, test, "
+            "runtime, or independent-review failure while preserving all "
             "previously passing behavior. Return complete replacement file content, not prose or a patch fragment. "
             "The combined replacement content must remain below 60000 UTF-8 bytes. Return only the schema."
             + (("\n\n" + developer.skill_context) if developer.skill_context else "")
