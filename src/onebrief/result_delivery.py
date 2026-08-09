@@ -18,6 +18,7 @@ from pathlib import Path, PurePosixPath
 from pydantic import BaseModel, Field
 
 from onebrief.development_toolpack import DevelopmentRun, approved_edit_path
+from onebrief.generic_development_toolpack import ApprovedProjectDevelopmentToolPack
 from onebrief.jobs import JobStatus, JobStore
 from onebrief.project_catalog import RegisteredProject
 
@@ -91,8 +92,33 @@ class ExchangePreviewManager:
         run = DevelopmentRun.model_validate_json(run_path.read_text(encoding="utf-8"))
         if run.status != "verified":
             raise RuntimeError("development result did not pass verification")
+        run = self._bind_run_to_source_head(package, run)
         changed = package / "artifacts" / "development" / "changed_files"
         return job_dir, changed, run
+
+    def _bind_run_to_source_head(
+        self,
+        package: Path,
+        run: DevelopmentRun,
+    ) -> DevelopmentRun:
+        """Translate an isolated snapshot commit back to its verified source HEAD."""
+        evidence_path = (
+            package / "artifacts" / "project_snapshot" / "restore_evidence.json"
+        )
+        if not evidence_path.is_file():
+            return run
+        try:
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError("project snapshot provenance is unreadable") from exc
+        source_head = str(evidence.get("source_head_sha", ""))
+        if (
+            evidence.get("project_id") != self.project.project_id
+            or evidence.get("status") != "verified_and_approved"
+            or not re.fullmatch(r"[a-f0-9]{40}", source_head)
+        ):
+            raise RuntimeError("project snapshot provenance is invalid")
+        return run.model_copy(update={"base_head_sha": source_head})
 
     @staticmethod
     def _available_port() -> int:
@@ -113,8 +139,7 @@ class ExchangePreviewManager:
                 with urllib.request.urlopen(asset_url, timeout=timeout) as asset:
                     if not 200 <= asset.status < 400:
                         return False
-            with urllib.request.urlopen(urllib.parse.urljoin(url, "/fx-data.json"), timeout=timeout) as data:
-                return 200 <= data.status < 400
+            return True
         except Exception:
             return False
 
@@ -166,8 +191,17 @@ class ExchangePreviewManager:
             timeout=120,
         )
         self._run(["git", "checkout", "--detach", run.base_head_sha], repository, timeout=60)
+        project_pack = (
+            ApprovedProjectDevelopmentToolPack(self.project.project_id)
+            if self.project.origin == "imported"
+            else None
+        )
         for relative in run.changed_paths:
-            approved = approved_edit_path(relative)
+            approved = (
+                project_pack.approved_edit_path(relative)
+                if project_pack is not None
+                else approved_edit_path(relative)
+            )
             if approved is None:
                 raise PermissionError(f"preview path is outside the approved source area: {relative}")
             pure = PurePosixPath(approved)
@@ -183,11 +217,15 @@ class ExchangePreviewManager:
             shutil.copy2(source, target)
         self._attach_dependencies(self.source_root, repository)
         npm = "npm.cmd" if os.name == "nt" else "npm"
-        build = self._run(
-            [npm, "--prefix", "web", "run", "build"],
-            repository,
-            timeout=360,
-        )
+        web_package = repository / "web" / "package.json"
+        root_package = repository / "package.json"
+        if web_package.is_file():
+            build_argv = [npm, "--prefix", "web", "run", "build"]
+        elif root_package.is_file():
+            build_argv = [npm, "run", "build"]
+        else:
+            raise RuntimeError("verified web result has no approved package.json")
+        build = self._run(build_argv, repository, timeout=360)
         (preview_dir / "build.log").write_text(
             build.stdout + "\n" + build.stderr, encoding="utf-8"
         )
@@ -214,8 +252,11 @@ class ExchangePreviewManager:
         repository = self._prepare_repository(preview_dir, changed_dir, run)
         node = shutil.which("node")
         vinext_cli = repository / "web" / "node_modules" / "vinext" / "dist" / "cli.js"
-        if not node or not vinext_cli.is_file():
+        static_client = repository / "dist"
+        if vinext_cli.is_file() and not node:
             raise RuntimeError("approved web runtime is unavailable")
+        if not vinext_cli.is_file() and not (static_client / "index.html").is_file():
+            raise RuntimeError("verified web build produced no previewable application")
 
         flags = 0
         popen_args: dict[str, object] = {}
@@ -224,65 +265,67 @@ class ExchangePreviewManager:
         else:
             popen_args["start_new_session"] = True
 
-        render_port = self._available_port()
-        render_url = f"http://127.0.0.1:{render_port}/"
-        render_log_path = preview_dir / "render.log"
-        render_argv = [
-            node,
-            str(vinext_cli),
-            "start",
-            "--hostname",
-            "127.0.0.1",
-            "--port",
-            str(render_port),
-        ]
-        with render_log_path.open("w", encoding="utf-8") as log:
-            renderer = subprocess.Popen(
-                render_argv,
-                cwd=repository / "web",
-                stdin=subprocess.DEVNULL,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                shell=False,
-                creationflags=flags,
-                **popen_args,
-            )
-        snapshot = ""
-        for _ in range(80):
+        if vinext_cli.is_file():
+            render_port = self._available_port()
+            render_url = f"http://127.0.0.1:{render_port}/"
+            render_log_path = preview_dir / "render.log"
+            render_argv = [
+                node,
+                str(vinext_cli),
+                "start",
+                "--hostname",
+                "127.0.0.1",
+                "--port",
+                str(render_port),
+            ]
+            with render_log_path.open("w", encoding="utf-8") as log:
+                renderer = subprocess.Popen(
+                    render_argv,
+                    cwd=repository / "web",
+                    stdin=subprocess.DEVNULL,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    shell=False,
+                    creationflags=flags,
+                    **popen_args,
+                )
+            snapshot = ""
+            for _ in range(80):
+                try:
+                    with urllib.request.urlopen(render_url, timeout=0.8) as response:
+                        if 200 <= response.status < 400:
+                            snapshot = response.read().decode("utf-8", errors="replace")
+                            break
+                except Exception:
+                    pass
+                if renderer.poll() is not None:
+                    break
+                time.sleep(0.25)
+            if not snapshot:
+                tail = render_log_path.read_text(encoding="utf-8", errors="replace")[-3000:]
+                raise RuntimeError(f"verified web result could not be rendered: {tail}")
+            renderer.terminate()
             try:
-                with urllib.request.urlopen(render_url, timeout=0.8) as response:
-                    if 200 <= response.status < 400:
-                        snapshot = response.read().decode("utf-8", errors="replace")
-                        break
-            except Exception:
-                pass
-            if renderer.poll() is not None:
-                break
-            time.sleep(0.25)
-        if not snapshot:
-            tail = render_log_path.read_text(encoding="utf-8", errors="replace")[-3000:]
-            raise RuntimeError(f"verified web result could not be rendered: {tail}")
-        renderer.terminate()
-        try:
-            renderer.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            renderer.kill()
-
-        client_dir = repository / "web" / "dist" / "client"
-        client_dir.mkdir(parents=True, exist_ok=True)
-        (client_dir / "index.html").write_text(snapshot, encoding="utf-8")
+                renderer.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                renderer.kill()
+            client_dir = repository / "web" / "dist" / "client"
+            client_dir.mkdir(parents=True, exist_ok=True)
+            (client_dir / "index.html").write_text(snapshot, encoding="utf-8")
+        else:
+            client_dir = static_client
 
         port = self._available_port()
         url = f"http://127.0.0.1:{port}/"
         delivery_dir = preview_dir / "delivery"
         delivery_dir.mkdir(parents=True, exist_ok=True)
-        launcher = delivery_dir / "Exchange Flow \uc2e4\ud589\ud558\uae30.cmd"
-        shortcut = delivery_dir / "Exchange Flow \ubc14\ub85c\uac00\uae30.url"
+        launcher = delivery_dir / "OneBrief \uacb0\uacfc \uc2e4\ud589\ud558\uae30.cmd"
+        shortcut = delivery_dir / "OneBrief \uacb0\uacfc \ubc14\ub85c\uac00\uae30.url"
         python_executable = str(Path(sys.executable).resolve())
         launcher.write_text(
             "@echo off\r\n"
-            f"start \"Exchange Flow\" /min \"{python_executable}\" -m http.server {port} "
-            "--bind 127.0.0.1 --directory \"%~dp0program\\web\\dist\\client\"\r\n"
+            f"start \"OneBrief Result\" /min \"{python_executable}\" -m http.server {port} "
+            f"--bind 127.0.0.1 --directory \"{client_dir}\"\r\n"
             "timeout /t 2 /nobreak >nul\r\n"
             f"start \"\" {url}\r\n",
             encoding="utf-8",
