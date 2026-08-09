@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -15,6 +16,16 @@ from google.cloud import run_v2, storage
 from pydantic import BaseModel
 
 from onebrief.jobs import JobRecord, JobStatus, JobStore, run_job, verify_input_snapshot
+
+
+REUSABLE_WORK_ARTIFACTS = (
+    "project_architecture.json",
+    "public_research.json",
+    "public_research.md",
+    "analysis.json",
+    "code_change_set.json",
+    "code_change_set_retry_r1.json",
+)
 
 
 @dataclass(frozen=True)
@@ -206,6 +217,39 @@ class GCSJobStore:
         if not isinstance(value, dict):
             raise ValueError(f"job artifact is not a JSON object: {relative}")
         return value
+
+    def download_reusable_artifacts(self, destination_work: Path) -> list[str]:
+        """Copy only the fixed resumable allowlist into a newly approved job."""
+        destination_work = destination_work.resolve()
+        destination_work.mkdir(parents=True, exist_ok=True)
+        copied: list[dict[str, str]] = []
+        for name in REUSABLE_WORK_ARTIFACTS:
+            source_name = name
+            target_name = "code_change_set.json" if name.startswith("code_change_set") else name
+            target = (destination_work / target_name).resolve()
+            if not target.is_relative_to(destination_work):
+                raise ValueError("unsafe reusable artifact destination")
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                self.bucket.blob(self._name(f"work/{source_name}")).download_to_filename(
+                    str(target)
+                )
+            except NotFound:
+                target.unlink(missing_ok=True)
+                continue
+            digest = hashlib.sha256(target.read_bytes()).hexdigest()
+            copied.append({"source": source_name, "target": target_name, "sha256": digest})
+        if copied:
+            (destination_work / "reuse_manifest.json").write_text(
+                json.dumps({
+                    "schema_version": "onebrief-reuse-manifest-v1",
+                    "source_job_uri": self.location.uri,
+                    "reason": "stage-one budget amendment with identical approved request",
+                    "artifacts": copied,
+                }, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        return [item["target"] for item in copied]
 
     def download_result(self, destination: Path) -> Path:
         record = self.read_job()

@@ -90,7 +90,9 @@ completion.
 5. OneBrief safely applies or packages only the proven result.
 
 Stage 2 may never silently widen stage 1. Missing authoritative information,
-insufficient budget, or a new permission returns an amendment request to stage 1.
+insufficient budget, or a new permission returns an amendment request to stage 1. The
+user reaches that amendment with one action from the stopped run; OneBrief preserves the
+lineage and reuses only artifacts that remain compatible with the amended contract.
 
 ## Completion semantics
 

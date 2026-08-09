@@ -54,6 +54,7 @@ from onebrief.toolpacks import attach_toolpack_descriptors, route_toolpack_candi
 from onebrief.schemas import (
     BudgetEnvelope,
     IntakeRequest,
+    InformationRequirement,
     InternalSource,
     OutputTarget,
     RequirementsAnalysis,
@@ -82,6 +83,9 @@ class WebSession(BaseModel):
     reuse_source_job_uri: str | None = None
     previous_attempt: dict[str, object] | None = None
     preparation: PreparationPlan | None = None
+    parent_session_id: str | None = None
+    amendment_kind: str | None = None
+    amendment_reason: str | None = Field(default=None, max_length=4000)
 
 
 class ExecutionLink(BaseModel):
@@ -354,6 +358,9 @@ def _public_session(session: WebSession) -> dict[str, object]:
         "selected_project": session.selected_project.model_dump(mode="json") if session.selected_project else None,
         "continuation": session.continuation_context.model_dump(mode="json") if session.continuation_context else None,
         "previous_attempt": session.previous_attempt,
+        "parent_session_id": session.parent_session_id,
+        "amendment_kind": session.amendment_kind,
+        "amendment_reason": session.amendment_reason,
         "preparation": (
             session.preparation.model_dump(mode="json") if session.preparation else None
         ),
@@ -458,6 +465,17 @@ def home() -> HTMLResponse:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "onebrief-web"}
+
+
+@app.get("/api/sessions/{session_id}")
+def read_session(
+    session_id: str,
+    store: WebSessionStore = Depends(get_session_store),
+) -> dict[str, object]:
+    try:
+        return _public_session(store.read(session_id))
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @app.post("/api/projects/import")
@@ -706,7 +724,11 @@ async def reinspect_session(
                 previous.selected_project.project_id
             ).state()
         preparation = build_preparation_plan(
-            augmented, requirements, budget, toolpack_state
+            augmented,
+            requirements,
+            budget,
+            toolpack_state,
+            amendment_reason=previous.amendment_reason,
         )
         session = WebSession(
             session_id=str(uuid4()),
@@ -720,6 +742,9 @@ async def reinspect_session(
             reuse_source_job_uri=None,
             previous_attempt=None,
             preparation=preparation,
+            parent_session_id=previous.parent_session_id or previous.session_id,
+            amendment_kind=previous.amendment_kind,
+            amendment_reason=previous.amendment_reason,
         )
         store.create(session)
         return _public_session(session)
@@ -727,6 +752,119 @@ async def reinspect_session(
         raise
     except Exception as exc:
         raise HTTPException(502, f"Service operation failed: {type(exc).__name__}") from exc
+
+
+AMENDABLE_JOB_STATUSES = {
+    "needs_information",
+    "needs_budget",
+    "needs_authorization",
+}
+
+
+@app.post("/api/sessions/{session_id}/amend")
+async def amend_session(
+    session_id: str,
+    store: WebSessionStore = Depends(get_session_store),
+) -> dict[str, object]:
+    """Return a stopped run to stage one without discarding its lineage."""
+    try:
+        previous = store.read(session_id)
+        link = store.read_execution(session_id)
+        repository = (
+            LocalJobRepository(Path(link.job_uri))
+            if link.operation_name == "local" else GCSJobStore(link.job_uri)
+        )
+        record = await asyncio.to_thread(repository.read_job)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"Service operation failed: {type(exc).__name__}") from exc
+
+    status = record.status.value
+    if status not in AMENDABLE_JOB_STATUSES:
+        raise HTTPException(409, "This run does not require a stage-one amendment.")
+
+    reason = (record.message or record.current_stage or status).strip()[:4000]
+    requirements = previous.requirements
+    budget = previous.budget
+    if status in {"needs_information", "needs_authorization"}:
+        key = "runtime_information" if status == "needs_information" else "runtime_authorization"
+        request = (
+            "Provide the authoritative information identified during verification."
+            if status == "needs_information"
+            else (
+                "Confirm whether the goal should avoid the blocked capability or explicitly "
+                "requires OneBrief to propose a different permission boundary."
+            )
+        )
+        runtime_requirement = InformationRequirement(
+            key=key,
+            request=request,
+            reason=reason[:500],
+            acceptable_evidence=["A direct user decision or authoritative source"],
+        )
+        retained = [item for item in requirements.mandatory_information if item.key != key]
+        requirements = requirements.model_copy(update={
+            "mandatory_information": [*retained, runtime_requirement],
+            "consolidated_questions": [request, reason],
+            "ready_for_estimate": False,
+        })
+        budget = None
+
+    selected_project = previous.selected_project
+    toolpack_state = None
+    if previous.intake.existing_project_id:
+        try:
+            selected_project = ProjectCatalog().get(previous.intake.existing_project_id)
+            if selected_project.origin == "imported":
+                toolpack_state = ProjectToolPackLifecycle(
+                    selected_project.project_id
+                ).state()
+        except (KeyError, OSError, ValueError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    preparation = build_preparation_plan(
+        previous.intake,
+        requirements,
+        budget,
+        toolpack_state,
+        amendment_reason=reason,
+    )
+    reusable_artifacts: list[str] = []
+    if status in {"needs_budget", "needs_authorization"} and link.operation_name == "local":
+        candidate = find_reuse_candidate(
+            _local_jobs_root(), previous.intake, selected_project
+        )
+        if candidate is not None:
+            reusable_artifacts = list(candidate.reusable_artifacts)
+    amended = WebSession(
+        session_id=str(uuid4()),
+        created_at=_now(),
+        intake=previous.intake,
+        requirements=requirements,
+        budget=budget,
+        request_fingerprint=previous.request_fingerprint,
+        selected_project=selected_project,
+        continuation_context=previous.continuation_context,
+        reuse_source_job_uri=(
+            link.job_uri if status in {"needs_budget", "needs_authorization"} else None
+        ),
+        previous_attempt={
+            "job_id": record.job_id,
+            "status": status,
+            "reusable_artifacts": reusable_artifacts,
+            "message": (
+                "The previous run was preserved. OneBrief will reuse only artifacts "
+                "that remain compatible with the amended approval."
+            ),
+        },
+        preparation=preparation,
+        parent_session_id=session_id,
+        amendment_kind=status,
+        amendment_reason=reason,
+    )
+    store.create(amended)
+    return _public_session(amended)
 
 
 
@@ -830,6 +968,15 @@ async def run_session(
                 estimate=session.budget,
                 approved_usd=approval.approved_usd,
             )
+            if (
+                session.amendment_kind == "needs_budget"
+                and session.reuse_source_job_uri
+                and session.reuse_source_job_uri.startswith("gs://")
+            ):
+                await asyncio.to_thread(
+                    GCSJobStore(session.reuse_source_job_uri).download_reusable_artifacts,
+                    job_dir / "work",
+                )
             receipt: CloudExecutionReceipt = await asyncio.to_thread(
                 submit_cloud_job,
                 job_dir,

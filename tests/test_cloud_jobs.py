@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+from google.api_core.exceptions import NotFound
 
 from onebrief.cloud_jobs import (
     GCSJobStore,
@@ -237,3 +238,42 @@ def test_upload_outputs_publishes_terminal_job_record_last(tmp_path: Path, monke
 
     assert uploaded[-1] == "job.json"
     assert "work/execution_graph_state.json" in uploaded[:-1]
+
+
+def test_budget_amendment_downloads_only_allowlisted_cloud_artifacts(tmp_path: Path) -> None:
+    objects = {
+        "jobs/prior/work/analysis.json": b'{"objective":"grounded"}',
+        "jobs/prior/work/public_research.md": b"# Sources\n",
+        "jobs/prior/work/secret.txt": b"must not copy",
+    }
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+        def download_to_filename(self, filename):
+            if self.name not in objects:
+                raise NotFound("missing")
+            Path(filename).write_bytes(objects[self.name])
+
+    class Bucket:
+        def blob(self, name):
+            return Blob(name)
+
+    class Client:
+        def bucket(self, _name):
+            return Bucket()
+
+    work = tmp_path / "new-job" / "work"
+    copied = GCSJobStore(
+        "gs://onebrief-test/jobs/prior", client=Client()
+    ).download_reusable_artifacts(work)
+
+    assert copied == ["public_research.md", "analysis.json"]
+    assert (work / "analysis.json").is_file()
+    assert (work / "public_research.md").is_file()
+    assert not (work / "secret.txt").exists()
+    manifest = json.loads((work / "reuse_manifest.json").read_text(encoding="utf-8"))
+    assert {item["target"] for item in manifest["artifacts"]} == {
+        "analysis.json", "public_research.md"
+    }

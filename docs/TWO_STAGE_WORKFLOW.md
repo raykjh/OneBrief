@@ -48,6 +48,13 @@ These are not generic failures. OneBrief preserves completed work and evidence, 
 the smallest required amendment, and waits for a new exact authorization. It never
 silently broadens access or spending.
 
+The run screen exposes one `Return to stage 1` action for these states. A budget stop
+reopens the cost envelope immediately and may reuse compatible completed artifacts.
+Information and authorization stops first request one consolidated authoritative answer;
+work based on the incomplete premise is not blindly copied into the amended run. The
+amended session retains its parent session and stop reason, receives a new authorization
+hash, and resumes through the normal guarded execution gateway.
+
 ## Responsibility boundary
 
 Codex or another development assistant may prepare infrastructure that exists outside

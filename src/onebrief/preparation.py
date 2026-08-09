@@ -30,6 +30,7 @@ class PreparationPlan(BaseModel):
     stage: Literal["definition_and_authorization"] = "definition_and_authorization"
     canonical_goal: str = Field(min_length=3, max_length=8000)
     output_target: str
+    amendment_reason: str | None = Field(default=None, max_length=4000)
     completion_contract: dict[str, object]
     permission_manifest: CapabilityPermissionManifest
     minimum_cost_usd: float = Field(ge=0)
@@ -76,6 +77,7 @@ def build_preparation_plan(
     requirements: RequirementsAnalysis,
     budget: BudgetEnvelope | None,
     toolpack_state: ToolPackLifecycleState | None = None,
+    amendment_reason: str | None = None,
 ) -> PreparationPlan | None:
     if not requirements.ready_for_estimate or budget is None:
         return None
@@ -92,6 +94,7 @@ def build_preparation_plan(
     approval_payload = {
         "canonical_goal": intake.goal,
         "output_target": intake.output_target.value,
+        "amendment_reason": amendment_reason,
         "completion_contract": contract,
         "permission_manifest": manifest.model_dump(mode="json"),
         "budget": {
@@ -106,6 +109,7 @@ def build_preparation_plan(
     return PreparationPlan(
         canonical_goal=intake.goal,
         output_target=intake.output_target.value,
+        amendment_reason=amendment_reason,
         completion_contract=contract,
         permission_manifest=manifest,
         minimum_cost_usd=budget.minimum_cost_usd,

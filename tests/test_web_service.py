@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from onebrief.producer import estimate_budget
+from onebrief.preparation import build_preparation_plan
 from onebrief.jobs import JobRecord, JobStatus
 from onebrief.cloud_jobs import CloudExecutionReceipt
 from onebrief.project_catalog import RegisteredProject
@@ -62,6 +63,9 @@ def test_home_serves_the_real_workflow() -> None:
     assert 'id="authorizationPlan"' in response.text
     assert 'authorization_sha256' in response.text
     assert 'needs_authorization' in response.text
+    assert 'id="amendRun"' in response.text
+    assert '"/amend"' in response.text
+    assert 'new URLSearchParams(location.search).get("prepare")' in response.text
     assert 'name="toolpack_ids"' not in response.text
     assert 'name="public_research_disabled"' in response.text
     assert 'id="dropZone"' in response.text
@@ -220,6 +224,78 @@ def test_supplement_answers_are_reinspected_as_authoritative_input(monkeypatch) 
     updated = store.read(payload["session_id"])
     assert updated.intake.goal == payload["canonical_goal"]
     assert len(updated.intake.internal_sources) == 1
+
+
+@pytest.mark.parametrize(
+    ("status", "ready", "has_budget"),
+    [
+        (JobStatus.NEEDS_BUDGET, True, True),
+        (JobStatus.NEEDS_INFORMATION, False, False),
+        (JobStatus.NEEDS_AUTHORIZATION, False, False),
+    ],
+)
+def test_stopped_run_returns_to_stage_one_for_amendment(
+    tmp_path, status: JobStatus, ready: bool, has_budget: bool
+) -> None:
+    store = InMemoryWebSessionStore()
+    intake = IntakeRequest(goal="Complete the approved project.")
+    analysis = requirements(True)
+    budget = estimate_budget(intake, analysis)
+    preparation = build_preparation_plan(intake, analysis, budget)
+    store.create(WebSession(
+        session_id="stopped-run",
+        created_at="2026-08-09T00:00:00+00:00",
+        intake=intake,
+        requirements=analysis,
+        budget=budget,
+        preparation=preparation,
+    ))
+    job_dir = tmp_path / "job"
+    job_dir.mkdir()
+    record = JobRecord(
+        job_id="stopped-job",
+        status=status,
+        created_at="2026-08-09T00:00:00+00:00",
+        updated_at="2026-08-09T00:01:00+00:00",
+        attempts=1,
+        current_stage="amendment_gate",
+        message=f"Runtime stopped with {status.value}.",
+        run_id="run",
+    )
+    (job_dir / "job.json").write_text(record.model_dump_json(), encoding="utf-8")
+    store.save_execution(ExecutionLink(
+        session_id="stopped-run",
+        job_uri=str(job_dir),
+        operation_name="local",
+        created_at="2026-08-09T00:00:00+00:00",
+    ))
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).post("/api/sessions/stopped-run/amend")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["session_id"] != "stopped-run"
+    assert payload["parent_session_id"] == "stopped-run"
+    assert payload["amendment_kind"] == status.value
+    assert payload["requirements"]["ready_for_estimate"] is ready
+    assert (payload["budget"] is not None) is has_budget
+    if status is JobStatus.NEEDS_BUDGET:
+        assert payload["preparation"]["authorization_sha256"] != preparation.authorization_sha256
+    else:
+        assert payload["preparation"] is None
+        assert payload["requirements"]["mandatory_information"][-1]["key"].startswith("runtime_")
+
+    persisted = TestClient(app)
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        restored = persisted.get(f'/api/sessions/{payload["session_id"]}')
+    finally:
+        app.dependency_overrides.clear()
+    assert restored.status_code == 200
+    assert restored.json()["parent_session_id"] == "stopped-run"
 
 
 
