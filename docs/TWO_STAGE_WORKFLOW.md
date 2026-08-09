@@ -10,14 +10,21 @@ therefore separates preparation and human authorization from autonomous converge
 
 OneBrief performs the work required to propose an executable plan:
 
-1. normalize the goal and preserve supplied authoritative information;
-2. define observable completion criteria and required evidence;
-3. inspect the destination or existing project;
-4. generate and qualify the smallest suitable capability pack;
-5. calculate minimum, recommended, and maximum cost;
-6. present exact read/write permissions, validation tools, and forbidden boundaries;
-7. bind the canonical goal, output form, completion contract, permission manifest, and
+1. accept a short goal and preserve supplied authoritative information;
+2. run SixSense once to find a professional default and pre-generate at most five
+   high-impact choices; present them sequentially in the browser without a model call
+   between choices and target 30 seconds of user interaction;
+3. merge the confirmed choices into one canonical goal;
+4. define observable completion criteria and required evidence;
+5. inspect the destination or existing project;
+6. generate and qualify the smallest suitable capability pack;
+7. calculate minimum, recommended, and maximum cost;
+8. present exact read/write permissions, validation tools, and forbidden boundaries;
+9. bind the canonical goal, output form, completion contract, permission manifest, and
    budget envelope to one SHA-256 authorization identity.
+
+SixSense is not a six-turn chat. S01 is the user's goal; S02-S06 are a pre-generated
+local choice sequence. The user may accept every disclosed recommendation at once.
 
 The user approves the goal, permissions, and amount once. The user does not choose
 agents, models, tools, retry counts, or pack internals.

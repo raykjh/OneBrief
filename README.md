@@ -13,9 +13,15 @@ capability pack, permission manifest, and cost envelope for one exact approval; 
 works autonomously until the approved criteria are proven. See
 `docs/TWO_STAGE_WORKFLOW.md`.
 
+The stage-one intake includes **SixSense**: one Gemini inspection pre-generates at most
+five material choices, then the browser presents them one at a time with no network wait
+between questions. Recommended defaults are preselected, so a novice can turn a short
+goal into a complete work contract in about 30 seconds. See `docs/SIXSENSE.md`.
+
 ## Implemented milestones
 
 - Requirements Analyst built with Google ADK and Gemini 3.5 Flash
+- SixSense rapid sequential intake with one-pass question generation and recommended defaults
 - ADK-native Accountable Maker -> Independent Verifier -> original-maker revision loop
 - criterion-level completion ledger showing pending, failed, revised, and proven work
 - software convergence with isolated ToolPack build/test execution before independent review

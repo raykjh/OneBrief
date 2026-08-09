@@ -101,6 +101,61 @@ def _normalize_requirements_payload(payload: dict[str, Any]) -> dict[str, Any]:
         contract.get("pass_condition"), 300, "All required criteria pass."
     )
 
+    sixsense = payload.get("sixsense")
+    if not isinstance(sixsense, dict):
+        sixsense = {}
+    normalized_questions: list[dict[str, Any]] = []
+    raw_questions = sixsense.get("questions")
+    for question_index, question in enumerate(
+        raw_questions if isinstance(raw_questions, list) else [], start=2
+    ):
+        if question_index > 6 or not isinstance(question, dict):
+            break
+        normalized_options: list[dict[str, Any]] = []
+        raw_options = question.get("options")
+        for option_index, option in enumerate(
+            raw_options if isinstance(raw_options, list) else [], start=1
+        ):
+            if option_index > 4 or not isinstance(option, dict):
+                break
+            option_id = key(option.get("option_id"), option_index)[:32]
+            normalized_options.append({
+                "option_id": option_id,
+                "label": text(option.get("label"), 120, f"Option {option_index}"),
+                "decision": text(
+                    option.get("decision"), 300, option.get("label") or f"Option {option_index}"
+                ),
+                "recommended": bool(option.get("recommended", option_index == 1)),
+            })
+        if len(normalized_options) < 2:
+            continue
+        recommended = next(
+            (index for index, option in enumerate(normalized_options) if option["recommended"]),
+            0,
+        )
+        for index, option in enumerate(normalized_options):
+            option["recommended"] = index == recommended
+        normalized_questions.append({
+            "question_id": f"S0{question_index}",
+            "dimension": text(question.get("dimension"), 80, "work preference"),
+            "prompt": text(question.get("prompt"), 300, "Which direction should OneBrief use?"),
+            "reason": text(
+                question.get("reason"), 300, "This choice materially changes the result."
+            ),
+            "options": normalized_options,
+            "allow_custom": bool(question.get("allow_custom", True)),
+        })
+    profile = text(
+        sixsense.get("standard_profile"),
+        800,
+        "Use a coherent, widely accepted professional standard for unspecified details.",
+    )
+    payload["sixsense"] = {
+        "standard_profile": profile,
+        "questions": normalized_questions,
+        "interaction_target_seconds": 30,
+    }
+
     if payload["mandatory_information"]:
         payload["ready_for_estimate"] = False
         if not payload["consolidated_questions"]:
@@ -167,6 +222,8 @@ async def analyze_requirements(intake: IntakeRequest) -> RequirementsAnalysis:
 async def reinspect_requirements(
     intake: IntakeRequest,
     previous: RequirementsAnalysis,
+    *,
+    sixsense_completed: bool = False,
 ) -> RequirementsAnalysis:
     # Only prior gaps are carried forward. Previous deliverables and assumptions are
     # intentionally excluded so an early hallucination cannot become an authority.
@@ -189,6 +246,7 @@ async def reinspect_requirements(
             "previous_gaps_only": previous_gaps,
             "intake_with_uploaded_sources": intake.model_dump(mode="json"),
             "user_confirmed_decisions": confirmed_decisions,
+            "sixsense_completed": sixsense_completed,
             "instruction": (
                 "Rebuild the contract from the original intake and authoritative uploads. "
                 "Re-evaluate every previous gap against actual uploaded content. A matching "
@@ -198,8 +256,19 @@ async def reinspect_requirements(
                 "free public API, standard technical indicators, or no framework preference resolves "
                 "that implementation-choice gap. Do not repeat a resolved question. Ordinary framework, "
                 "library, provider, display, and analysis defaults are optional rather than mandatory."
+                + (
+                    " The user completed the SixSense preference sequence. Do not create another "
+                    "SixSense interview; keep its questions empty and ask only for genuinely missing "
+                    "authoritative information that cannot be inferred or defaulted."
+                    if sixsense_completed else ""
+                )
             ),
         }
     )
-    return apply_requirements_gate(intake, result)
+    result = apply_requirements_gate(intake, result)
+    if sixsense_completed and result.sixsense is not None:
+        result = result.model_copy(
+            update={"sixsense": result.sixsense.model_copy(update={"questions": []})}
+        )
+    return result
 

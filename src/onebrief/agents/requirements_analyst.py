@@ -45,6 +45,21 @@ Rules:
    Keep the gap when content is incomplete, contradictory, unreadable, or unrelated.
 7. Put all remaining user questions into one concise consolidated_questions list.
    Never conduct a turn-by-turn interview.
+   Also create a SixSense plan in the same model response. First state the professional
+   standard profile that will fill unspecified details. The standard_profile describes
+   the proposed artifact conventions in concrete user-facing language; it is never a
+   persona, job title, agent description, or generic claim of expertise. Then create at most five short
+   questions, numbered S02 through S06, only for unresolved choices that materially
+   change scope, audience fit, required behavior, subjective direction, or the observable
+   definition of done. Give each question two to four short options and exactly one
+   recommended working default. The recommendation must be safe, conventional, and
+   grounded in the goal, supplied project, or authoritative sources. Never ask about an
+   agent, model, ToolPack, library, framework, retry count, or another internal mechanism.
+   Generate the entire sequence now: the UI presents it one question at a time without
+   another model call between choices. If no material user choice remains, return an empty
+   SixSense question list. Each question asks exactly one decision; never combine audience,
+   visual style, scope, or completion level in one prompt. Keep prompts and option labels
+   short enough to scan and tap. When sixsense_completed is true, keep the list empty.
 8. Separate mandatory gaps from optional improvements and name acceptable evidence.
 9. If a public fact can be researched later and public research is allowed, do not
    ask the user for it as mandatory internal information.
@@ -118,4 +133,3 @@ requirements_analyst = LlmAgent(
         thinking_config=types.ThinkingConfig(thinking_level="minimal"),
     ),
 )
-

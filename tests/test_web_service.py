@@ -7,7 +7,15 @@ from onebrief.preparation import build_preparation_plan
 from onebrief.jobs import JobRecord, JobStatus
 from onebrief.cloud_jobs import CloudExecutionReceipt
 from onebrief.project_catalog import RegisteredProject
-from onebrief.schemas import IntakeRequest, OutputTarget, RequirementsAnalysis, ToolPackId
+from onebrief.schemas import (
+    IntakeRequest,
+    OutputTarget,
+    RequirementsAnalysis,
+    SixSenseOption,
+    SixSensePlan,
+    SixSenseQuestion,
+    ToolPackId,
+)
 from onebrief.toolpacks import attach_toolpack_descriptors
 from onebrief.web_service import (
     ExecutionLink, InMemoryWebSessionStore, LocalWebSessionStore, WebSession, app, get_session_store,
@@ -50,6 +58,10 @@ def test_home_serves_the_real_workflow() -> None:
     assert '.checks label:has(select[name=max_revision_rounds]){display:none}' in response.text
     assert "retrySelect.disabled=true" in response.text
     assert "/api/inspect" in response.text
+    assert 'id="sixsensePanel"' in response.text
+    assert 'id="sixsenseRecommended"' in response.text
+    assert '+sid+"/sixsense"' in response.text
+    assert "setTimeout(()=>{sixsenseIndex++" in response.text
     assert 'id="choiceMin"' in response.text
     assert 'id="choiceRec"' in response.text
     assert 'id="choiceMax"' in response.text
@@ -123,6 +135,77 @@ def test_home_serves_the_real_workflow() -> None:
     assert "안전하게 프로젝트에 적용" in response.text
     assert "검토용 결과 ZIP" in response.text
     assert 'fetch("/api/sessions/"+sid+"/apply"' in response.text
+
+
+def sixsense_plan() -> SixSensePlan:
+    return SixSensePlan(
+        standard_profile="Preserve the existing brand and use a conventional commercial game site.",
+        questions=[
+            SixSenseQuestion(
+                question_id="S02",
+                dimension="audience",
+                prompt="Who should the homepage persuade first?",
+                reason="This changes the information hierarchy.",
+                options=[
+                    SixSenseOption(
+                        option_id="new_players",
+                        label="New players",
+                        decision="Prioritize new-player understanding.",
+                        recommended=True,
+                    ),
+                    SixSenseOption(
+                        option_id="existing_players",
+                        label="Existing players",
+                        decision="Prioritize existing-player updates.",
+                    ),
+                ],
+            )
+        ],
+    )
+
+
+def test_sixsense_is_prepared_once_then_confirmed_before_budget(monkeypatch) -> None:
+    store = InMemoryWebSessionStore()
+    first = requirements(True).model_copy(update={"sixsense": sixsense_plan()})
+    completed = requirements(True).model_copy(
+        update={"sixsense": sixsense_plan().model_copy(update={"questions": []})}
+    )
+
+    async def fake_inspect(_intake):
+        return first
+
+    async def fake_reinspect(intake, _previous, *, sixsense_completed=False):
+        assert sixsense_completed is True
+        assert "Prioritize new-player understanding." in intake.goal
+        assert intake.internal_sources[-1].name.startswith("sixsense-decisions-")
+        return completed
+
+    monkeypatch.setattr("onebrief.web_service.inspect_requirements", fake_inspect)
+    monkeypatch.setattr("onebrief.web_service.reinspect_requirements", fake_reinspect)
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        inspected = TestClient(app).post(
+            "/api/inspect",
+            data={"goal": "Improve the existing game homepage."},
+        )
+        assert inspected.status_code == 200, inspected.text
+        pending = inspected.json()
+        assert pending["sixsense_pending"] is True
+        assert pending["budget"] is None
+
+        confirmed = TestClient(app).post(
+            f'/api/sessions/{pending["session_id"]}/sixsense',
+            json={"choices": [], "use_recommended": True},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert confirmed.status_code == 200, confirmed.text
+    payload = confirmed.json()
+    assert payload["sixsense_pending"] is False
+    assert payload["sixsense_confirmed"] is True
+    assert payload["budget"] is not None
+    assert "Prioritize new-player understanding." in payload["canonical_goal"]
 
 @pytest.mark.parametrize("ready", [False, True])
 def test_inspect_returns_questions_or_budget(monkeypatch, ready: bool) -> None:

@@ -56,6 +56,42 @@ class CompletionContract(BaseModel):
     )
 
 
+class SixSenseOption(BaseModel):
+    """One fast, user-facing decision with a disclosed working default."""
+
+    option_id: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")]
+    label: Annotated[str, Field(min_length=1, max_length=120)]
+    decision: Annotated[str, Field(min_length=1, max_length=300)]
+    recommended: bool = False
+
+
+class SixSenseQuestion(BaseModel):
+    """A material decision shown as one tap in the rapid SixSense sequence."""
+
+    question_id: Annotated[str, Field(pattern=r"^S0[2-6]$")]
+    dimension: Annotated[str, Field(min_length=1, max_length=80)]
+    prompt: Annotated[str, Field(min_length=3, max_length=300)]
+    reason: Annotated[str, Field(min_length=3, max_length=300)]
+    options: list[SixSenseOption] = Field(min_length=2, max_length=4)
+    allow_custom: bool = True
+
+    @model_validator(mode="after")
+    def one_recommended_default(self) -> "SixSenseQuestion":
+        if sum(option.recommended for option in self.options) != 1:
+            raise ValueError("SixSense questions require exactly one recommended option")
+        if len({option.option_id for option in self.options}) != len(self.options):
+            raise ValueError("SixSense option IDs must be unique inside a question")
+        return self
+
+
+class SixSensePlan(BaseModel):
+    """One model pass, then an instant client-side sequence of at most five choices."""
+
+    standard_profile: Annotated[str, Field(min_length=3, max_length=800)]
+    questions: list[SixSenseQuestion] = Field(default_factory=list, max_length=5)
+    interaction_target_seconds: Annotated[int, Field(ge=10, le=90)] = 30
+
+
 class InternalSource(BaseModel):
     """Private or authoritative evidence supplied by the user."""
 
@@ -110,6 +146,7 @@ class RequirementsAnalysis(BaseModel):
         max_length=12,
     )
     completion_contract: CompletionContract | None = None
+    sixsense: SixSensePlan | None = None
     assumptions: list[Annotated[str, Field(min_length=1, max_length=300)]] = Field(max_length=10)
     consolidated_questions: list[Annotated[str, Field(min_length=3, max_length=500)]] = Field(
         max_length=10

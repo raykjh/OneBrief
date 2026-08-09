@@ -86,6 +86,18 @@ class WebSession(BaseModel):
     parent_session_id: str | None = None
     amendment_kind: str | None = None
     amendment_reason: str | None = Field(default=None, max_length=4000)
+    sixsense_confirmed: bool = False
+
+
+class SixSenseChoice(BaseModel):
+    question_id: str = Field(pattern=r"^S0[2-6]$")
+    option_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,31}$")
+    custom_text: str | None = Field(default=None, max_length=1000)
+
+
+class SixSenseConfirmation(BaseModel):
+    choices: list[SixSenseChoice] = Field(default_factory=list, max_length=5)
+    use_recommended: bool = False
 
 
 class ExecutionLink(BaseModel):
@@ -351,6 +363,10 @@ def _merge_canonical_goal(goal: str, supplement: str) -> str:
 
 
 def _public_session(session: WebSession) -> dict[str, object]:
+    sixsense = session.requirements.sixsense
+    sixsense_pending = bool(
+        not session.sixsense_confirmed and sixsense and sixsense.questions
+    )
     return {
         "session_id": session.session_id,
         "canonical_goal": session.intake.goal,
@@ -361,13 +377,20 @@ def _public_session(session: WebSession) -> dict[str, object]:
         "parent_session_id": session.parent_session_id,
         "amendment_kind": session.amendment_kind,
         "amendment_reason": session.amendment_reason,
+        "sixsense": sixsense.model_dump(mode="json") if sixsense else None,
+        "sixsense_pending": sixsense_pending,
+        "sixsense_confirmed": session.sixsense_confirmed,
         "preparation": (
             session.preparation.model_dump(mode="json") if session.preparation else None
         ),
-        "budget": session.budget.model_dump(mode="json") if session.budget else None,
+        "budget": (
+            session.budget.model_dump(mode="json")
+            if session.budget and not sixsense_pending
+            else None
+        ),
         "approval_range": (
             {"minimum": session.budget.minimum_cost_usd, "maximum": _approval_ceiling(session)}
-            if session.budget
+            if session.budget and not sixsense_pending
             else None
         ),
         "preflight_notice": (
@@ -662,7 +685,12 @@ async def inspect(
             )
         else:
             requirements = await inspect_requirements(intake)
-        budget = estimate_budget(intake, requirements) if requirements.ready_for_estimate else None
+        sixsense_pending = bool(requirements.sixsense and requirements.sixsense.questions)
+        budget = (
+            estimate_budget(intake, requirements)
+            if requirements.ready_for_estimate and not sixsense_pending
+            else None
+        )
         preparation = build_preparation_plan(intake, requirements, budget, toolpack_state)
         session = WebSession(
             session_id=str(uuid4()),
@@ -676,6 +704,97 @@ async def inspect(
             reuse_source_job_uri=str(candidate.job_dir) if candidate else None,
             previous_attempt=candidate.public_summary() if candidate else None,
             preparation=preparation,
+            sixsense_confirmed=not sixsense_pending,
+        )
+        store.create(session)
+        return _public_session(session)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Service operation failed: {type(exc).__name__}") from exc
+
+
+@app.post("/api/sessions/{session_id}/sixsense")
+async def confirm_sixsense(
+    session_id: str,
+    confirmation: SixSenseConfirmation,
+    store: WebSessionStore = Depends(get_session_store),
+) -> dict[str, object]:
+    """Apply a pre-generated rapid choice sequence with one final model reinspection."""
+    try:
+        previous = store.read(session_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    plan = previous.requirements.sixsense
+    if previous.sixsense_confirmed or plan is None or not plan.questions:
+        raise HTTPException(409, "SixSense 확인이 필요한 세션이 아닙니다.")
+
+    supplied = {choice.question_id: choice for choice in confirmation.choices}
+    unknown = set(supplied) - {question.question_id for question in plan.questions}
+    if unknown:
+        raise HTTPException(422, "현재 SixSense 질문과 일치하지 않는 답변이 있습니다.")
+    decision_lines = [f"표준 방향: {plan.standard_profile}"]
+    for question in plan.questions:
+        choice = supplied.get(question.question_id)
+        custom = (choice.custom_text or "").strip() if choice else ""
+        if custom:
+            if not question.allow_custom:
+                raise HTTPException(422, f"{question.question_id}은 직접 입력을 허용하지 않습니다.")
+            decision = custom
+        else:
+            option_id = choice.option_id if choice else None
+            if confirmation.use_recommended or option_id is None:
+                option = next(item for item in question.options if item.recommended)
+            else:
+                option = next(
+                    (item for item in question.options if item.option_id == option_id),
+                    None,
+                )
+                if option is None:
+                    raise HTTPException(422, f"{question.question_id}의 선택지가 유효하지 않습니다.")
+            decision = option.decision
+        decision_lines.append(f"{question.question_id} {question.dimension}: {decision}")
+    answer_text = "\n".join(decision_lines)
+    answer_source = InternalSource(
+        name=f"sixsense-decisions-{uuid4().hex[:8]}.md",
+        priority=SourcePriority.MANDATORY,
+        requirement_keys=(
+            [item.key for item in previous.requirements.mandatory_information]
+            or ["sixsense_preferences"]
+        ),
+        summary="User-confirmed rapid SixSense decisions and accepted working defaults.",
+        content=f"# SixSense 확정사항\n\n{answer_text}\n",
+        media_type="text/markdown",
+    )
+    augmented = previous.intake.model_copy(
+        update={
+            "goal": _merge_canonical_goal(previous.intake.goal, answer_text),
+            "internal_sources": [*previous.intake.internal_sources, answer_source],
+        }
+    )
+    try:
+        requirements = await reinspect_requirements(
+            augmented,
+            previous.requirements,
+            sixsense_completed=True,
+        )
+        budget = estimate_budget(augmented, requirements) if requirements.ready_for_estimate else None
+        toolpack_state = None
+        if previous.selected_project and previous.selected_project.origin == "imported":
+            toolpack_state = ProjectToolPackLifecycle(previous.selected_project.project_id).state()
+        preparation = build_preparation_plan(augmented, requirements, budget, toolpack_state)
+        session = WebSession(
+            session_id=str(uuid4()),
+            created_at=_now(),
+            intake=augmented,
+            requirements=requirements,
+            budget=budget,
+            request_fingerprint=request_fingerprint(augmented),
+            selected_project=previous.selected_project,
+            continuation_context=previous.continuation_context,
+            preparation=preparation,
+            parent_session_id=previous.parent_session_id or previous.session_id,
+            sixsense_confirmed=True,
         )
         store.create(session)
         return _public_session(session)
@@ -745,6 +864,7 @@ async def reinspect_session(
             parent_session_id=previous.parent_session_id or previous.session_id,
             amendment_kind=previous.amendment_kind,
             amendment_reason=previous.amendment_reason,
+            sixsense_confirmed=previous.sixsense_confirmed,
         )
         store.create(session)
         return _public_session(session)

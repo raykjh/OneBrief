@@ -72,14 +72,19 @@ completion.
 
 ### Stage 1 — define and authorize
 
-1. Receive the goal, output form, authoritative sources, and an optional existing
-   project or destination.
-2. OneBrief consolidates only genuinely missing information into one request.
-3. OneBrief creates the completion contract and generates and qualifies the smallest
+1. Receive one short goal, authoritative sources, and an optional existing project or
+   destination. A novice is not expected to author a professional brief.
+2. SixSense finds the applicable professional standard and prepares at most five
+   material choices in one Gemini pass. The browser presents them as an instant,
+   one-question-at-a-time sequence with recommended defaults and no network wait between
+   questions.
+3. OneBrief asks separately only for genuinely missing authoritative information that
+   cannot be inferred or safely defaulted.
+4. OneBrief creates the completion contract and generates and qualifies the smallest
    capability pack that can create and prove the result.
-4. OneBrief presents the exact goal, completion criteria, read/write boundaries,
+5. OneBrief presents the exact goal, completion criteria, read/write boundaries,
    validation adapters, forbidden boundaries, and minimum/recommended/maximum cost.
-5. The user gives one approval for that exact hashed plan.
+6. The user gives one approval for that exact hashed plan.
 
 ### Stage 2 — converge and deliver
 

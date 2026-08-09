@@ -1,7 +1,13 @@
 import pytest
 from pydantic import ValidationError
 
-from onebrief.schemas import EvaluationMode, InformationRequirement, RequirementsAnalysis
+from onebrief.schemas import (
+    EvaluationMode,
+    InformationRequirement,
+    RequirementsAnalysis,
+    SixSenseOption,
+    SixSenseQuestion,
+)
 
 
 def _gap() -> InformationRequirement:
@@ -49,4 +55,26 @@ def test_complete_supported_intake_can_be_estimated() -> None:
         result.completion_contract.quality_criteria[0].evaluation_mode
         == EvaluationMode.INDEPENDENT_REVIEW
     )
+
+
+def test_sixsense_question_requires_one_disclosed_recommendation() -> None:
+    with pytest.raises(ValidationError):
+        SixSenseQuestion(
+            question_id="S02",
+            dimension="audience",
+            prompt="Who should this serve first?",
+            reason="The answer changes the information hierarchy.",
+            options=[
+                SixSenseOption(
+                    option_id="new_users",
+                    label="New users",
+                    decision="Prioritize onboarding.",
+                ),
+                SixSenseOption(
+                    option_id="experts",
+                    label="Experts",
+                    decision="Prioritize advanced controls.",
+                ),
+            ],
+        )
 

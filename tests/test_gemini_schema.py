@@ -36,6 +36,11 @@ def test_transport_result_is_still_checked_by_strict_domain_model():
             }],
             "pass_condition": "all pass",
         },
+        "sixsense": {
+            "standard_profile": "Use a conventional professional standard.",
+            "questions": [],
+            "interaction_target_seconds": 30,
+        },
         "assumptions": [],
         "consolidated_questions": [],
         "ready_for_estimate": True,
