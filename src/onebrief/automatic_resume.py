@@ -17,7 +17,7 @@ from onebrief.generic_development_toolpack import (
 )
 from onebrief.jobs import JobStatus, JobStore
 
-TRUSTED_REVALIDATION_VERSION = "web-observer-v6"
+TRUSTED_REVALIDATION_VERSION = "web-observer-v7"
 
 class AutomaticResumePlan(BaseModel):
     source_job_id: str

@@ -28,7 +28,10 @@ from onebrief.development_toolpack import (
     _default_runner,
 )
 from onebrief.unity_runtime_evidence import validate_and_copy_unity_visual_evidence
-from onebrief.web_runtime_evidence import observe_web_application
+from onebrief.web_runtime_evidence import (
+    observe_web_application,
+    validate_preserved_language_states,
+)
 from onebrief.schemas import InternalSource, SourcePriority
 from onebrief.toolpack_lifecycle import AdapterId, ProjectToolPackLifecycle
 
@@ -680,6 +683,34 @@ class ApprovedProjectDevelopmentToolPack:
                 observation_command, receipt = observe_web_application(
                     clone, evidence_dir
                 )
+                if re.search(r"(?:\bpreserv(?:e|es|ed|ing)\b|보존|유지)", goal_text, re.IGNORECASE):
+                    baseline = Path(temporary) / "baseline"
+                    self._git(
+                        "clone", "--local", "--no-hardlinks", str(self.root), str(baseline),
+                        cwd=Path(temporary),
+                    )
+                    build_adapter = next((
+                        item for item in profile.adapters
+                        if item.enabled
+                        and item.adapter_id == AdapterId.NODE_SCRIPT
+                        and str(item.parameter) == "build"
+                    ), None)
+                    if build_adapter is None:
+                        raise RuntimeError(
+                            "web content preservation requires an approved baseline build adapter"
+                        )
+                    npm = "npm.cmd" if os.name == "nt" else "npm"
+                    baseline_result = self.runner(
+                        "baseline_node_build", [npm, "run", "build"], baseline, 300
+                    )
+                    baseline_evidence = output_dir / "baseline_web_observation_evidence"
+                    baseline_observation, _ = observe_web_application(
+                        baseline, baseline_evidence
+                    )
+                    validate_preserved_language_states(
+                        baseline_evidence, evidence_dir
+                    )
+                    results.extend([baseline_result, baseline_observation])
                 results.append(observation_command)
                 observation_dir = output_dir.parent / "independent_observations"
                 observation_dir.mkdir(parents=True, exist_ok=True)

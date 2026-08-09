@@ -1,4 +1,12 @@
-from onebrief.web_runtime_evidence import _language_state_issues, _wrapper
+import json
+
+import pytest
+
+from onebrief.web_runtime_evidence import (
+    _language_state_issues,
+    _wrapper,
+    validate_preserved_language_states,
+)
 
 
 def test_mobile_observer_forces_the_exact_css_viewport_and_checks_clipping() -> None:
@@ -42,3 +50,31 @@ def test_language_observer_accepts_distinct_matching_language_states() -> None:
     ]
 
     assert _language_state_issues(states) == []
+
+
+def _write_observation(root, spanish: str) -> None:
+    root.mkdir()
+    states = [
+        {"requested": "en", "state": {"semanticText": "JULPAE game guide"}},
+        {"requested": "es", "state": {"semanticText": spanish}},
+    ]
+    (root / "observation.json").write_text(
+        json.dumps({"mobile": {"states": states}}), encoding="utf-8"
+    )
+
+
+def test_preservation_rejects_same_script_translation_drift(tmp_path) -> None:
+    baseline, candidate = tmp_path / "baseline", tmp_path / "candidate"
+    _write_observation(baseline, "JULPAE es un juego de cartas")
+    _write_observation(candidate, "JULPAE is a card game")
+
+    with pytest.raises(RuntimeError, match="visible locale copy changed: es"):
+        validate_preserved_language_states(baseline, candidate)
+
+
+def test_preservation_accepts_identical_locale_states(tmp_path) -> None:
+    baseline, candidate = tmp_path / "baseline", tmp_path / "candidate"
+    _write_observation(baseline, "JULPAE es un juego de cartas")
+    _write_observation(candidate, "JULPAE es un juego de cartas")
+
+    validate_preserved_language_states(baseline, candidate)

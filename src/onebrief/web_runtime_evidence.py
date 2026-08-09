@@ -180,6 +180,44 @@ def _language_state_issues(states: object) -> list[str]:
     return issues
 
 
+def validate_preserved_language_states(
+    baseline_evidence_dir: Path, candidate_evidence_dir: Path
+) -> None:
+    """Reject unrelated visible-copy drift when the work contract says preserve.
+
+    Script checks cannot distinguish English from Spanish because both use the
+    Latin alphabet.  Comparing the rendered semantic state of every advertised
+    locale against the approved Git baseline closes that gap without relying on
+    a model's opinion.
+    """
+
+    def states(root: Path) -> dict[str, str]:
+        payload = json.loads((root / "observation.json").read_text(encoding="utf-8"))
+        observed = payload.get("mobile", {}).get("states", [])
+        result: dict[str, str] = {}
+        for item in observed if isinstance(observed, list) else []:
+            if not isinstance(item, dict) or not isinstance(item.get("state"), dict):
+                continue
+            locale = _normalized_locale(item.get("requested"))
+            text = str(item["state"].get("semanticText") or "").strip()
+            if locale and text:
+                result[locale] = text
+        return result
+
+    baseline = states(baseline_evidence_dir)
+    candidate = states(candidate_evidence_dir)
+    if not baseline or baseline.keys() != candidate.keys():
+        raise RuntimeError(
+            "web content preservation failed: advertised locale states changed"
+        )
+    changed = [locale for locale in baseline if baseline[locale] != candidate[locale]]
+    if changed:
+        raise RuntimeError(
+            "web content preservation failed: existing visible locale copy changed: "
+            + ", ".join(changed)
+        )
+
+
 def _extract(dom: str) -> dict[str, object]:
     match = re.search(r'<pre id="result">(.*?)</pre>', dom, re.DOTALL | re.IGNORECASE)
     if not match:
@@ -286,7 +324,7 @@ def observe_web_application(clone: Path, evidence_dir: Path) -> tuple[Developmen
     )
     receipt = ObservationReceipt(
         capability=RealityCapability.SEMANTIC_OBSERVATION,
-        observer_pack_id="onebrief_web_ui_observer_v6",
+        observer_pack_id="onebrief_web_ui_observer_v7",
         status=ObservationStatus.FAILED if issues else ObservationStatus.OBSERVED,
         independent_from_maker=True,
         artifact_paths=[desktop_path.as_posix(), mobile_path.as_posix()],
