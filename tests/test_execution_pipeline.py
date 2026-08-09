@@ -751,6 +751,44 @@ def test_project_developer_promotes_exact_search_replace_without_rewriting_file(
     )
     assert "<option>한국어</option>" in result.changes[0].content
 
+
+def test_exact_retry_falls_back_to_approved_source_after_corrupt_full_file() -> None:
+    original = '<select id="langSelect">\n<option>한국어</option>\n</select>\n'
+    proposal = ProposedProjectCodeChangeSet.model_validate({
+        "summary": "Repair with a bounded exact edit.",
+        "changes": [{
+            "path": "src/index.html",
+            "search": '<select id="langSelect">',
+            "replace": '<select id="langSelect" aria-label="언어 선택 / Select Language">',
+            "reason": "Discard the rejected rewrite and use the approved baseline.",
+        }],
+    })
+    developer = DeveloperAgent(
+        FakeGateway([]),
+        change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/",
+        path_approver=lambda path: path if path == "src/index.html" else None,
+    )
+    rejected = ProjectCodeChangeSet(
+        summary="Rejected rewrite",
+        changes=[{
+            "path": "src/index.html",
+            "base_sha256": "a" * 64,
+            "content": "corrupted full-file output",
+            "reason": "Rejected by verification.",
+        }],
+    )
+
+    result = developer.promote_candidate(proposal, [{
+        "repository_path": "src/index.html",
+        "sha256": "a" * 64,
+        "content": original,
+    }], rejected)
+
+    assert "corrupted" not in result.changes[0].content
+    assert "aria-label" in result.changes[0].content
+    assert "<option>한국어</option>" in result.changes[0].content
+
 def test_exchange_development_budget_includes_compact_retry_capacity() -> None:
     intake = IntakeRequest(goal="Improve Exchange.", toolpack_ids=[ToolPackId.EXCHANGE_DEVELOPMENT])
     estimate = estimate_budget(intake, _requirements())

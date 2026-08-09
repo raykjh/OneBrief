@@ -181,11 +181,15 @@ class DeveloperAgent:
                 if self.path_approver(path) is None:
                     continue
                 if change.get("content") is None:
-                    baseline = previous_map.get(path)
-                    if baseline is None:
-                        baseline = str(source_map.get(path, {}).get("content", ""))
                     needle = str(change.get("search") or "")
-                    if not baseline or baseline.count(needle) != 1:
+                    approved_baseline = str(source_map.get(path, {}).get("content", ""))
+                    previous_baseline = previous_map.get(path, "")
+                    baseline = (
+                        previous_baseline
+                        if previous_baseline.count(needle) == 1
+                        else approved_baseline
+                    )
+                    if baseline.count(needle) != 1:
                         raise ValueError(
                             f"exact search text must occur once in approved source: {path}"
                         )
