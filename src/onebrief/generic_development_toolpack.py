@@ -231,7 +231,7 @@ class ApprovedProjectDevelopmentToolPack:
                 body = line.rstrip("\r\n")
                 newline = line[len(body):]
                 normalized_text.append(body.rstrip(" \t") + newline)
-            return "".join(normalized_text)
+            return "".join(normalized_text).replace("\r\n", "\n").replace("\r", "\n")
         normalized: list[str] = []
         generated_test_source = "tests" in lowered_parts and "playmode" in lowered_parts
         for line in content.splitlines(keepends=True):
@@ -247,7 +247,7 @@ class ApprovedProjectDevelopmentToolPack:
             if re.match(r"^\s*using\s+(?:static\s+)?[A-Za-z_][A-Za-z0-9_.]*(?:\s*=\s*[A-Za-z_][A-Za-z0-9_.]*)?;[ \t]+$", body):
                 body = body.rstrip(" \t")
             normalized.append(body + newline)
-        return "".join(normalized)
+        return "".join(normalized).replace("\r\n", "\n").replace("\r", "\n")
 
     def _blob(self, head: str, relative: str) -> bytes:
         completed = subprocess.run(

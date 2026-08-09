@@ -544,6 +544,16 @@ def test_safe_csharp_normalization_only_trims_using_directives() -> None:
     assert normalized == "using System;\nvar text = @\"meaningful   \";   \n"
 
 
+def test_safe_web_normalization_converts_crlf_and_removes_trailing_space() -> None:
+    content = '<select id="langSelect">   \r\n<option>한국어</option>\r\n'
+
+    normalized = ApprovedProjectDevelopmentToolPack._normalize_safe_generated_text(
+        "src/index.html", content
+    )
+
+    assert normalized == '<select id="langSelect">\n<option>한국어</option>\n'
+
+
 def test_safe_csharp_normalization_trims_test_source_whitespace_only_in_playmode_tests() -> None:
     content = "using System;\n    \nvar text = \"test\";   \n"
 
