@@ -52,6 +52,7 @@ def can_attempt_automatic_resume(job_dir: Path) -> bool:
     validation_failure = any(token in message for token in (
         "web observation failed",
         "development verification failed",
+        "development patch hygiene failed",
         "approved web observation",
         "independent observation capability was unavailable",
     ))

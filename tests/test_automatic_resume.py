@@ -72,6 +72,18 @@ def test_failed_validation_with_unused_budget_is_resume_candidate(tmp_path: Path
     assert can_attempt_automatic_resume(job) is True
 
 
+def test_patch_hygiene_failure_with_candidate_is_resume_candidate(tmp_path: Path) -> None:
+    job = tmp_path / "job-hygiene"
+    _failed_job(job)
+    record = JobRecord.model_validate_json((job / "job.json").read_text(encoding="utf-8"))
+    record = record.model_copy(update={
+        "message": "RuntimeError: development patch hygiene failed: trailing whitespace"
+    })
+    (job / "job.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+
+    assert can_attempt_automatic_resume(job) is True
+
+
 def test_partial_semantic_observation_hold_is_resume_candidate(tmp_path: Path) -> None:
     job = tmp_path / "job-partial"
     _failed_job(job)
