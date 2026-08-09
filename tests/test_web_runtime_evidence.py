@@ -9,3 +9,5 @@ def test_mobile_observer_forces_the_exact_css_viewport_and_checks_clipping() -> 
     assert "getBoundingClientRect" in document
     assert "r.right > frame.contentWindow.innerWidth+2" in document
     assert "current.startsWith('ko')" in document
+    assert "querySelectorAll('select')" in document
+    assert "dispatchEvent(new Event('change'" in document

@@ -87,7 +87,11 @@ frame.addEventListener('load',async()=>{{await delay(400);const before=sample();
   const current=(d.documentElement.lang||'').toLowerCase();
   const wanted=current.startsWith('ko')?/^(en|english)$/i:/^(ko|korean|한국어)$/i;
   const button=buttons.find(x=>wanted.test((x.textContent||'').trim())||wanted.test((x.getAttribute('aria-label')||'').trim()))||d.querySelector('#lang-toggle,[data-language-toggle]');
-  if(button){{button.click();clicked=true;await delay(500);}}}}
+  if(button){{button.click();clicked=true;await delay(500);}}
+  else {{const selects=[...d.querySelectorAll('select')];
+   const select=selects.find(x=>[...x.options].some(o=>wanted.test((o.textContent||'').trim())||wanted.test((o.value||'').trim())));
+   if(select){{const option=[...select.options].find(o=>wanted.test((o.textContent||'').trim())||wanted.test((o.value||'').trim()));
+    select.value=option.value;select.dispatchEvent(new Event('input',{{bubbles:true}}));select.dispatchEvent(new Event('change',{{bubbles:true}}));clicked=true;await delay(500);}}}}}}
  const after=sample();out.textContent=JSON.stringify({{clicked,before,after}});document.body.dataset.done='true';}});
 </script></body></html>"""
 
