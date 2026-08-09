@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from onebrief.jobs import create_job, verify_input_snapshot
+from onebrief.jobs import JobStatus, build_result_package, create_job, verify_input_snapshot
 from onebrief.producer import estimate_budget
 from onebrief.project_import import ExternalProjectImporter, MANIFEST_NAME
 from onebrief.project_snapshot import (
@@ -168,3 +168,13 @@ def test_project_development_job_embeds_snapshot_in_immutable_inputs(
     assert (job / "inputs" / SNAPSHOT_ARCHIVE).is_file()
     assert (job / "inputs" / SNAPSHOT_MANIFEST).is_file()
     verify_input_snapshot(job)
+
+    private_git = job / "work" / "project_snapshot" / "repository" / ".git" / "config"
+    private_git.parent.mkdir(parents=True)
+    private_git.write_text("synthetic git metadata", encoding="utf-8")
+    evidence = job / "work" / "project_snapshot" / "restore_evidence.json"
+    evidence.write_text('{"status":"verified_and_approved"}', encoding="utf-8")
+    package, _digest = build_result_package(job, status=JobStatus.COMPLETE, attempt=1)
+
+    assert not (package / "artifacts" / "project_snapshot" / "repository").exists()
+    assert (package / "artifacts" / "project_snapshot" / "restore_evidence.json").is_file()

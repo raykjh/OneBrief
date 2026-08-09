@@ -41,6 +41,7 @@ from onebrief.project_import import (
 from onebrief.toolpack_lifecycle import ProjectToolPackLifecycle, ToolPackApprovalRequest
 from onebrief.project_continuity import ProjectContinuationContext, ProjectContinuityStore
 from onebrief.result_delivery import ExchangePreviewManager
+from onebrief.safe_apply import SafeApplyReceipt, apply_verified_project_result
 from onebrief.request_reuse import (
     find_reuse_candidate,
     request_fingerprint,
@@ -306,6 +307,15 @@ def _local_jobs_root() -> Path:
     )).resolve()
 
 
+def _local_apply_backups_root() -> Path:
+    configured = os.environ.get("ONEBRIEF_APPLY_BACKUPS_ROOT")
+    if configured:
+        return Path(configured).resolve()
+    local = os.environ.get("LOCALAPPDATA")
+    base = Path(local) if local else Path(tempfile.gettempdir())
+    return (base / "OneBrief" / "apply-backups").resolve()
+
+
 def get_session_store() -> WebSessionStore:
     global _store
     if _store is None:
@@ -414,13 +424,18 @@ def validate_approval(session: WebSession, approved_usd: float) -> None:
 
 
 def _service_config() -> tuple[str, str, str, str]:
-    bucket = os.environ.get("ONEBRIEF_BUCKET", "")
+    bucket = os.environ.get("ONEBRIEF_JOB_BUCKET") or os.environ.get("ONEBRIEF_BUCKET", "")
     project = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
     region = os.environ.get("ONEBRIEF_REGION", "asia-northeast3")
     job_name = os.environ.get("ONEBRIEF_CLOUD_RUN_JOB", "onebrief-worker")
     if not bucket or not project:
         raise RuntimeError("Cloud execution is not configured for this service.")
     return bucket, project, region, job_name
+
+
+def _local_project_cloud_configured() -> bool:
+    bucket = os.environ.get("ONEBRIEF_JOB_BUCKET") or os.environ.get("ONEBRIEF_BUCKET")
+    return bool(bucket and os.environ.get("GOOGLE_CLOUD_PROJECT"))
 
 
 app = FastAPI(title="OneBrief", version="0.1.0", docs_url=None, redoc_url=None)
@@ -717,9 +732,13 @@ async def run_session(
         raise HTTPException(409, str(exc)) from exc
 
     try:
-        if any(
+        development_job = any(
             item in session.intake.toolpack_ids
             for item in (ToolPackId.EXCHANGE_DEVELOPMENT, ToolPackId.PROJECT_DEVELOPMENT)
+        )
+        snapshot_development = ToolPackId.PROJECT_DEVELOPMENT in session.intake.toolpack_ids
+        if development_job and not (
+            snapshot_development and _local_project_cloud_configured()
         ):
             if not isinstance(store, InMemoryWebSessionStore):
                 raise RuntimeError(
@@ -753,6 +772,10 @@ async def run_session(
                 "status": "queued",
                 "message": "승인된 한도 안에서 로컬 개발 작업을 시작했습니다.",
             }
+        if development_job and not isinstance(store, InMemoryWebSessionStore):
+            raise RuntimeError(
+                "Cloud project snapshots must be created by the local OneBrief app that can read the approved repository."
+            )
         bucket, project, region, job_name = _service_config()
         with tempfile.TemporaryDirectory(prefix="onebrief_web_job_") as temp:
             job_dir = create_job(
@@ -797,9 +820,22 @@ async def session_status(
         link = store.read_execution(session_id)
         if link.operation_name == "local":
             record = await asyncio.to_thread(JobStore(Path(link.job_uri)).read)
-            return record.model_dump(mode="json")
-        record = await asyncio.to_thread(GCSJobStore(link.job_uri).read_job)
-        return record.model_dump(mode="json")
+        else:
+            record = await asyncio.to_thread(GCSJobStore(link.job_uri).read_job)
+        payload = record.model_dump(mode="json")
+        try:
+            session = store.read(session_id)
+            payload["can_apply"] = bool(
+                isinstance(store, InMemoryWebSessionStore)
+                and session.intake.output_target == OutputTarget.EXISTING_PROJECT
+                and session.intake.existing_project_id
+                and record.status.value == "complete"
+                and record.result_package
+            )
+            payload["project_id"] = session.intake.existing_project_id
+        except FileNotFoundError:
+            payload["can_apply"] = False
+        return payload
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
     except Exception as exc:
@@ -980,6 +1016,47 @@ async def session_result(
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
     except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"Service operation failed: {type(exc).__name__}") from exc
+
+
+@app.post("/api/sessions/{session_id}/apply")
+async def apply_session_result(
+    session_id: str,
+    store: WebSessionStore = Depends(get_session_store),
+) -> dict[str, object]:
+    """Apply one verified Cloud/local result to its unchanged local project."""
+    if not isinstance(store, InMemoryWebSessionStore):
+        raise HTTPException(409, "안전 적용은 원본 프로젝트에 접근할 수 있는 로컬 OneBrief에서만 가능합니다.")
+    try:
+        session = store.read(session_id)
+        project_id = session.intake.existing_project_id
+        if session.intake.output_target != OutputTarget.EXISTING_PROJECT or not project_id:
+            raise RuntimeError("이 작업은 기존 프로젝트 개선 결과가 아닙니다.")
+        link = store.read_execution(session_id)
+        with tempfile.TemporaryDirectory(prefix="onebrief_apply_result_") as temp_name:
+            if link.operation_name == "local":
+                job_dir = Path(link.job_uri).resolve()
+                record = await asyncio.to_thread(JobStore(job_dir).read)
+                if record.status.value != "complete" or not record.result_package:
+                    raise RuntimeError("적용할 완료 결과가 아직 없습니다.")
+                result_root = (job_dir / record.result_package).resolve()
+                if not result_root.is_relative_to(job_dir) or not result_root.is_dir():
+                    raise RuntimeError("결과 패키지를 찾을 수 없습니다.")
+            else:
+                result_root = Path(temp_name) / "result"
+                await asyncio.to_thread(GCSJobStore(link.job_uri).download_result, result_root)
+            receipt: SafeApplyReceipt = await asyncio.to_thread(
+                apply_verified_project_result,
+                project_id,
+                result_root,
+                _local_apply_backups_root(),
+            )
+        return receipt.model_dump(mode="json")
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (KeyError, PermissionError, RuntimeError, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(502, f"Service operation failed: {type(exc).__name__}") from exc

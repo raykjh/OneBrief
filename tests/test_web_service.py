@@ -4,12 +4,13 @@ import pytest
 
 from onebrief.producer import estimate_budget
 from onebrief.jobs import JobRecord, JobStatus
+from onebrief.cloud_jobs import CloudExecutionReceipt
 from onebrief.project_catalog import RegisteredProject
 from onebrief.schemas import IntakeRequest, OutputTarget, RequirementsAnalysis, ToolPackId
 from onebrief.toolpacks import attach_toolpack_descriptors
 from onebrief.web_service import (
     ExecutionLink, InMemoryWebSessionStore, LocalWebSessionStore, WebSession, app, get_session_store,
-    validate_approval,
+    _local_project_cloud_configured, validate_approval,
 )
 
 
@@ -107,6 +108,10 @@ def test_home_serves_the_real_workflow() -> None:
     assert "기술자료 ZIP 다운로드" in response.text
     assert 'fetch("/api/projects?q="' in response.text
     assert "p.previous_attempt" in response.text
+    assert 'id="applyResult"' in response.text
+    assert "안전하게 프로젝트에 적용" in response.text
+    assert "검토용 결과 ZIP" in response.text
+    assert 'fetch("/api/sessions/"+sid+"/apply"' in response.text
 
 @pytest.mark.parametrize("ready", [False, True])
 def test_inspect_returns_questions_or_budget(monkeypatch, ready: bool) -> None:
@@ -287,6 +292,166 @@ def test_exchange_development_is_queued_as_a_local_job(monkeypatch, tmp_path) ->
     link = store.read_execution("local-development")
     assert link.operation_name == "local"
     assert (tmp_path / "jobs").is_dir()
+
+
+def test_imported_project_development_uses_cloud_snapshot_when_configured(
+    monkeypatch, tmp_path
+) -> None:
+    store = InMemoryWebSessionStore()
+    project = RegisteredProject(
+        project_id="sample-project", name="Sample", summary="Python", root_path=str(tmp_path / "project"),
+        project_type="python", branch="main", head_sha="a" * 40, worktree_status="clean",
+        ready_for_isolated_edit=True, toolpack_id=ToolPackId.PROJECT_DEVELOPMENT,
+        origin="imported", toolpack_status="approved",
+    )
+    intake = IntakeRequest(
+        goal="Improve the approved Python project.",
+        output_target=OutputTarget.EXISTING_PROJECT,
+        existing_project_id="sample-project",
+        toolpack_ids=[ToolPackId.PROJECT_DEVELOPMENT],
+        public_research_allowed=True,
+        budget_limit_usd=2.0,
+    )
+    analysis = requirements(True)
+    budget = estimate_budget(intake, analysis)
+    store.create(WebSession(
+        session_id="cloud-development", created_at="2026-08-09T00:00:00+00:00",
+        intake=intake, requirements=analysis, budget=budget,
+    ))
+
+    class FakeCatalog:
+        def get(self, project_id):
+            assert project_id == "sample-project"
+            return project
+
+    def fake_create_job(**_kwargs):
+        job = tmp_path / "staged-job"
+        job.mkdir(exist_ok=True)
+        return job
+
+    def fake_submit(job_dir, **kwargs):
+        assert job_dir.name == "staged-job"
+        assert kwargs["bucket"] == "job-bucket"
+        return CloudExecutionReceipt(
+            job_uri="gs://job-bucket/jobs/cloud-development",
+            cloud_run_job="projects/test/locations/asia-northeast3/jobs/onebrief-worker",
+            operation_name="operations/cloud-development",
+        )
+
+    monkeypatch.setenv("ONEBRIEF_JOB_BUCKET", "job-bucket")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setattr("onebrief.web_service.ProjectCatalog", FakeCatalog)
+    monkeypatch.setattr("onebrief.web_service.create_job", fake_create_job)
+    monkeypatch.setattr("onebrief.web_service.submit_cloud_job", fake_submit)
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).post(
+            "/api/sessions/cloud-development/run",
+            json={"approved_usd": budget.recommended_approval_usd},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    link = store.read_execution("cloud-development")
+    assert link.operation_name == "operations/cloud-development"
+    assert link.job_uri.startswith("gs://job-bucket/")
+
+
+def test_local_project_cloud_configuration_accepts_legacy_bucket_name(monkeypatch) -> None:
+    monkeypatch.delenv("ONEBRIEF_JOB_BUCKET", raising=False)
+    monkeypatch.setenv("ONEBRIEF_BUCKET", "job-bucket")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+
+    assert _local_project_cloud_configured() is True
+
+
+def test_apply_endpoint_downloads_remote_result_and_returns_receipt(monkeypatch, tmp_path) -> None:
+    store = InMemoryWebSessionStore()
+    store.create(WebSession(
+        session_id="apply-cloud", created_at="2026-08-09T00:00:00+00:00",
+        intake=IntakeRequest(
+            goal="Improve the project.", output_target=OutputTarget.EXISTING_PROJECT,
+            existing_project_id="sample-project",
+        ),
+        requirements=requirements(True),
+    ))
+    store.save_execution(ExecutionLink(
+        session_id="apply-cloud", job_uri="gs://job-bucket/jobs/apply-cloud",
+        operation_name="operations/apply-cloud", created_at="2026-08-09T00:00:00+00:00",
+    ))
+
+    class FakeRemote:
+        def download_result(self, destination):
+            destination.mkdir(parents=True)
+            (destination / "package_manifest.json").write_text("{}", encoding="utf-8")
+            return destination
+
+    class FakeReceipt:
+        def model_dump(self, mode="json"):
+            assert mode == "json"
+            return {
+                "status": "applied", "changed_paths": ["src/app.py"],
+                "backup_path": str(tmp_path / "backup"), "message": "Applied",
+            }
+
+    def fake_apply(project_id, result_root, backup_root):
+        assert project_id == "sample-project"
+        assert (result_root / "package_manifest.json").is_file()
+        assert backup_root == (tmp_path / "backups").resolve()
+        return FakeReceipt()
+
+    monkeypatch.setattr("onebrief.web_service.GCSJobStore", lambda _uri: FakeRemote())
+    monkeypatch.setattr("onebrief.web_service.apply_verified_project_result", fake_apply)
+    monkeypatch.setattr("onebrief.web_service._local_apply_backups_root", lambda: (tmp_path / "backups").resolve())
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).post("/api/sessions/apply-cloud/apply")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "applied"
+    assert response.json()["changed_paths"] == ["src/app.py"]
+
+
+def test_status_exposes_safe_apply_only_for_completed_local_project_session(monkeypatch) -> None:
+    store = InMemoryWebSessionStore()
+    store.create(WebSession(
+        session_id="apply-ready", created_at="2026-08-09T00:00:00+00:00",
+        intake=IntakeRequest(
+            goal="Improve the project.", output_target=OutputTarget.EXISTING_PROJECT,
+            existing_project_id="sample-project",
+        ),
+        requirements=requirements(True),
+    ))
+    store.save_execution(ExecutionLink(
+        session_id="apply-ready", job_uri="gs://job-bucket/jobs/apply-ready",
+        operation_name="operations/apply-ready", created_at="2026-08-09T00:00:00+00:00",
+    ))
+    record = JobRecord(
+        job_id="apply-ready", status=JobStatus.COMPLETE,
+        created_at="2026-08-09T00:00:00+00:00", updated_at="2026-08-09T00:01:00+00:00",
+        attempts=1, current_stage="finished", message="Complete", run_id="run",
+        result_package="packages/result-v001",
+    )
+
+    class FakeRemote:
+        def read_job(self):
+            return record
+
+    monkeypatch.setattr("onebrief.web_service.GCSJobStore", lambda _uri: FakeRemote())
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).get("/api/sessions/apply-ready/status")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["can_apply"] is True
+    assert response.json()["project_id"] == "sample-project"
+
+
 def test_graph_endpoint_returns_selected_team_and_node_history(monkeypatch) -> None:
     store = InMemoryWebSessionStore()
     store.create(WebSession(

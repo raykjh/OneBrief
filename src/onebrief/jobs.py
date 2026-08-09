@@ -283,7 +283,14 @@ def build_result_package(
         if work_dir.exists():
             for source in sorted(work_dir.rglob("*")):
                 if source.is_file() and ".tmp" not in source.name:
-                    _copy_if_present(source, temp_dir / "artifacts" / source.relative_to(work_dir))
+                    relative = source.relative_to(work_dir)
+                    if (
+                        len(relative.parts) >= 2
+                        and relative.parts[0] == "project_snapshot"
+                        and relative.parts[1] in {"repository", "registry"}
+                    ):
+                        continue
+                    _copy_if_present(source, temp_dir / "artifacts" / relative)
         for name in ("approval.json", "cost_ledger.json", "model_execution_policy.json"):
             _copy_if_present(job_dir / "run" / name, temp_dir / "audit" / name)
         _copy_if_present(
