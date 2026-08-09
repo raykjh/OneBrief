@@ -247,13 +247,22 @@ def restore_project_snapshot(job_dir: Path, project_id: str) -> Path | None:
         f"{item.adapter_id.value}:{item.parameter or ''}"
         for item in generated.adapters if item.enabled
     )
-    if (
-        generated.allowed_read_prefixes != manifest.approved_read_prefixes
-        or generated.allowed_write_prefixes != manifest.approved_write_prefixes
-        or generated.allowed_suffixes != manifest.approved_suffixes
-        or adapters != manifest.approved_adapters
-    ):
-        raise RuntimeError("restored ToolPack capabilities differ from the locally approved snapshot")
+    capability_differences = {
+        key: {"approved": approved, "restored": restored}
+        for key, approved, restored in (
+            ("read_prefixes", manifest.approved_read_prefixes, generated.allowed_read_prefixes),
+            ("write_prefixes", manifest.approved_write_prefixes, generated.allowed_write_prefixes),
+            ("suffixes", manifest.approved_suffixes, generated.allowed_suffixes),
+            ("adapters", manifest.approved_adapters, adapters),
+        )
+        if approved != restored
+    }
+    if capability_differences:
+        detail = json.dumps(capability_differences, ensure_ascii=False, sort_keys=True)
+        raise RuntimeError(
+            "restored ToolPack capabilities differ from the locally approved snapshot: "
+            + detail
+        )
     approved = lifecycle.approve(state.qualification.toolpack_sha256)
     if not approved.execution_ready:
         raise RuntimeError("restored project ToolPack is not execution-ready")

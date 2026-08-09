@@ -5,7 +5,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
 RUN apt-get update && \
-    apt-get install --yes --no-install-recommends git && \
+    apt-get install --yes --no-install-recommends \
+        chromium \
+        fonts-noto-cjk \
+        git \
+        nodejs \
+        npm && \
     rm -rf /var/lib/apt/lists/* && \
     useradd --create-home --uid 10001 onebrief
 

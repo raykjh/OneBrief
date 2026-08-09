@@ -147,6 +147,13 @@ def test_snapshot_manifest_is_a_standalone_immutable_job_input(tmp_path: Path, m
     assert payload["files"]
 
 
+def test_cloud_image_contains_the_approved_web_verification_runtime() -> None:
+    dockerfile = (Path(__file__).parents[1] / "Dockerfile").read_text(encoding="utf-8")
+
+    for package in ("chromium", "fonts-noto-cjk", "nodejs", "npm"):
+        assert package in dockerfile
+
+
 def test_project_development_job_embeds_snapshot_in_immutable_inputs(
     tmp_path: Path, monkeypatch
 ) -> None:
