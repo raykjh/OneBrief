@@ -30,8 +30,15 @@ from onebrief.model_policy import (
 from onebrief.project_catalog import ProjectCatalog
 from onebrief.project_closure import ProjectClosureManager
 from onebrief.project_continuity import ProjectContinuityStore
+from onebrief.project_snapshot import create_project_snapshot, restore_project_snapshot
 from onebrief.requirements_gate import require_ready_for_estimate
-from onebrief.schemas import BudgetEnvelope, IntakeRequest, InternalSource, RequirementsAnalysis
+from onebrief.schemas import (
+    BudgetEnvelope,
+    IntakeRequest,
+    InternalSource,
+    RequirementsAnalysis,
+    ToolPackId,
+)
 from onebrief.source_loader import source_records
 from onebrief.team_planning import TeamPlan, TeamPlanningCoordinator
 
@@ -228,6 +235,11 @@ def create_job(
             [item.model_dump(mode="json") for item in source_records(sources)],
         )
         _atomic_json(inputs / "budget_estimate.json", estimate)
+        if (
+            intake.existing_project_id
+            and ToolPackId.PROJECT_DEVELOPMENT in intake.toolpack_ids
+        ):
+            create_project_snapshot(intake.existing_project_id, inputs)
         _write_input_snapshot(inputs)
         ledger = BudgetStore(staging / "run").approve(estimate, approved_usd)
         now = _now()
@@ -336,6 +348,8 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
         intake = IntakeRequest.model_validate_json(
             (job_dir / "inputs" / "intake.json").read_text(encoding="utf-8")
         )
+        if intake.existing_project_id:
+            restore_project_snapshot(job_dir, intake.existing_project_id)
         requirements = RequirementsAnalysis.model_validate_json(
             (job_dir / "inputs" / "requirements.json").read_text(encoding="utf-8")
         )
