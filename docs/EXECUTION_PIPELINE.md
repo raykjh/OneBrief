@@ -13,6 +13,8 @@ Approved budget
             -> NEEDS_INFORMATION -> user checkpoint
             -> REVISE -> the same Accountable Maker -> Independent Verifier
                          (within the user-approved revision limit)
+  -> Completion ledger records criterion-level evidence and unresolved failures
+  -> Safe delivery/application only when every required criterion passes
 ```
 
 The maker and verifier are native Google ADK agents coordinated by a custom ADK
@@ -68,6 +70,7 @@ written as a checkpoint so a crash or budget block leaves inspectable state.
 - optional `revision_rN.json` and `verification_rN.json`
 - `final.md`
 - `final_verification.json`
+- `completion_ledger.json`
 - `execution_checkpoint.json`
 - `adk_convergence_trace.json`
 

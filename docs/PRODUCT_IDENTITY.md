@@ -2,9 +2,8 @@
 
 ## One sentence
 
-OneBrief is a quality-convergence operating system that lets a non-expert describe a
-goal once, then automatically assembles and supervises an agent team until the result
-meets an explicit definition of done.
+OneBrief manages completion criteria and evidence so AI work converges to a genuinely
+completed state.
 
 ## The narrow problem inside the general-purpose product
 
@@ -13,6 +12,8 @@ people who can chat with AI should not have to learn how to design, equip, promp
 sequence, supervise, and repeatedly correct an agent team.
 
 The value is not the number of agents. The value is responsibility for completion.
+Agents are replaceable workers inside this system; agent activity is never proof of
+completion.
 
 ## Invariants
 
@@ -35,6 +36,8 @@ The value is not the number of agents. The value is responsibility for completio
    user feedback starts an explicit existing-project improvement run.
 8. Example projects and domain ToolPacks prove and improve the system; they do not define
    the product.
+9. The primary user view is a completion ledger. Agent topology and execution traces are
+   secondary diagnostic evidence.
 
 ## Keep, add, remove
 

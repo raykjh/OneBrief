@@ -338,7 +338,10 @@ class VerifierAgent:
                 "grounding, citation coverage, internal consistency, completeness, and human-authority "
                 "boundary. When implementation_evidence is supplied, inspect the actual changed source and test evidence rather than trusting the maker summary; map every claimed feature and acceptance criterion to code and a relevant test. PASS only when no blocking issue remains. Use REVISE for correctable issues "
                 "and NEEDS_INFORMATION only when supplied evidence cannot support a required conclusion. "
-                "Give exact revision instructions. Write every user-facing field in the goal's language. "
+                "Give exact revision instructions. For every completion_contract quality criterion, "
+                "return exactly one criterion_check and copy its Q-prefixed criterion_id into "
+                "criterion_id. Keep system or safety checks separate and leave criterion_id null for them. "
+                "Write every user-facing field in the goal's language. "
                 "Return only the structured object."
                 + " "
                 + VERIFIER_PROFILE.instruction()

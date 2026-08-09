@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
 from onebrief.cloud_jobs import GCSJobStore, CloudExecutionReceipt, submit_cloud_job
+from onebrief.completion_ledger import build_completion_ledger
 from onebrief.project_bootstrap import (
     FolderRegistrationRequest,
     choose_project_folder,
@@ -818,24 +819,66 @@ async def session_status(
 ) -> dict[str, object]:
     try:
         link = store.read_execution(session_id)
-        if link.operation_name == "local":
-            record = await asyncio.to_thread(JobStore(Path(link.job_uri)).read)
-        else:
-            record = await asyncio.to_thread(GCSJobStore(link.job_uri).read_job)
+        repository = (
+            LocalJobRepository(Path(link.job_uri))
+            if link.operation_name == "local" else GCSJobStore(link.job_uri)
+        )
+        record = await asyncio.to_thread(repository.read_job)
         payload = record.model_dump(mode="json")
         try:
             session = store.read(session_id)
+            try:
+                completion = await asyncio.to_thread(
+                    repository.read_json, "work/completion_ledger.json"
+                )
+                completion_proven = bool(completion.get("complete"))
+            except FileNotFoundError:
+                completion_proven = False
             payload["can_apply"] = bool(
                 isinstance(store, InMemoryWebSessionStore)
                 and session.intake.output_target == OutputTarget.EXISTING_PROJECT
                 and session.intake.existing_project_id
                 and record.status.value == "complete"
                 and record.result_package
+                and completion_proven
             )
             payload["project_id"] = session.intake.existing_project_id
         except FileNotFoundError:
             payload["can_apply"] = False
         return payload
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"Service operation failed: {type(exc).__name__}") from exc
+
+
+@app.get("/api/sessions/{session_id}/criteria")
+async def session_criteria(
+    session_id: str,
+    store: WebSessionStore = Depends(get_session_store),
+) -> dict[str, object]:
+    """Return the definition-of-done ledger, not merely agent activity."""
+    try:
+        link = store.read_execution(session_id)
+        repository = (
+            LocalJobRepository(Path(link.job_uri))
+            if link.operation_name == "local" else GCSJobStore(link.job_uri)
+        )
+        record = await asyncio.to_thread(repository.read_job)
+        try:
+            ledger = await asyncio.to_thread(repository.read_json, "work/completion_ledger.json")
+        except FileNotFoundError:
+            requirements_payload = await asyncio.to_thread(
+                repository.read_json, "inputs/requirements.json"
+            )
+            requirements = RequirementsAnalysis.model_validate(requirements_payload)
+            ledger = build_completion_ledger(
+                requirements.completion_contract, []
+            ).model_dump(mode="json")
+        ledger["session_id"] = session_id
+        ledger["job_status"] = record.status.value
+        ledger["current_stage"] = record.current_stage
+        return ledger
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
     except Exception as exc:

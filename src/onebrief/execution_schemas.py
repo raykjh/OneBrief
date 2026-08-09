@@ -58,6 +58,7 @@ class Verdict(StrEnum):
 
 
 class CriterionCheck(BaseModel):
+    criterion_id: str | None = Field(default=None, pattern=r"^Q[0-9]{2}$")
     criterion: str
     passed: bool
     evidence: str

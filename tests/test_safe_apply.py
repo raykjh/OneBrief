@@ -89,6 +89,9 @@ def _result(tmp_path: Path, root: Path, head: str) -> Path:
     }), encoding="utf-8")
     (artifacts / "final_verification.json").write_text('{"verdict":"PASS"}', encoding="utf-8")
     (artifacts / "final_approval.json").write_text('{"verdict":"PASS"}', encoding="utf-8")
+    (artifacts / "completion_ledger.json").write_text(json.dumps({
+        "complete": True, "required_total": 1, "required_passed": 1,
+    }), encoding="utf-8")
     files = []
     for path in sorted(result.rglob("*")):
         if path.is_file() and path.name != "package_manifest.json":

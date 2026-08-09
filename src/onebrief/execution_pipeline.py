@@ -59,6 +59,7 @@ from onebrief.execution_schemas import (
     VerificationReport,
     Verdict,
 )
+from onebrief.completion_ledger import refresh_completion_ledger
 from onebrief.guarded_gemini import BudgetedGeminiClient
 from onebrief.grounded_search import run_grounded_research
 from onebrief.recovery_policy import RecoveryAction, RecoveryDecision, RecoveryPolicy
@@ -375,7 +376,9 @@ class ExecutionPipeline:
             "criterion, grounding, citation, consistency, completeness, and authority boundary against the "
             "user payload and current artifact. PASS only with explicit evidence and no blocker. Use REVISE for "
             "correctable maker work and NEEDS_INFORMATION only for missing authoritative user information. "
-            "Give exact revision instructions and never edit the artifact. Return only the structured object. "
+            "For each completion_contract criterion, return exactly one check with its Q-prefixed criterion_id; "
+            "leave criterion_id null only for additional system checks. Give exact revision instructions and "
+            "never edit the artifact. Return only the structured object. "
             + VERIFIER_PROFILE.instruction()
         )
         agent = build_text_convergence_agent(
@@ -587,7 +590,9 @@ class ExecutionPipeline:
             "runtime evidence, and trusted observation receipts. Legacy regression tests alone do not prove new "
             "behavior. PASS only when the implementation evidence proves the requested behavior and no blocker "
             "remains. Use REVISE for correctable code and NEEDS_INFORMATION only for an absent authoritative user "
-            "decision. Never edit the code. Return exact, actionable revision instructions and only the schema. "
+            "decision. For each completion_contract criterion, return exactly one check with its Q-prefixed "
+            "criterion_id; leave criterion_id null only for additional system checks. Never edit the code. "
+            "Return exact, actionable revision instructions and only the schema. "
             + VERIFIER_PROFILE.instruction()
         )
         agent = build_text_convergence_agent(
@@ -679,6 +684,9 @@ class ExecutionPipeline:
             message=message,
         )
         self._write(output_dir / "execution_checkpoint.json", checkpoint.model_dump_json(indent=2))
+        contract = getattr(self, "_active_completion_contract", None)
+        if contract is not None:
+            refresh_completion_ledger(contract, output_dir)
 
     def run(
         self,
@@ -692,6 +700,7 @@ class ExecutionPipeline:
         requirements = require_ready_for_estimate(
             intake.model_copy(update={"internal_sources": sources}), requirements, sources
         )
+        self._active_completion_contract = requirements.completion_contract
         contract = {
             "goal": intake.goal,
             "desired_output": intake.desired_output,

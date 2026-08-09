@@ -69,6 +69,9 @@ def test_home_serves_the_real_workflow() -> None:
     assert 'if(p.requirements.ready_for_estimate){q("#supplement").value=""}' in response.text
     assert "입력한 답변은 반영됐습니다" in response.text
     assert "/api/sessions/" in response.text and "/graph" in response.text
+    assert 'id="criteriaList"' in response.text
+    assert 'id="criteriaScore"' in response.text
+    assert '"/criteria"' in response.text
     assert "에이전트 실행 흐름" in response.text
     assert 'new URLSearchParams(location.search).get("session")' in response.text
     assert "terminalWaits>=5" in response.text
@@ -440,6 +443,10 @@ def test_status_exposes_safe_apply_only_for_completed_local_project_session(monk
         def read_job(self):
             return record
 
+        def read_json(self, relative):
+            assert relative == "work/completion_ledger.json"
+            return {"complete": True}
+
     monkeypatch.setattr("onebrief.web_service.GCSJobStore", lambda _uri: FakeRemote())
     app.dependency_overrides[get_session_store] = lambda: store
     try:
@@ -503,6 +510,47 @@ def test_graph_endpoint_returns_selected_team_and_node_history(monkeypatch) -> N
     assert payload["nodes"][0]["agent_type"] == "analyst"
     assert payload["nodes"][0]["status"] == "running"
     assert payload["nodes"][0]["attempt"] == 1
+
+
+def test_criteria_endpoint_returns_completion_ledger(monkeypatch) -> None:
+    store = InMemoryWebSessionStore()
+    store.save_execution(ExecutionLink(
+        session_id="criteria-1",
+        job_uri="gs://test/jobs/job-criteria",
+        operation_name="operations/criteria",
+        created_at="2026-08-06T00:00:00+00:00",
+    ))
+
+    class FakeRepository:
+        def read_job(self):
+            return SimpleNamespace(
+                status=SimpleNamespace(value="running"), current_stage="verification_r1"
+            )
+
+        def read_json(self, relative):
+            assert relative == "work/completion_ledger.json"
+            return {
+                "target_state": "A usable result.", "pass_condition": "All pass.",
+                "criteria": [{
+                    "criterion_id": "Q01", "description": "It works.",
+                    "evaluation_mode": "deterministic", "evidence_required": "Test output.",
+                    "required": True, "status": "passed", "attempts": [],
+                    "failure_reasons": [], "revision_instructions": [],
+                }],
+                "required_total": 1, "required_passed": 1, "complete": True,
+                "latest_verdict": "PASS", "revision_rounds": 1,
+            }
+
+    monkeypatch.setattr("onebrief.web_service.GCSJobStore", lambda _uri: FakeRepository())
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).get("/api/sessions/criteria-1/criteria")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["criteria"][0]["criterion_id"] == "Q01"
+    assert response.json()["required_passed"] == 1
 
 
 def test_graph_endpoint_reports_team_planning_before_artifacts_exist(monkeypatch) -> None:

@@ -81,6 +81,14 @@ def _require_pass(result_root: Path) -> None:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if payload.get("verdict") != "PASS":
             raise RuntimeError(f"verified result did not pass {relative}")
+    ledger_path = artifacts / "completion_ledger.json"
+    if not ledger_path.is_file():
+        raise RuntimeError("verified result is missing completion_ledger.json")
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    if not ledger.get("complete"):
+        raise RuntimeError("required completion criteria have not all passed")
+    if ledger.get("required_passed") != ledger.get("required_total"):
+        raise RuntimeError("completion ledger totals are inconsistent")
 
 
 def _atomic_bytes(path: Path, payload: bytes) -> None:

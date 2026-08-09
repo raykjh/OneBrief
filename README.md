@@ -1,9 +1,9 @@
 # OneBrief
 
-OneBrief lets a non-expert describe a goal once, then automatically assembles and
-supervises an agent team until the result meets an explicit definition of done. It is a
-general-purpose, quality-convergence operating system rather than a long-form writer or
-an agent-count showcase.
+OneBrief manages completion criteria and their evidence so AI work converges to a
+genuinely completed state. A non-expert describes a goal once; OneBrief defines what
+"done" means, assigns AI workers, rejects unsupported results, returns failures to the
+accountable maker, and releases only evidence-backed work.
 
 The product contract is defined in `docs/PRODUCT_IDENTITY.md`. Example projects and
 domain ToolPacks are validation cases; they do not define the product.
@@ -12,6 +12,7 @@ domain ToolPacks are validation cases; they do not define the product.
 
 - Requirements Analyst built with Google ADK and Gemini 3.5 Flash
 - ADK-native Accountable Maker -> Independent Verifier -> original-maker revision loop
+- criterion-level completion ledger showing pending, failed, revised, and proven work
 - software convergence with isolated ToolPack build/test execution before independent review
 - deterministic grounding, completion-evidence, and reality gates that can overrule model PASS
 - mandatory versus optional information classification
@@ -53,6 +54,9 @@ After supplying the requested sources:
 ```
 
 See `docs/WORKFLOW.md` for the gate behavior and generated artifacts.
+
+See `docs/COMPLETION_CONVERGENCE.md` for the fixed product scope, system boundary, and
+the evidence-driven convergence state machine.
 
 See `docs/JOB_SYSTEM.md` for job creation, detached execution, status polling,
 and result package structure.
