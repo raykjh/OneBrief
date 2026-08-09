@@ -67,7 +67,7 @@ def _stop_tree(process: subprocess.Popen[bytes]) -> None:
             process.kill()
 
 
-def _wrapper(*, toggle: bool, viewport_width: int) -> str:
+def _wrapper_v5(*, toggle: bool, viewport_width: int) -> str:
     mode = "true" if toggle else "false"
     return f"""<!doctype html><html><head><meta charset=\"utf-8\"><style>
 html,body{{width:{viewport_width}px;max-width:{viewport_width}px;height:100%;margin:0;overflow:hidden}}iframe{{display:block;width:{viewport_width}px;height:100%;margin:0;border:0}}#result{{display:none}}
@@ -94,6 +94,90 @@ frame.addEventListener('load',async()=>{{await delay(400);const before=sample();
     select.value=option.value;select.dispatchEvent(new Event('input',{{bubbles:true}}));select.dispatchEvent(new Event('change',{{bubbles:true}}));clicked=true;await delay(500);}}}}}}
  const after=sample();out.textContent=JSON.stringify({{clicked,before,after}});document.body.dataset.done='true';}});
 </script></body></html>"""
+
+
+def _wrapper(*, toggle: bool, viewport_width: int) -> str:
+    """Build a same-origin observer that exercises every advertised locale."""
+    mode = "true" if toggle else "false"
+    return f"""<!doctype html><html><head><meta charset=\"utf-8\"><style>
+html,body{{width:{viewport_width}px;max-width:{viewport_width}px;height:100%;margin:0;overflow:hidden}}iframe{{display:block;width:{viewport_width}px;height:100%;margin:0;border:0}}#result{{display:none}}
+</style></head><body><iframe id=\"app\" src=\"/\"></iframe><pre id=\"result\"></pre><script>
+const delay=ms=>new Promise(r=>setTimeout(r,ms));
+const frame=document.getElementById('app'),out=document.getElementById('result');
+function sample(){{const d=frame.contentDocument,de=d.documentElement,b=d.body;
+ const text=(b?.innerText||'').replace(/\\s+/g,' ').trim();
+ const semanticText=((d.querySelector('main')||b)?.innerText||'').replace(/\\s+/g,' ').trim();
+ const clipped=[...d.querySelectorAll('header,main,section,h1,h2,h3,p,a,button,img')].filter(el=>{{
+  const r=el.getBoundingClientRect(),s=getComputedStyle(el);return s.display!=='none'&&s.visibility!=='hidden'&&r.width>1&&r.height>1&&(r.left < -2||r.right > frame.contentWindow.innerWidth+2);
+ }}).slice(0,20).map(el=>({{tag:el.tagName,id:el.id||'',className:String(el.className||'').slice(0,80),left:Math.round(el.getBoundingClientRect().left),right:Math.round(el.getBoundingClientRect().right)}}));
+ return {{lang:de?.lang||'',text:text.slice(0,5000),semanticText:semanticText.slice(0,5000),horizontalOverflow:de.scrollWidth>de.clientWidth+2,
+  images:[...d.images].map(i=>({{src:i.getAttribute('src')||'',complete:i.complete,width:i.naturalWidth,height:i.naturalHeight}})),replacement:text.includes('\\uFFFD'),clipped}};}}
+async function exerciseLanguages(){{const d=frame.contentDocument,states=[];
+ const selects=[...d.querySelectorAll('select')],select=selects.find(x=>x.options.length>1);
+ if(select){{for(const option of [...select.options].filter(o=>o.value)){{
+  select.value=option.value;select.dispatchEvent(new Event('input',{{bubbles:true}}));select.dispatchEvent(new Event('change',{{bubbles:true}}));await delay(350);
+  states.push({{control:'select',requested:String(option.value),label:(option.textContent||'').trim(),state:sample()}});
+ }}return states;}}
+ const buttons=[...d.querySelectorAll('button[data-language],button[data-lang],[role=button][data-language],[role=button][data-lang]')];
+ for(const button of buttons){{button.click();await delay(350);states.push({{control:'button',requested:button.dataset.language||button.dataset.lang||'',label:(button.textContent||'').trim(),state:sample()}});}}
+ if(!states.length){{const button=d.querySelector('#lang-toggle,[data-language-toggle]');if(button){{button.click();await delay(350);states.push({{control:'toggle',requested:'',label:(button.textContent||'').trim(),state:sample()}});}}}}
+ return states;}}
+frame.addEventListener('load',async()=>{{await delay(400);const before=sample();const states={mode}?await exerciseLanguages():[];
+ const after=states.length?states[states.length-1].state:sample();out.textContent=JSON.stringify({{clicked:states.length>0,before,after,states}});document.body.dataset.done='true';}});
+</script></body></html>"""
+
+
+def _normalized_locale(value: object) -> str:
+    return str(value or "").strip().casefold().replace("_", "-")
+
+
+def _language_state_issues(states: object) -> list[str]:
+    """Validate every advertised locale, including obvious script leakage."""
+    if not isinstance(states, list) or len(states) < 2:
+        return ["Fewer than two advertised language states were exercised."]
+    issues: list[str] = []
+    observed_texts: set[str] = set()
+    for item in states:
+        if not isinstance(item, dict) or not isinstance(item.get("state"), dict):
+            issues.append("A language control produced no observable rendered state.")
+            continue
+        state = item["state"]
+        requested = _normalized_locale(item.get("requested"))
+        actual = _normalized_locale(state.get("lang"))
+        semantic = str(state.get("semanticText") or state.get("text") or "")
+        if requested and not (
+            actual == requested
+            or actual.split("-", 1)[0] == requested.split("-", 1)[0]
+        ):
+            issues.append(
+                f"Language control requested '{requested}' but the document reported '{actual or 'none'}'."
+            )
+        if not semantic.strip():
+            issues.append(f"Language state '{actual or requested or 'unknown'}' rendered no semantic text.")
+            continue
+        observed_texts.add(semantic)
+        locale = (actual or requested).split("-", 1)[0]
+        # A parenthesized native product name such as ``JULPAE (줄패)`` is
+        # intentional. Outside such labels, three foreign-script characters
+        # are enough to expose short mixed-language fragments such as
+        # ``의 카드`` and ``팀을``.
+        prose = re.sub(r"\([^)]*\)", "", semantic)
+        hangul_count = len(re.findall(r"[\uac00-\ud7af]", prose))
+        kana_count = len(re.findall(r"[\u3040-\u30ff]", prose))
+        cjk_count = len(re.findall(r"[\u3400-\u9fff]", prose))
+        if locale == "ja" and hangul_count >= 3:
+            issues.append("The Japanese rendered content contains a Korean-script fragment.")
+        elif locale == "zh" and (hangul_count >= 3 or kana_count >= 3):
+            issues.append("The Chinese rendered content contains a Korean or Japanese-script fragment.")
+        elif locale == "ko" and kana_count >= 3:
+            issues.append("The Korean rendered content contains a Japanese-script fragment.")
+        elif locale in {"en", "es", "fr", "de", "it", "pt"} and (
+            hangul_count >= 3 or kana_count >= 3 or cjk_count >= 3
+        ):
+            issues.append(f"The {locale} rendered content contains an unexpected CJK-script fragment.")
+    if len(observed_texts) < len(states):
+        issues.append("At least two advertised languages rendered identical semantic content.")
+    return issues
 
 
 def _extract(dom: str) -> dict[str, object]:
@@ -164,6 +248,7 @@ def observe_web_application(clone: Path, evidence_dir: Path) -> tuple[Developmen
 
     before = mobile.get("before", {})
     after = mobile.get("after", {})
+    language_states = mobile.get("states", [])
     desktop_after = desktop.get("after", {})
     issues: list[str] = []
     if not mobile.get("clicked"):
@@ -172,6 +257,7 @@ def observe_web_application(clone: Path, evidence_dir: Path) -> tuple[Developmen
         issues.append("Visible text did not change after the language control was activated.")
     if before.get("lang") == after.get("lang"):
         issues.append("The rendered document language did not change after activation.")
+    issues.extend(_language_state_issues(language_states))
     for label, state in (("desktop", desktop_after), ("mobile", after)):
         if state.get("horizontalOverflow"):
             issues.append(f"The {label} rendered page has horizontal overflow.")
@@ -200,14 +286,14 @@ def observe_web_application(clone: Path, evidence_dir: Path) -> tuple[Developmen
     )
     receipt = ObservationReceipt(
         capability=RealityCapability.SEMANTIC_OBSERVATION,
-        observer_pack_id="onebrief_web_ui_observer_v5",
+        observer_pack_id="onebrief_web_ui_observer_v6",
         status=ObservationStatus.FAILED if issues else ObservationStatus.OBSERVED,
         independent_from_maker=True,
         artifact_paths=[desktop_path.as_posix(), mobile_path.as_posix()],
         findings=(issues or [
             "Desktop and mobile pages rendered without horizontal overflow or missing images.",
-            "The visible language and document locale changed after a real control activation.",
-            "Rendered visible text contained no Unicode replacement characters.",
+            "Every advertised language option was activated and produced matching, distinct semantic content.",
+            "Rendered content contained no Unicode replacement characters or obvious cross-language script leakage.",
         ]),
         limitations=[],
     )
@@ -218,6 +304,6 @@ def observe_web_application(clone: Path, evidence_dir: Path) -> tuple[Developmen
         argv=["npm", "run", "start", "+", "headless Chrome observer"],
         exit_code=0,
         duration_seconds=round(time.perf_counter() - started, 3),
-        output_tail="Rendered desktop and mobile pages, exercised the language control, and verified visible text, images, locale, and overflow.",
+        output_tail="Rendered desktop and mobile pages, exercised every advertised language state, and verified visible text, script consistency, images, locale, and overflow.",
     )
     return command, receipt

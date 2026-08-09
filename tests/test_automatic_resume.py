@@ -72,6 +72,20 @@ def test_failed_validation_with_unused_budget_is_resume_candidate(tmp_path: Path
     assert can_attempt_automatic_resume(job) is True
 
 
+def test_partial_semantic_observation_hold_is_resume_candidate(tmp_path: Path) -> None:
+    job = tmp_path / "job-partial"
+    _failed_job(job)
+    record = JobRecord.model_validate_json((job / "job.json").read_text(encoding="utf-8"))
+    record = record.model_copy(update={
+        "status": JobStatus.PARTIAL,
+        "current_stage": "finished",
+        "message": "A required independent observation capability was unavailable; the result was not accepted as complete.",
+    })
+    (job / "job.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+
+    assert can_attempt_automatic_resume(job) is True
+
+
 def test_seed_maps_trusted_revalidation_to_child_development(tmp_path: Path) -> None:
     source = tmp_path / "source"
     target = tmp_path / "target"
@@ -83,6 +97,10 @@ def test_seed_maps_trusted_revalidation_to_child_development(tmp_path: Path) -> 
         "verified", encoding="utf-8"
     )
     (source / "work" / "code_change_set.json").write_text("{}", encoding="utf-8")
+    (source / "work" / "independent_observations").mkdir()
+    (source / "work" / "independent_observations" / "web_ui_observation.json").write_text(
+        '{"capability":"semantic_observation","status":"observed"}', encoding="utf-8"
+    )
     target.mkdir()
     plan = AutomaticResumePlan(
         source_job_id="source",
@@ -97,5 +115,6 @@ def test_seed_maps_trusted_revalidation_to_child_development(tmp_path: Path) -> 
 
     assert (target / "work" / "development" / "development_run.json").is_file()
     assert (target / "work" / "development" / "changed_files" / "src" / "index.html").read_text() == "verified"
+    assert (target / "work" / "independent_observations" / "web_ui_observation.json").is_file()
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     assert payload["source_actual_usd"] + payload["child_approved_usd"] == 0.01

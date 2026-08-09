@@ -17,7 +17,7 @@ from onebrief.generic_development_toolpack import (
 )
 from onebrief.jobs import JobStatus, JobStore
 
-TRUSTED_REVALIDATION_VERSION = "web-observer-v5"
+TRUSTED_REVALIDATION_VERSION = "web-observer-v6"
 
 class AutomaticResumePlan(BaseModel):
     source_job_id: str
@@ -40,19 +40,20 @@ def _remaining_approval(job_dir: Path) -> tuple[float, float]:
 
 
 def can_attempt_automatic_resume(job_dir: Path) -> bool:
-    """Return true only for a failed local development result with budget left."""
+    """Return true for a rejected development result that retains budget and work."""
     try:
         record = JobStore(job_dir).read()
         remaining, _ = _remaining_approval(job_dir)
     except (OSError, ValueError):
         return False
-    if record.status != JobStatus.FAILED or remaining <= 0:
+    if record.status not in {JobStatus.FAILED, JobStatus.PARTIAL} or remaining <= 0:
         return False
     message = record.message.casefold()
     validation_failure = any(token in message for token in (
         "web observation failed",
         "development verification failed",
         "approved web observation",
+        "independent observation capability was unavailable",
     ))
     return validation_failure and (job_dir / "work" / "code_change_set.json").is_file()
 
@@ -120,6 +121,13 @@ def seed_automatic_resume(source_job: Path, target_job: Path, plan: AutomaticRes
         raise PermissionError("trusted revalidation is outside the source job")
     development = target_work / "development"
     shutil.copytree(revalidation, development, dirs_exist_ok=True)
+    independent_observations = source_work / "independent_observations"
+    if independent_observations.is_dir():
+        shutil.copytree(
+            independent_observations,
+            target_work / "independent_observations",
+            dirs_exist_ok=True,
+        )
     manifest = target_work / "automatic_resume.json"
     manifest.write_text(json.dumps({
         "schema_version": "onebrief-automatic-resume-v1",

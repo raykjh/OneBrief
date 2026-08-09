@@ -45,6 +45,7 @@ from onebrief.project_import import (
     MANIFEST_NAME,
     MAX_MANIFEST_BYTES,
 )
+from onebrief.project_snapshot import restore_project_snapshot
 from onebrief.toolpack_lifecycle import ProjectToolPackLifecycle, ToolPackApprovalRequest
 from onebrief.project_continuity import ProjectContinuationContext, ProjectContinuityStore
 from onebrief.result_delivery import ExchangePreviewManager
@@ -1182,18 +1183,32 @@ async def automatically_resume_session(
 ) -> dict[str, object]:
     """Revalidate preserved work and continue under only the unused original budget."""
     if not isinstance(store, InMemoryWebSessionStore):
-        raise HTTPException(409, "Automatic trusted revalidation is currently local-only.")
+        raise HTTPException(409, "Automatic trusted revalidation requires the local coordinator.")
     child_session_id = str(uuid4())
     try:
         previous = store.read(session_id)
         link = store.read_execution(session_id)
-        if link.operation_name != "local" or previous.budget is None:
-            raise RuntimeError("this task has no resumable local execution")
-        source_job = Path(link.job_uri).resolve()
+        if previous.budget is None:
+            raise RuntimeError("this task has no resumable budget approval")
         project_id = previous.intake.existing_project_id
         if not project_id:
             raise RuntimeError("automatic resume requires an existing project")
         project = ProjectCatalog().get(project_id)
+        if link.operation_name == "local":
+            source_job = Path(link.job_uri).resolve()
+            source_context = None
+        elif link.job_uri.startswith("gs://"):
+            source_context = tempfile.TemporaryDirectory(prefix="onebrief_cloud_resume_")
+            source_job = Path(source_context.name) / "job"
+            await asyncio.to_thread(GCSJobStore(link.job_uri).download_job, source_job)
+            # Rebuild the ephemeral registry at its current local path. The
+            # downloaded registry deliberately points at the terminated Cloud
+            # container and must never be trusted as a live execution root.
+            restored_workspace = source_job / "work" / "project_snapshot"
+            await asyncio.to_thread(shutil.rmtree, restored_workspace, True)
+            await asyncio.to_thread(restore_project_snapshot, source_job, project_id)
+        else:
+            raise RuntimeError("this task has no resumable execution store")
         provenance_path = source_job / "work" / "project_snapshot" / "restore_evidence.json"
         provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
         if provenance.get("source_head_sha") != project.head_sha:
@@ -1213,12 +1228,19 @@ async def automatically_resume_session(
         plan = await asyncio.to_thread(
             revalidate_failed_development, source_job, project_id
         )
+        source_status = JobStore(source_job).read().status.value
         if plan.remaining_approved_usd < previous.budget.minimum_cost_usd:
             raise RuntimeError(
                 "the unused original approval is below the minimum resumable budget"
             )
+        child_context = None
+        if link.operation_name == "local":
+            child_jobs_root = _local_jobs_root()
+        else:
+            child_context = tempfile.TemporaryDirectory(prefix="onebrief_cloud_resume_child_")
+            child_jobs_root = Path(child_context.name) / "jobs"
         child_job = create_job(
-            jobs_dir=_local_jobs_root(),
+            jobs_dir=child_jobs_root,
             intake=previous.intake,
             requirements=previous.requirements,
             sources=previous.intake.internal_sources,
@@ -1230,10 +1252,10 @@ async def automatically_resume_session(
             "session_id": child_session_id,
             "created_at": _now(),
             "selected_project": project,
-            "reuse_source_job_uri": str(source_job),
+            "reuse_source_job_uri": link.job_uri,
             "previous_attempt": {
                 "job_id": plan.source_job_id,
-                "status": "failed",
+                "status": source_status,
                 "reusable_artifacts": ["code_change_set.json", "development/"],
                 "message": (
                     "Trusted adapters revalidated the preserved result. "
@@ -1247,17 +1269,40 @@ async def automatically_resume_session(
                 "only the unused original approval was transferred."
             ),
         })
+        if link.operation_name == "local":
+            execution = ExecutionLink(
+                session_id=child_session_id,
+                job_uri=str(child_job),
+                operation_name="local",
+                created_at=_now(),
+            )
+        else:
+            bucket, cloud_project, region, job_name = _service_config()
+            receipt = await asyncio.to_thread(
+                submit_cloud_job,
+                child_job,
+                bucket=bucket,
+                project=cloud_project,
+                region=region,
+                cloud_run_job=job_name,
+            )
+            execution = ExecutionLink(
+                session_id=child_session_id,
+                job_uri=receipt.job_uri,
+                operation_name=receipt.operation_name,
+                created_at=_now(),
+            )
         store.create(child)
         store.claim_run(child_session_id)
-        store.save_execution(ExecutionLink(
-            session_id=child_session_id,
-            job_uri=str(child_job),
-            operation_name="local",
-            created_at=_now(),
-        ))
-        task = asyncio.create_task(asyncio.to_thread(run_job, child_job))
-        _local_tasks.add(task)
-        task.add_done_callback(_local_tasks.discard)
+        store.save_execution(execution)
+        if link.operation_name == "local":
+            task = asyncio.create_task(asyncio.to_thread(run_job, child_job))
+            _local_tasks.add(task)
+            task.add_done_callback(_local_tasks.discard)
+        if child_context is not None:
+            child_context.cleanup()
+        if source_context is not None:
+            source_context.cleanup()
         return {
             "session_id": child_session_id,
             "status": "queued",
