@@ -79,10 +79,13 @@ def revalidate_failed_development(job_dir: Path, project_id: str) -> AutomaticRe
         if run.status != "verified":
             raise RuntimeError("the existing trusted revalidation did not pass")
     else:
-        run = ApprovedProjectDevelopmentToolPack(
-            project_id,
-            registry_root,
-        ).apply_and_verify(
+        pack = ApprovedProjectDevelopmentToolPack(project_id, registry_root)
+        inspection, _ = pack.inspect(
+            job_dir / "work" / "automatic_resume_inspection",
+            focus_text="Trusted revalidation of the preserved development candidate.",
+        )
+        change_set = pack.bind_change_set_to_inspection(change_set, inspection)
+        run = pack.apply_and_verify(
             change_set,
             output_dir,
             verification_goal="Revalidate the preserved candidate with the current trusted adapters.",
