@@ -499,7 +499,7 @@ def test_patch_includes_new_files_and_excludes_validator_side_effects(tmp_path: 
     assert "package.json" not in patch
 
 
-def test_generic_runner_rejects_patch_whitespace_before_project_validation(tmp_path: Path) -> None:
+def test_generic_runner_normalizes_nonsemantic_text_whitespace_before_validation(tmp_path: Path) -> None:
     root, registry = _approved_node_project(tmp_path)
     committed = subprocess.run(
         ["git", "show", "HEAD:src/app.js"], cwd=root, check=True, capture_output=True
@@ -524,11 +524,14 @@ def test_generic_runner_rejects_patch_whitespace_before_project_validation(tmp_p
         }],
     )
 
-    with pytest.raises(RuntimeError, match="development patch hygiene failed"):
-        ApprovedProjectDevelopmentToolPack(
-            "generic-node", registry, runner=runner
-        ).apply_and_verify(change_set, tmp_path / "whitespace")
-    assert validation_called is False
+    output = tmp_path / "whitespace"
+    ApprovedProjectDevelopmentToolPack(
+        "generic-node", registry, runner=runner
+    ).apply_and_verify(change_set, output)
+    assert validation_called is True
+    assert (output / "changed_files" / "src" / "app.js").read_text(
+        encoding="utf-8"
+    ) == "export const answer = 42;\n"
 
 
 def test_safe_csharp_normalization_only_trims_using_directives() -> None:

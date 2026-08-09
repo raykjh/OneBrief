@@ -382,6 +382,20 @@ class ProjectOwnerAgent:
         if not isinstance(plan, (TeamPlanDraft, TeamPlan)):
             raise TypeError("project owner returned an invalid TeamPlan type")
         plan = normalize_team_plan(plan, project_id=project_id)
+        if intake.public_research_allowed:
+            investigator_id = plan.stage_owners.get("public_research")
+            plan = plan.model_copy(update={
+                "members": [
+                    member.model_copy(update={
+                        "model": ApprovedModel.GEMINI_3_5_FLASH,
+                        "model_selection_reason": (
+                            "Google Search grounding requires the approved Gemini 3.5 Flash binding."
+                        ),
+                    })
+                    if member.instance_id == investigator_id else member
+                    for member in plan.members
+                ]
+            })
         return validate_team_plan(
             plan,
             public_research_allowed=intake.public_research_allowed,

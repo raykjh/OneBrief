@@ -300,11 +300,14 @@ def _execute_exchange_development(
     return run, sources
 
 def _execute_project_development(
-    project_id: str, output_dir: Path, focus_text: str = ""
+    project_id: str, output_dir: Path, focus_text: str = "",
+    registry_root: Path | None = None,
 ) -> tuple[ToolPackRun, list[InternalSource]]:
     pack_dir = output_dir / ToolPackId.PROJECT_DEVELOPMENT.value
     evidence_root = pack_dir / "evidence"
-    inspection, sources = ApprovedProjectDevelopmentToolPack(project_id).inspect(evidence_root, focus_text)
+    inspection, sources = ApprovedProjectDevelopmentToolPack(
+        project_id, registry_root=registry_root
+    ).inspect(evidence_root, focus_text)
     inspection_path = evidence_root / "repository_inspection.json"
     evidence = [ToolEvidence(
         source_path="repository_inspection.json",
@@ -337,7 +340,7 @@ def _execute_project_development(
 
 def execute_toolpacks(
     toolpack_ids: list[ToolPackId], output_dir: Path, project_id: str | None = None,
-    focus_text: str = "",
+    focus_text: str = "", registry_root: Path | None = None,
 ) -> tuple[list[ToolPackRun], list[InternalSource]]:
     existing_manifest = output_dir / "toolpack_execution.json"
     if existing_manifest.exists():
@@ -377,7 +380,9 @@ def execute_toolpacks(
         elif toolpack_id == ToolPackId.PROJECT_DEVELOPMENT:
             if not project_id:
                 raise ValueError("project_development requires an imported project id")
-            run, generated = _execute_project_development(project_id, output_dir, focus_text)
+            run, generated = _execute_project_development(
+                project_id, output_dir, focus_text, registry_root
+            )
         else:
             raise ValueError(f"unsupported ToolPack: {toolpack_id}")
         runs.append(run)

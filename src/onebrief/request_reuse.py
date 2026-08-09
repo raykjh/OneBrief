@@ -93,7 +93,15 @@ def _artifact_names(job_dir: Path, *, code_compatible: bool) -> tuple[str, ...]:
     for name in ("project_architecture.json", "public_research.json", "public_research.md", "analysis.json"):
         if (work / name).is_file():
             names.append(name)
-    if code_compatible:
+    verified_development = False
+    try:
+        development = json.loads(
+            (work / "development" / "development_run.json").read_text(encoding="utf-8")
+        )
+        verified_development = development.get("status") == "verified"
+    except (OSError, json.JSONDecodeError):
+        verified_development = False
+    if code_compatible and verified_development:
         if (work / "code_change_set_retry_r1.json").is_file():
             names.append("code_change_set_retry_r1.json")
         elif (work / "code_change_set.json").is_file():

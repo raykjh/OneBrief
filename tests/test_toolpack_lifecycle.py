@@ -130,3 +130,42 @@ def test_toolpack_web_generate_review_and_approve(tmp_path: Path, monkeypatch) -
     assert approved.json()["state"]["status"] == "approved"
     assert approved.json()["state"]["execution_ready"] is True
     assert approved.json()["state"]["execution_blockers"] == []
+
+
+def test_node_toolpack_reads_fixed_scripts_without_granting_write_access(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "web"
+    registry = tmp_path / "registry"
+    (root / "src").mkdir(parents=True)
+    (root / "tests").mkdir()
+    (root / "scripts").mkdir()
+    (root / "src" / "index.html").write_text("<!doctype html>\n", encoding="utf-8")
+    (root / "tests" / "page.test.mjs").write_text("// fixed test\n", encoding="utf-8")
+    (root / "scripts" / "verify.mjs").write_text("// fixed runner\n", encoding="utf-8")
+    (root / "package.json").write_text(
+        '{"scripts":{"test":"node scripts/verify.mjs"}}', encoding="utf-8"
+    )
+    _git(root, "init")
+    _git(root, "config", "user.name", "OneBrief Test")
+    _git(root, "config", "user.email", "onebrief@example.invalid")
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "Create Node project")
+    payload = json.dumps({
+        "schema_version": "onebrief-project-v1",
+        "project_id": "toolpack-web",
+        "name": "ToolPack Web",
+        "project_type": "node_application",
+        "project_root": str(root.resolve()),
+        "canonical_goal": "Safely improve the website.",
+        "summary": "Test Node project.",
+    }).encode("utf-8")
+    (root / MANIFEST_NAME).write_bytes(payload)
+    ExternalProjectImporter(registry).import_bytes(payload)
+
+    state = ProjectToolPackLifecycle("toolpack-web", registry).generate_and_qualify()
+
+    assert "scripts/" in state.generated.allowed_read_prefixes
+    assert "scripts/" not in state.generated.allowed_write_prefixes
+    assert "tests/" in state.generated.allowed_read_prefixes
+    assert "tests/" not in state.generated.allowed_write_prefixes

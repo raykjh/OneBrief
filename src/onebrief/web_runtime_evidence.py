@@ -1,0 +1,219 @@
+"""Independent, browser-rendered evidence for approved local web applications."""
+
+from __future__ import annotations
+
+import hashlib
+import html
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import time
+import urllib.request
+from pathlib import Path
+
+from onebrief.development_toolpack import DevelopmentCommandResult
+from onebrief.reality_check import ObservationReceipt, ObservationStatus, RealityCapability
+
+
+def _chrome() -> Path | None:
+    configured = os.environ.get("ONEBRIEF_CHROME")
+    candidates = [Path(configured)] if configured else []
+    if os.name == "nt":
+        candidates.extend([
+            Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+            Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
+        ])
+    candidates.extend(Path(item) for item in filter(None, [shutil.which("google-chrome"), shutil.which("chromium")]))
+    return next((item.resolve() for item in candidates if item.is_file()), None)
+
+
+def _port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _wait(url: str, process: subprocess.Popen[bytes]) -> None:
+    for _ in range(60):
+        if process.poll() is not None:
+            raise RuntimeError("approved web start script exited before observation")
+        try:
+            with urllib.request.urlopen(url, timeout=1) as response:
+                if response.status == 200:
+                    return
+        except OSError:
+            time.sleep(0.1)
+    raise RuntimeError("approved web start script did not expose a local HTTP page")
+
+
+def _stop_tree(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            capture_output=True,
+            check=False,
+            timeout=15,
+        )
+    else:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
+def _wrapper(*, toggle: bool, viewport_width: int) -> str:
+    mode = "true" if toggle else "false"
+    return f"""<!doctype html><html><head><meta charset=\"utf-8\"><style>
+html,body{{width:{viewport_width}px;max-width:{viewport_width}px;height:100%;margin:0;overflow:hidden}}iframe{{display:block;width:{viewport_width}px;height:100%;margin:0;border:0}}#result{{display:none}}
+</style></head><body><iframe id=\"app\" src=\"/\"></iframe><pre id=\"result\"></pre><script>
+const delay=ms=>new Promise(r=>setTimeout(r,ms));
+const frame=document.getElementById('app'), out=document.getElementById('result');
+function sample(){{const d=frame.contentDocument, de=d.documentElement, b=d.body;
+ const text=(b?.innerText||'').replace(/\\s+/g,' ').trim();
+ const clipped=[...d.querySelectorAll('header,main,section,h1,h2,h3,p,a,button,img')].filter(el=>{{
+  const r=el.getBoundingClientRect(),s=getComputedStyle(el);return s.display!=='none'&&s.visibility!=='hidden'&&r.width>1&&r.height>1&&(r.left < -2 || r.right > frame.contentWindow.innerWidth+2);
+ }}).slice(0,20).map(el=>({{tag:el.tagName,id:el.id||'',className:String(el.className||'').slice(0,80),left:Math.round(el.getBoundingClientRect().left),right:Math.round(el.getBoundingClientRect().right)}}));
+ return {{lang:de?.lang||'', text:text.slice(0,5000), horizontalOverflow:de.scrollWidth>de.clientWidth+2,
+  images:[...d.images].map(i=>({{src:i.getAttribute('src')||'',complete:i.complete,width:i.naturalWidth,height:i.naturalHeight}})),
+  replacement:text.includes('�'),clipped}};}}
+frame.addEventListener('load',async()=>{{await delay(400);const before=sample();let clicked=false;
+ if({mode}){{const d=frame.contentDocument;const buttons=[...d.querySelectorAll('button,[role=button]')];
+  const current=(d.documentElement.lang||'').toLowerCase();
+  const wanted=current.startsWith('ko')?/^(en|english)$/i:/^(ko|korean|한국어)$/i;
+  const button=buttons.find(x=>wanted.test((x.textContent||'').trim())||wanted.test((x.getAttribute('aria-label')||'').trim()))||d.querySelector('#lang-toggle,[data-language-toggle]');
+  if(button){{button.click();clicked=true;await delay(500);}}}}
+ const after=sample();out.textContent=JSON.stringify({{clicked,before,after}});document.body.dataset.done='true';}});
+</script></body></html>"""
+
+
+def _extract(dom: str) -> dict[str, object]:
+    match = re.search(r'<pre id="result">(.*?)</pre>', dom, re.DOTALL | re.IGNORECASE)
+    if not match:
+        raise RuntimeError("browser observer did not publish a result")
+    return json.loads(html.unescape(match.group(1)))
+
+
+def _capture(chrome: Path, url: str, screenshot: Path, width: int, height: int) -> dict[str, object]:
+    completed = subprocess.run(
+        [
+            str(chrome), "--headless=new", "--disable-gpu", "--no-sandbox",
+            "--hide-scrollbars", f"--window-size={width},{height}",
+            "--virtual-time-budget=2500", f"--screenshot={screenshot}", "--dump-dom", url,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=45,
+    )
+    if completed.returncode != 0 or not screenshot.is_file() or screenshot.stat().st_size < 5_000:
+        raise RuntimeError("headless browser did not produce a usable rendered screenshot")
+    return _extract(completed.stdout)
+
+
+def observe_web_application(clone: Path, evidence_dir: Path) -> tuple[DevelopmentCommandResult, ObservationReceipt]:
+    """Exercise one approved start script and issue pipeline-owned observation evidence."""
+
+    chrome = _chrome()
+    npm = shutil.which("npm.cmd" if os.name == "nt" else "npm")
+    package_path = clone / "package.json"
+    if chrome is None or npm is None or not package_path.is_file():
+        raise RuntimeError("approved web observation requires Chrome, npm, and package.json")
+    scripts = json.loads(package_path.read_text(encoding="utf-8")).get("scripts", {})
+    if not isinstance(scripts, dict) or not isinstance(scripts.get("start"), str):
+        raise RuntimeError("approved web observation requires a package.json start script")
+
+    dist = clone / "dist"
+    if not dist.is_dir():
+        raise RuntimeError("approved web observation requires a built dist directory")
+    (dist / "__onebrief_desktop.html").write_text(
+        _wrapper(toggle=False, viewport_width=1200), encoding="utf-8"
+    )
+    (dist / "__onebrief_mobile.html").write_text(
+        _wrapper(toggle=True, viewport_width=375), encoding="utf-8"
+    )
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    port = _port()
+    env = {**os.environ, "PORT": str(port)}
+    creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    started = time.perf_counter()
+    server = subprocess.Popen(
+        [npm, "run", "start"], cwd=clone, env=env,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=creationflags,
+    )
+    try:
+        base = f"http://127.0.0.1:{port}"
+        _wait(base + "/", server)
+        desktop_path = evidence_dir / "desktop-ko.png"
+        mobile_path = evidence_dir / "mobile-en.png"
+        desktop = _capture(chrome, base + "/__onebrief_desktop.html", desktop_path, 1200, 900)
+        mobile = _capture(chrome, base + "/__onebrief_mobile.html", mobile_path, 375, 812)
+    finally:
+        _stop_tree(server)
+
+    before = mobile.get("before", {})
+    after = mobile.get("after", {})
+    desktop_after = desktop.get("after", {})
+    issues: list[str] = []
+    if not mobile.get("clicked"):
+        issues.append("No language control could be activated in the rendered page.")
+    if str(before.get("text", "")) == str(after.get("text", "")):
+        issues.append("Visible text did not change after the language control was activated.")
+    if before.get("lang") == after.get("lang"):
+        issues.append("The rendered document language did not change after activation.")
+    for label, state in (("desktop", desktop_after), ("mobile", after)):
+        if state.get("horizontalOverflow"):
+            issues.append(f"The {label} rendered page has horizontal overflow.")
+        if state.get("clipped"):
+            issues.append(
+                f"The {label} rendered page clips visible elements outside the viewport: "
+                + json.dumps(state["clipped"], ensure_ascii=False)
+            )
+        if state.get("replacement"):
+            issues.append(f"The {label} rendered page contains Unicode replacement characters.")
+        images = state.get("images", [])
+        if not images or any(not item.get("complete") or not item.get("width") for item in images if isinstance(item, dict)):
+            issues.append(f"The {label} rendered page has missing or unloaded first-party images.")
+    if hashlib.sha256(desktop_path.read_bytes()).digest() == hashlib.sha256(mobile_path.read_bytes()).digest():
+        issues.append("Desktop and mobile rendered screenshots are identical.")
+
+    summary = {
+        "schema_version": "onebrief-web-observation-v1",
+        "desktop": desktop,
+        "mobile": mobile,
+        "screenshots": [desktop_path.name, mobile_path.name],
+        "issues": issues,
+    }
+    (evidence_dir / "observation.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    receipt = ObservationReceipt(
+        capability=RealityCapability.SEMANTIC_OBSERVATION,
+        observer_pack_id="onebrief_web_ui_observer_v4",
+        status=ObservationStatus.FAILED if issues else ObservationStatus.OBSERVED,
+        independent_from_maker=True,
+        artifact_paths=[desktop_path.as_posix(), mobile_path.as_posix()],
+        findings=(issues or [
+            "Desktop and mobile pages rendered without horizontal overflow or missing images.",
+            "The visible language and document locale changed after a real control activation.",
+            "Rendered visible text contained no Unicode replacement characters.",
+        ]),
+        limitations=[],
+    )
+    if issues:
+        raise RuntimeError("web observation failed: " + " | ".join(issues))
+    command = DevelopmentCommandResult(
+        command_id="browser_http_visual_render",
+        argv=["npm", "run", "start", "+", "headless Chrome observer"],
+        exit_code=0,
+        duration_seconds=round(time.perf_counter() - started, 3),
+        output_tail="Rendered desktop and mobile pages, exercised the language control, and verified visible text, images, locale, and overflow.",
+    )
+    return command, receipt

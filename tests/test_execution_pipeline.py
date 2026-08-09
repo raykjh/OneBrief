@@ -5,7 +5,9 @@ import pytest
 from google.genai import types
 
 from onebrief.development_toolpack import CodeChangeSet, DevelopmentCommandResult, DevelopmentRun
-from onebrief.generic_development_toolpack import ProjectCodeChangeSet
+from onebrief.generic_development_toolpack import (
+    ProjectCodeChangeSet, ProposedProjectCodeChangeSet,
+)
 from onebrief.budget_guard import BudgetExceeded, BudgetStore, RunStatus
 from onebrief.execution_pipeline import ExecutionPipeline
 from onebrief.execution_agents import DeveloperAgent
@@ -680,6 +682,42 @@ def test_developer_separates_repository_path_from_source_provenance_name() -> No
 
     assert source["source_role"] == "editable_source"
     assert payload["approved_repository_files"][1]["source_role"] == "read_only_context"
+
+
+def test_project_developer_discards_unapproved_infrastructure_proposals() -> None:
+    proposal = ProposedProjectCodeChangeSet.model_validate({
+        "summary": "Build the approved product page.",
+        "changes": [
+            {
+                "path": "src/index.html",
+                "base_sha256": "a" * 64,
+                "content": "<!doctype html><main>JULPAE</main>\n",
+                "reason": "Implement the approved product surface.",
+            },
+            {
+                "path": "scripts/server.mjs",
+                "base_sha256": None,
+                "content": "process.env.PORT; import('node:http');\n",
+                "reason": "Attempt to replace fixed infrastructure.",
+            },
+        ],
+    })
+    gateway = FakeGateway([proposal])
+    developer = DeveloperAgent(
+        gateway,
+        change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/",
+        path_approver=lambda path: path if path.startswith(("src/", "tests/")) else None,
+    )
+
+    result = developer.run({}, _analysis(), [{
+        "name": "project-source/src/index.html",
+        "sha256": "a" * 64,
+        "content": "<!doctype html><main>placeholder</main>\n",
+    }])
+
+    assert [change.path for change in result.changes] == ["src/index.html"]
+    assert result.changes[0].content.endswith("JULPAE</main>\n")
 
 def test_exchange_development_budget_includes_compact_retry_capacity() -> None:
     intake = IntakeRequest(goal="Improve Exchange.", toolpack_ids=[ToolPackId.EXCHANGE_DEVELOPMENT])

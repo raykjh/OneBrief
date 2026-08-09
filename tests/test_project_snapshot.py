@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import zipfile
 from pathlib import Path
@@ -87,9 +88,11 @@ def test_snapshot_restores_only_current_approved_tree_and_rebuilds_toolpack(
     assert "repository/src/sample/__init__.py" in names
     assert manifest.source_head_sha == _git(root, "rev-parse", "HEAD")
 
+    original_registry = os.environ["ONEBRIEF_PROJECTS_ROOT"]
     restored = restore_project_snapshot(tmp_path / "job", "snapshot-python")
 
     assert restored is not None
+    assert os.environ["ONEBRIEF_PROJECTS_ROOT"] == original_registry
     assert (restored / "src" / "sample" / "__init__.py").read_text(encoding="utf-8") == "VALUE = 1\n"
     evidence = json.loads(
         (tmp_path / "job" / "work" / "project_snapshot" / "restore_evidence.json").read_text(
@@ -100,6 +103,25 @@ def test_snapshot_restores_only_current_approved_tree_and_rebuilds_toolpack(
     assert ProjectToolPackLifecycle(
         "snapshot-python", tmp_path / "job" / "work" / "project_snapshot" / "registry"
     ).state().execution_ready
+
+
+def test_snapshot_includes_the_registration_manifest_without_committing_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root, registry = _approved_python_project(tmp_path, monkeypatch)
+    _git(root, "rm", "--cached", MANIFEST_NAME)
+    _git(root, "commit", "-m", "Keep OneBrief registration metadata outside source history")
+    lifecycle = ProjectToolPackLifecycle("snapshot-python", registry)
+    state = lifecycle.generate_and_qualify()
+    lifecycle.approve(state.qualification.toolpack_sha256)
+
+    inputs = tmp_path / "job" / "inputs"
+    manifest = create_project_snapshot("snapshot-python", inputs)
+
+    assert any(item.path == MANIFEST_NAME for item in manifest.files)
+    restored = restore_project_snapshot(tmp_path / "job", "snapshot-python")
+    assert restored is not None
+    assert (restored / MANIFEST_NAME).is_file()
 
 
 def test_snapshot_tampering_is_rejected_before_restore(tmp_path: Path, monkeypatch) -> None:

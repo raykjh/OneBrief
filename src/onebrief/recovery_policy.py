@@ -80,6 +80,9 @@ class RecoveryPolicy:
         structured_markers = (
             "path is outside", "change path must", "base_sha256", "string_pattern_mismatch",
             "change set exceeds", "too_long", "validation error for codechangeset",
+            "validation error for projectcodechangeset",
+            "validation errors for projectcodechangeset",
+            "prohibited host-runtime capability",
             "absent from approved_repository_files",
         )
 
@@ -107,6 +110,7 @@ class RecoveryPolicy:
         elif message.startswith((
             "development verification failed:",
             "development patch hygiene failed:",
+            "web observation failed:",
         )) or message.startswith((
             "unity visual scenario ",
             "unity visual evidence ",

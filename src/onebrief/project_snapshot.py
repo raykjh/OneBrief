@@ -100,6 +100,13 @@ class ProjectSnapshotManifest(BaseModel):
 
 def _selected_files(root: Path, read_prefixes: list[str]) -> list[tuple[str, Path]]:
     tracked = [item for item in _git(root, "ls-files", "-z").split("\0") if item]
+    # Folder registration deliberately creates the resident OneBrief manifest
+    # without making a Git commit on the user's behalf.  It is nevertheless an
+    # exact-hash-qualified root input required to restore the remote ToolPack,
+    # so include that one generated control file even when it is untracked.
+    resident = root / MANIFEST_NAME
+    if resident.is_file() and MANIFEST_NAME not in tracked:
+        tracked.append(MANIFEST_NAME)
     selected: list[tuple[str, Path]] = []
     for relative in tracked:
         pure = _safe_relative(relative)
@@ -250,7 +257,6 @@ def restore_project_snapshot(job_dir: Path, project_id: str) -> Path | None:
     approved = lifecycle.approve(state.qualification.toolpack_sha256)
     if not approved.execution_ready:
         raise RuntimeError("restored project ToolPack is not execution-ready")
-    os.environ["ONEBRIEF_PROJECTS_ROOT"] = str(registry.resolve())
     evidence = {
         "schema_version": "onebrief-project-snapshot-restore-v1",
         "project_id": project_id,

@@ -357,8 +357,11 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
         intake = IntakeRequest.model_validate_json(
             (job_dir / "inputs" / "intake.json").read_text(encoding="utf-8")
         )
+        project_registry_root = None
         if intake.existing_project_id:
-            restore_project_snapshot(job_dir, intake.existing_project_id)
+            restored = restore_project_snapshot(job_dir, intake.existing_project_id)
+            if restored is not None:
+                project_registry_root = job_dir / "work" / "project_snapshot" / "registry"
         requirements = RequirementsAnalysis.model_validate_json(
             (job_dir / "inputs" / "requirements.json").read_text(encoding="utf-8")
         )
@@ -406,6 +409,7 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
                 for stage, owner_id in plan.stage_owners.items()
             },
             execution_graph=execution_graph,
+            project_registry_root=project_registry_root,
         )
         checkpoint = pipeline.run(
             intake=active_intake,

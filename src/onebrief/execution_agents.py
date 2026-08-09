@@ -7,6 +7,10 @@ from typing import Any, Callable, Protocol, TypeVar
 
 from pydantic import BaseModel, ValidationError
 from onebrief.development_toolpack import CodeChangeSet, approved_edit_path
+from onebrief.generic_development_toolpack import (
+    ProjectCodeChangeSet,
+    ProposedProjectCodeChangeSet,
+)
 
 from onebrief.execution_limits import (
     ANALYST_OUTPUT_CAP,
@@ -152,6 +156,18 @@ class DeveloperAgent:
         self.recovery_policy = RecoveryPolicy()
         self.last_recovery_decisions: list[RecoveryDecision] = []
 
+    def promote_candidate(self, raw: object) -> BaseModel:
+        """Promote an untrusted proposal through the exact approved path boundary."""
+        if self.change_set_schema is ProjectCodeChangeSet:
+            proposal = ProposedProjectCodeChangeSet.model_validate(raw).model_dump(mode="json")
+            proposal["changes"] = [
+                change
+                for change in proposal["changes"]
+                if self.path_approver(str(change.get("path", ""))) is not None
+            ]
+            return self.change_set_schema.model_validate(proposal)
+        return self.change_set_schema.model_validate(raw)
+
     def run(
         self,
         contract: dict[str, Any],
@@ -241,6 +257,21 @@ class DeveloperAgent:
             for item in getattr(previous_change_set, "changes", [])
             if getattr(item, "base_sha256", None) is None
         }
+        approved_new_roots = sorted({
+            path.split("/", 1)[0] + "/"
+            for path in approved_existing_paths
+            if "/" in path
+        })
+        base_instruction += (
+            " New files are allowed only below these approved source roots: "
+            + ", ".join(approved_new_roots)
+            + ". Fixed package, build, server, runner, and ToolPack infrastructure may appear in the "
+            "completion contract because it must be executed, but it is already supplied and read-only: "
+            "never regenerate or modify package.json, scripts/, build configuration, server code, or command "
+            "runners. Product tests may inspect the product artifact but must not spawn processes, execute shell "
+            "commands, access environment variables, or implement a server. The fixed validation adapter owns "
+            "build, process startup, HTTP checks, and command execution."
+        )
         stage_base = (
             f"{self.stage}_verification_retry" if verification_feedback else self.stage
         )
@@ -259,15 +290,21 @@ class DeveloperAgent:
                 if last_contract_error:
                     instruction += " Exact validation failure: " + last_contract_error
             try:
+                provider_schema = (
+                    ProposedProjectCodeChangeSet
+                    if self.change_set_schema is ProjectCodeChangeSet
+                    else self.change_set_schema
+                )
                 candidate = self.gateway.generate_json(
                     stage=stage_base if not attempt else f"{stage_base}_compact_retry",
                     model=self.model,
                     contents=contents,
-                    schema=self.change_set_schema,
+                    schema=provider_schema,
                     max_output_tokens=DEVELOPER_OUTPUT_CAP,
                     system_instruction=instruction + (("\n\n" + self.skill_context) if self.skill_context else ""),
                     temperature=0.1,
                 )
+                candidate = self.promote_candidate(candidate)
                 normalized_changes = []
                 for change in getattr(candidate, "changes", []):
                     path = str(getattr(change, "path", ""))

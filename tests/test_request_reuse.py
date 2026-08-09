@@ -76,6 +76,10 @@ def test_reuses_grounded_artifacts_and_only_compatible_code(tmp_path: Path) -> N
     (old / "work" / "code_change_set_retry_r1.json").write_text(
         '{"changes":[]}', encoding="utf-8"
     )
+    (old / "work" / "development").mkdir()
+    (old / "work" / "development" / "development_run.json").write_text(
+        '{"status":"verified"}', encoding="utf-8"
+    )
 
     candidate = find_reuse_candidate(tmp_path, _intake(), _project(head))
 
@@ -130,6 +134,10 @@ def test_generic_project_inspection_allows_compatible_code_reuse(tmp_path: Path)
         json.dumps({"head_sha": head}), encoding="utf-8"
     )
     (old / "work" / "code_change_set.json").write_text('{"changes":[]}', encoding="utf-8")
+    (old / "work" / "development").mkdir()
+    (old / "work" / "development" / "development_run.json").write_text(
+        '{"status":"verified"}', encoding="utf-8"
+    )
     project = _project(head).model_copy(update={
         "project_id": "generic-node",
         "toolpack_id": ToolPackId.PROJECT_DEVELOPMENT,
@@ -139,3 +147,29 @@ def test_generic_project_inspection_allows_compatible_code_reuse(tmp_path: Path)
 
     assert candidate is not None
     assert candidate.reusable_artifacts == ("code_change_set.json",)
+
+
+def test_unverified_code_proposal_is_never_reused(tmp_path: Path) -> None:
+    head = "d" * 40
+    old = tmp_path / "old-job"
+    (old / "inputs").mkdir(parents=True)
+    evidence = old / "work" / "toolpacks" / "exchange_development" / "evidence"
+    evidence.mkdir(parents=True)
+    (old / "inputs" / "intake.json").write_text(
+        _intake().model_dump_json(), encoding="utf-8"
+    )
+    (old / "job.json").write_text(
+        '{"job_id":"old-job","status":"failed"}', encoding="utf-8"
+    )
+    (evidence / "repository_inspection.json").write_text(
+        json.dumps({"head_sha": head}), encoding="utf-8"
+    )
+    (old / "work" / "analysis.json").write_text("{}", encoding="utf-8")
+    (old / "work" / "code_change_set.json").write_text(
+        '{"changes":[{"path":"scripts/server.mjs"}]}', encoding="utf-8"
+    )
+
+    candidate = find_reuse_candidate(tmp_path, _intake(), _project(head))
+
+    assert candidate is not None
+    assert candidate.reusable_artifacts == ("analysis.json",)

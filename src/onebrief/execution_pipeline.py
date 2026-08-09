@@ -41,6 +41,7 @@ from onebrief.development_toolpack import (
 from onebrief.generic_development_toolpack import (
     ApprovedProjectDevelopmentToolPack,
     ProjectCodeChangeSet,
+    ProposedProjectCodeChangeSet,
 )
 from onebrief.dynamic_role_agents import DynamicRoleAgent, GovernanceAgent, GovernanceDecision, RoleHandoff
 from onebrief.execution_agents import (
@@ -86,6 +87,7 @@ class ExecutionPipeline:
         stage_models: dict[str, str] | None = None,
         stage_skills: dict[str, list[str]] | None = None,
         execution_graph: ExecutionGraph | None = None,
+        project_registry_root: Path | None = None,
     ):
         self.run_dir = run_dir
         self.gateway = gateway or BudgetedGeminiClient(run_dir)
@@ -94,6 +96,7 @@ class ExecutionPipeline:
         assigned_skills = stage_skills or {}
         self.stage_skills = assigned_skills
         self.execution_graph = execution_graph
+        self.project_registry_root = project_registry_root
         self.analyst = AnalystAgent(
             self.gateway, selected.get("evidence_analysis", "gemini-3.5-flash"), assigned_skills.get("evidence_analysis")
         )
@@ -120,7 +123,9 @@ class ExecutionPipeline:
         if ToolPackId.PROJECT_DEVELOPMENT in intake.toolpack_ids:
             if not intake.existing_project_id:
                 raise ValueError("project development requires a selected imported project")
-            pack = ApprovedProjectDevelopmentToolPack(intake.existing_project_id)
+            pack = ApprovedProjectDevelopmentToolPack(
+                intake.existing_project_id, registry_root=self.project_registry_root
+            )
             developer = DeveloperAgent(
                 self.gateway,
                 self.stage_models.get("long_form_draft", "gemini-3.5-flash"),
@@ -460,7 +465,7 @@ class ExecutionPipeline:
 
         def after_maker(raw: object, _ctx, round_number: int) -> dict[str, object]:
             nonlocal previous_change_set, latest_run
-            delta = change_schema.model_validate(raw)
+            delta = developer.promote_candidate(raw)
             self._write(
                 output_dir / f"code_change_set_delta_r{round_number}.json",
                 delta.model_dump_json(indent=2),
@@ -601,7 +606,11 @@ class ExecutionPipeline:
             verifier_model=self.stage_models.get(
                 "independent_verification", "gemini-3.5-flash"
             ),
-            maker_schema=change_schema,
+            maker_schema=(
+                ProposedProjectCodeChangeSet
+                if change_schema is ProjectCodeChangeSet
+                else change_schema
+            ),
             max_revision_rounds=intake.max_revision_rounds,
             maker_instruction=maker_instruction,
             verifier_instruction=verifier_instruction,
@@ -802,6 +811,7 @@ class ExecutionPipeline:
                             execute_toolpacks, intake.toolpack_ids,
                             output_dir / "toolpacks", intake.existing_project_id,
                             "\n".join((intake.goal, intake.desired_output or "")),
+                            self.project_registry_root,
                         )
                     else:
                         parallel_work["tool_execution"] = executor.submit(
@@ -815,13 +825,29 @@ class ExecutionPipeline:
                         output_dir, PipelineStatus.RUNNING, "parallel_context", completed, 0
                     )
 
-                    def load_or_research() -> PublicResearchResult:
+                    def load_or_research() -> PublicResearchResult | None:
                         existing = self._load(research_path, PublicResearchResult)
                         if existing is not None:
                             return existing
-                        result = run_grounded_research(
-                            self.gateway, goal=intake.goal, desired_output=intake.desired_output
-                        )
+                        try:
+                            result = run_grounded_research(
+                                self.gateway, goal=intake.goal, desired_output=intake.desired_output
+                            )
+                        except ValueError as exc:
+                            if (
+                                "no grounded source urls" not in str(exc).casefold()
+                                or not sources
+                            ):
+                                raise
+                            self._write(
+                                output_dir / "public_research_unavailable.json",
+                                json.dumps({
+                                    "status": "no_grounded_sources",
+                                    "message": str(exc),
+                                    "fallback": "authoritative internal sources",
+                                }, ensure_ascii=False, indent=2),
+                            )
+                            return None
                         self._write(research_path, result.model_dump_json(indent=2))
                         self._write(output_dir / "public_research.md", result.answer_markdown)
                         if result.search_suggestions_html:
@@ -852,7 +878,17 @@ class ExecutionPipeline:
 
             if "public_research" in outcomes:
                 public_research = outcomes["public_research"]
-                graph_complete("public_research", "public_research.json", "public_research.md")
+                if public_research is None:
+                    graph_complete(
+                        "public_research",
+                        "public_research_unavailable.json",
+                        message=(
+                            "Google Search returned no grounded URLs; the run continued only because "
+                            "authoritative internal sources were already supplied."
+                        ),
+                    )
+                else:
+                    graph_complete("public_research", "public_research.json", "public_research.md")
                 completed.append("public_research")
 
             if failures:

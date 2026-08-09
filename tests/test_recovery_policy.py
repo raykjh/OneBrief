@@ -34,6 +34,26 @@ def test_truncated_output_is_retried_once_then_stops() -> None:
     assert len(first.error_summary) < 1200
 
 
+def test_project_change_contract_violation_returns_to_the_same_maker_once() -> None:
+    policy = RecoveryPolicy()
+    error = ValueError(
+        "2 validation errors for ProjectCodeChangeSet "
+        "changes.1 Value error, change content requests a prohibited host-runtime capability"
+    )
+
+    first = policy.decide(
+        error, context="developer_structured_output", attempt_number=1
+    )
+    second = policy.decide(
+        error, context="developer_structured_output", attempt_number=2
+    )
+
+    assert first.error_class == ErrorClass.ARTIFACT_VALIDATION
+    assert first.action == RecoveryAction.AUTO_RETRY
+    assert first.responsible_party == "maker"
+    assert second.action == RecoveryAction.STOP
+
+
 def test_failed_artifact_verification_returns_to_maker_once() -> None:
     decision = RecoveryPolicy().decide(
         RuntimeError("development verification failed: web_tests\nmissing marker"),
@@ -79,6 +99,21 @@ def test_patch_hygiene_failure_returns_to_maker_once() -> None:
 def test_missing_unity_runtime_screenshot_returns_to_maker() -> None:
     decision = RecoveryPolicy().decide(
         RuntimeError("Unity visual scenario locale_ko screenshot is unavailable"),
+        context="development_verification",
+        attempt_number=1,
+    )
+
+    assert decision.error_class == ErrorClass.ARTIFACT_VALIDATION
+    assert decision.action == RecoveryAction.RETURN_TO_AGENT
+    assert decision.responsible_party == "maker"
+    assert decision.retry_allowed is True
+
+
+def test_failed_web_interaction_observation_returns_to_maker() -> None:
+    decision = RecoveryPolicy().decide(
+        RuntimeError(
+            "web observation failed: Visible text did not change after the language control was activated."
+        ),
         context="development_verification",
         attempt_number=1,
     )

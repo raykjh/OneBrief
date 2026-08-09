@@ -139,6 +139,36 @@ def test_project_owner_cannot_activate_an_unavailable_toolpack() -> None:
         )
 
 
+def test_project_owner_binds_public_research_to_the_grounded_model() -> None:
+    base = _plan()
+    investigator = _member("investigator-01", AgentType.INVESTIGATOR).model_copy(
+        update={"model": "gemini-3.5-flash-lite"}
+    )
+    members = [*base.members, investigator]
+    plan = base.model_copy(update={
+        "members": members,
+        "teams": [base.teams[0].model_copy(
+            update={"member_instance_ids": [member.instance_id for member in members]}
+        )],
+        "stage_owners": {**base.stage_owners, "public_research": investigator.instance_id},
+        "omitted_agent_types": [
+            item for item in base.omitted_agent_types if item != AgentType.INVESTIGATOR
+        ],
+    })
+
+    result = ProjectOwnerAgent(FakeGateway(plan)).run(
+        project_id="job-123",
+        intake=IntakeRequest(goal="Create a grounded guide.", public_research_allowed=True),
+        requirements=_requirements(),
+        sources=[_source()],
+    )
+
+    selected = next(
+        member for member in result.members if member.agent_type == AgentType.INVESTIGATOR
+    )
+    assert selected.model.value == "gemini-3.5-flash"
+
+
 
 def test_wrong_stage_owner_is_rejected() -> None:
     plan = _plan().model_copy(deep=True)

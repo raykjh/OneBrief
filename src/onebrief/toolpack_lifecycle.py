@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
@@ -61,6 +62,7 @@ class AdapterId(StrEnum):
     UNITY_EDITMODE_TESTS = "unity_editmode_tests"
     UNITY_PLAYMODE_VISUAL_TESTS = "unity_playmode_visual_tests"
     NODE_SCRIPT = "node_script"
+    NODE_WEB_OBSERVATION = "node_web_observation"
     PYTHON_TESTS = "python_tests"
 
 
@@ -178,8 +180,8 @@ class ProjectToolPackLifecycle:
         if "unity" in systems:
             return ["Assets/", "Packages/", "ProjectSettings/"], ["Assets/", "Packages/"]
         if "node" in systems:
-            roots = ["app/", "src/", "web/", "public/", "tests/"]
-            return roots, roots
+            writable = ["app/", "src/", "web/", "public/"]
+            return [*writable, "tests/", "scripts/"], writable
         if "python" in systems:
             return ["src/", "tests/", "docs/"], ["src/", "tests/", "docs/"]
         if "dotnet" in systems:
@@ -204,6 +206,22 @@ class ProjectToolPackLifecycle:
                     parameter=name,
                     evidence=f"package.json defines the {name!r} script.",
                 ))
+        if isinstance(scripts, dict) and isinstance(scripts.get("start"), str):
+            chrome_available = any(path.is_file() for path in (
+                Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+                Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
+            )) if os.name == "nt" else bool(shutil.which("google-chrome") or shutil.which("chromium"))
+            adapters.append(ToolAdapter(
+                adapter_id=AdapterId.NODE_WEB_OBSERVATION,
+                label="Run web UI observer v4 with exact viewport and state-aware controls",
+                enabled=chrome_available,
+                parameter="start",
+                evidence=(
+                    "package.json defines the 'start' script and a local headless Chrome runtime is available."
+                    if chrome_available else
+                    "A local headless Chrome runtime was not found."
+                ),
+            ))
         return adapters
 
     @staticmethod

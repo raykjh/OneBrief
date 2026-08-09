@@ -28,6 +28,7 @@ from onebrief.development_toolpack import (
     _default_runner,
 )
 from onebrief.unity_runtime_evidence import validate_and_copy_unity_visual_evidence
+from onebrief.web_runtime_evidence import observe_web_application
 from onebrief.schemas import InternalSource, SourcePriority
 from onebrief.toolpack_lifecycle import AdapterId, ProjectToolPackLifecycle
 
@@ -94,6 +95,26 @@ class ProjectCodeChangeSet(BaseModel):
         if sum(len(item.content.encode("utf-8")) for item in self.changes) > MAX_CHANGE_BYTES:
             raise ValueError("change set exceeds the total text-size limit")
         return self
+
+
+class ProposedProjectFileChange(BaseModel):
+    """Untrusted provider proposal; authority and runtime checks happen on promotion."""
+
+    path: str
+    base_sha256: str | None = None
+    content: str = Field(max_length=MAX_CHANGE_BYTES)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        return generic_safe_relative(value).as_posix()
+
+
+class ProposedProjectCodeChangeSet(BaseModel):
+    schema_version: str = "onebrief-project-code-change-set-v1"
+    summary: str = Field(min_length=3, max_length=1000)
+    changes: list[ProposedProjectFileChange] = Field(min_length=1, max_length=MAX_CHANGE_FILES)
 
 
 class ApprovedProjectDevelopmentToolPack:
@@ -190,7 +211,12 @@ class ApprovedProjectDevelopmentToolPack:
                 return json.dumps(payload, ensure_ascii=False, indent=4) + "\n"
             return content
         if suffix != ".cs":
-            return content
+            normalized_text: list[str] = []
+            for line in content.splitlines(keepends=True):
+                body = line.rstrip("\r\n")
+                newline = line[len(body):]
+                normalized_text.append(body.rstrip(" \t") + newline)
+            return "".join(normalized_text)
         normalized: list[str] = []
         generated_test_source = "tests" in lowered_parts and "playmode" in lowered_parts
         for line in content.splitlines(keepends=True):
@@ -646,6 +672,23 @@ class ApprovedProjectDevelopmentToolPack:
                 for command_id, argv, timeout in commands
             ]
             evidence_paths: list[str] = []
+            if any(
+                item.adapter_id == AdapterId.NODE_WEB_OBSERVATION and item.enabled
+                for item in profile.adapters
+            ):
+                evidence_dir = output_dir / "web_observation_evidence"
+                observation_command, receipt = observe_web_application(
+                    clone, evidence_dir
+                )
+                results.append(observation_command)
+                observation_dir = output_dir.parent / "independent_observations"
+                observation_dir.mkdir(parents=True, exist_ok=True)
+                (observation_dir / "web_ui_observation.json").write_text(
+                    receipt.model_dump_json(indent=2) + "\n", encoding="utf-8"
+                )
+                evidence_paths.append(
+                    evidence_dir.relative_to(output_dir.parent).as_posix()
+                )
             if any(
                 item.command_id == AdapterId.UNITY_PLAYMODE_VISUAL_TESTS.value
                 for item in results
