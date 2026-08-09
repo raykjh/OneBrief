@@ -1159,13 +1159,23 @@ async def session_status(
                 and completion_proven
             )
             payload["project_id"] = session.intake.existing_project_id
-            payload["auto_resume_available"] = bool(
-                link.operation_name == "local"
-                and record.status.value == "failed"
+            if (
+                record.status.value in {"failed", "partial"}
                 and session.budget is not None
                 and session.intake.existing_project_id
-                and can_attempt_automatic_resume(Path(link.job_uri).resolve())
-            )
+            ):
+                if link.operation_name == "local":
+                    payload["auto_resume_available"] = can_attempt_automatic_resume(
+                        Path(link.job_uri).resolve()
+                    )
+                else:
+                    # Cloud candidates are downloaded and deterministically
+                    # revalidated by the local coordinator when Resume is
+                    # requested.  Do not hide that recovery path merely
+                    # because the preserved job is in GCS.
+                    payload["auto_resume_available"] = link.job_uri.startswith("gs://")
+            else:
+                payload["auto_resume_available"] = False
         except FileNotFoundError:
             payload["can_apply"] = False
             payload["auto_resume_available"] = False
