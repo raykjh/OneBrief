@@ -92,7 +92,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
     anticipated_research_tokens = PUBLIC_RESEARCH_OUTPUT_CAP if intake.public_research_allowed else 0
     base = source_tokens + contract_tokens + anticipated_research_tokens
     revisions = intake.max_revision_rounds
-    recommended_revisions = min(1, revisions)
+    recommended_revisions = min(2, revisions)
 
     stages = [
         _stage(

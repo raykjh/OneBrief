@@ -222,7 +222,8 @@ class ProjectClosureManager:
         terminal_status: str,
     ) -> ProjectClosureReport:
         if terminal_status not in {
-            "complete", "partial", "needs_information", "needs_budget", "failed"
+            "complete", "partial", "needs_information", "needs_budget",
+            "needs_authorization", "failed"
         }:
             raise ValueError("only a terminal project can be closed")
         closure_dir = project_dir / "09_closure"

@@ -8,6 +8,11 @@ accountable maker, and releases only evidence-backed work.
 The product contract is defined in `docs/PRODUCT_IDENTITY.md`. Example projects and
 domain ToolPacks are validation cases; they do not define the product.
 
+The user experience has two stages: OneBrief first creates the completion criteria,
+capability pack, permission manifest, and cost envelope for one exact approval; it then
+works autonomously until the approved criteria are proven. See
+`docs/TWO_STAGE_WORKFLOW.md`.
+
 ## Implemented milestones
 
 - Requirements Analyst built with Google ADK and Gemini 3.5 Flash

@@ -1,6 +1,7 @@
 import json
 import subprocess
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,6 +9,7 @@ from fastapi.testclient import TestClient
 from onebrief.project_catalog import ProjectCatalog
 from onebrief.project_continuity import ProjectContinuityStore
 from onebrief.project_import import ExternalProjectImporter, MANIFEST_NAME
+from onebrief.schemas import RequirementsAnalysis
 from onebrief.web_service import app
 
 
@@ -102,6 +104,21 @@ def test_web_import_registers_project_for_the_dropdown(tmp_path: Path, monkeypat
     payload = _unity_project(root)
     registry = tmp_path / "registry"
     monkeypatch.setenv("ONEBRIEF_PROJECTS_ROOT", str(registry))
+    monkeypatch.setattr(
+        "onebrief.web_service.inspect_requirements",
+        AsyncMock(return_value=RequirementsAnalysis(
+            supported=True,
+            support_reason="Supported.",
+            normalized_goal="Improve localization.",
+            deliverables=["Improved Unity project"],
+            mandatory_information=[],
+            optional_information=[],
+            acceptance_criteria=["The project compiles and localization is verified."],
+            assumptions=[],
+            consolidated_questions=[],
+            ready_for_estimate=True,
+        )),
+    )
 
     response = TestClient(app).post(
         "/api/projects/import",
@@ -115,7 +132,7 @@ def test_web_import_registers_project_for_the_dropdown(tmp_path: Path, monkeypat
     assert body["inventory"]["detected_ecosystems"] == ["unity"]
     listed = TestClient(app).get("/api/projects?q=sample-unity").json()["projects"]
     assert listed[0]["project_id"] == "sample-unity"
-    blocked = TestClient(app).post(
+    inspected = TestClient(app).post(
         "/api/inspect",
         data={
             "goal": "Improve localization.",
@@ -123,6 +140,14 @@ def test_web_import_registers_project_for_the_dropdown(tmp_path: Path, monkeypat
             "existing_project_id": "sample-unity",
         },
     )
-    assert blocked.status_code == 409
-    assert "ToolPack" in blocked.json()["detail"]
+    assert inspected.status_code == 200
+    prepared = inspected.json()["preparation"]
+    assert prepared["ready_for_authorization"] is True
+    assert prepared["permission_manifest"]["toolpack_sha256"]
+    assert "Assets/" in prepared["permission_manifest"]["allowed_write_prefixes"]
+    lifecycle = TestClient(app).get(
+        "/api/projects/sample-unity/toolpack"
+    ).json()["state"]
+    assert lifecycle["status"] == "validated"
+    assert lifecycle["approval"] is None
 

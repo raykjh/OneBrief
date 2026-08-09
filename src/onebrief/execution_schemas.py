@@ -107,6 +107,7 @@ class PipelineStatus(StrEnum):
     PARTIAL = "partial"
     NEEDS_INFORMATION = "needs_information"
     NEEDS_BUDGET = "needs_budget"
+    NEEDS_AUTHORIZATION = "needs_authorization"
     FAILED = "failed"
 
 
@@ -114,6 +115,6 @@ class ExecutionCheckpoint(BaseModel):
     status: PipelineStatus
     current_stage: str
     completed_stages: list[str]
-    revision_round: int = Field(ge=0, le=2)
+    revision_round: int = Field(ge=0, le=6)
     final_verdict: Verdict | None = None
     message: str = ""

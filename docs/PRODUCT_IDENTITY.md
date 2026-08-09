@@ -19,9 +19,9 @@ completion.
 
 1. The user describes the goal, authoritative information, constraints, and optional
    output form. Internal orchestration choices are not user settings.
-2. Before paid execution, OneBrief creates a completion contract: observable target
-   state, deliverables, quality criteria, proof method, and the only conditions that
-   justify calling the user.
+2. Before paid execution, OneBrief creates both the completion contract and the
+   capability pack required to prove it. Codex or the user may provide an address,
+   repository, or authoritative source, but they do not author the pack for OneBrief.
 3. The project owner chooses agents, models, knowledge, skills, tools, memory, ordering,
    and safe parallelism.
 4. Every artifact has one accountable maker. Independent verification may reject it,
@@ -68,24 +68,37 @@ completion.
 - example-specific identity or Exchange-specific product language
 - success claims based only on agents running or files being produced
 
-## Product flow
+## Product flow: two stages
 
-1. Goal and authoritative sources
-2. Requirements analysis and missing-information gate
-3. Confirmed supplements merge into one revised canonical goal
-4. Completion contract and budget approval
-5. Automatic team and capability assignment
-6. Artifact production
-7. Deterministic and independent verification
-8. Original-maker rework and reverification
-9. Final approval, usable delivery, evidence, and reusable-pack candidates
-10. Optional user-initiated existing-project improvement after delivery
+### Stage 1 — define and authorize
+
+1. Receive the goal, output form, authoritative sources, and an optional existing
+   project or destination.
+2. OneBrief consolidates only genuinely missing information into one request.
+3. OneBrief creates the completion contract and generates and qualifies the smallest
+   capability pack that can create and prove the result.
+4. OneBrief presents the exact goal, completion criteria, read/write boundaries,
+   validation adapters, forbidden boundaries, and minimum/recommended/maximum cost.
+5. The user gives one approval for that exact hashed plan.
+
+### Stage 2 — converge and deliver
+
+1. OneBrief selects the team and models inside the approved plan.
+2. The accountable maker produces the artifact.
+3. Deterministic checks and an independent verifier accept or reject each criterion.
+4. Failed work returns to the same maker with evidence until all required criteria pass.
+5. OneBrief safely applies or packages only the proven result.
+
+Stage 2 may never silently widen stage 1. Missing authoritative information,
+insufficient budget, or a new permission returns an amendment request to stage 1.
 
 ## Completion semantics
 
 A run is complete only when every required criterion has the specified evidence and no
-policy or authority blocker remains. A revision limit is an internal safety ceiling, not
-a product success condition. Reaching it produces a partial result with explicit gaps.
+policy or authority blocker remains. Revision depth is an internal safety ceiling, not
+a user setting or product success condition. If the approved budget or capability
+boundary cannot support further correction, the run returns to stage 1 instead of
+claiming completion or silently expanding authority.
 
 Example cases should be selected after this loop works. They are test vectors for
 different artifact types and evaluation modes, not the center of product design.

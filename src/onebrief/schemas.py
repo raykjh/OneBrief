@@ -82,7 +82,7 @@ class IntakeRequest(BaseModel):
     internal_sources: list[InternalSource] = Field(default_factory=list, max_length=50)
     public_research_allowed: bool = False
     budget_limit_usd: Annotated[float | None, Field(gt=0)] = None
-    max_revision_rounds: Annotated[int, Field(ge=0, le=2)] = 2
+    max_revision_rounds: Annotated[int, Field(ge=0, le=6)] = 6
     toolpack_ids: list[ToolPackId] = Field(default_factory=list, max_length=5)
 
 class InformationRequirement(BaseModel):
@@ -203,4 +203,3 @@ class BudgetEnvelope(BaseModel):
     estimated_minutes_recommended: int
     estimated_minutes_maximum: int
     notes: list[str]
-

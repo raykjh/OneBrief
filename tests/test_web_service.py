@@ -57,7 +57,11 @@ def test_home_serves_the_real_workflow() -> None:
     assert 'id="approval" type="number" min=".01" max="10"' in response.text
     assert 'form.delete("uploads")' in response.text
     assert 'this.disabled=true;q("#status").textContent=""' in response.text
-    assert 'if(!budgetPanel.hidden)runButton.disabled=false' in response.text
+    assert 'runButton.disabled=!(activePreparation?.ready_for_authorization)' in response.text
+    assert 'class="two-stage-steps"' in response.text
+    assert 'id="authorizationPlan"' in response.text
+    assert 'authorization_sha256' in response.text
+    assert 'needs_authorization' in response.text
     assert 'name="toolpack_ids"' not in response.text
     assert 'name="public_research_disabled"' in response.text
     assert 'id="dropZone"' in response.text

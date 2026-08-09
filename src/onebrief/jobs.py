@@ -73,6 +73,7 @@ class JobStatus(StrEnum):
     PARTIAL = "partial"
     NEEDS_INFORMATION = "needs_information"
     NEEDS_BUDGET = "needs_budget"
+    NEEDS_AUTHORIZATION = "needs_authorization"
     FAILED = "failed"
 
 
@@ -329,6 +330,7 @@ def _pipeline_status(status: PipelineStatus) -> JobStatus:
         PipelineStatus.PARTIAL: JobStatus.PARTIAL,
         PipelineStatus.NEEDS_INFORMATION: JobStatus.NEEDS_INFORMATION,
         PipelineStatus.NEEDS_BUDGET: JobStatus.NEEDS_BUDGET,
+        PipelineStatus.NEEDS_AUTHORIZATION: JobStatus.NEEDS_AUTHORIZATION,
         PipelineStatus.FAILED: JobStatus.FAILED,
         PipelineStatus.RUNNING: JobStatus.RUNNING,
     }[status]
@@ -438,6 +440,24 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
             JobStatus.NEEDS_BUDGET,
             stage="budget_gate",
             message=str(exc),
+            result_package=package,
+            manifest_sha256=digest,
+        )
+        _record_project_continuity(job_dir, intake)
+        return finished
+    except PermissionError as exc:
+        package, digest = build_result_package(
+            job_dir,
+            status=JobStatus.NEEDS_AUTHORIZATION,
+            attempt=claimed.attempts,
+        )
+        finished = store.finish(
+            JobStatus.NEEDS_AUTHORIZATION,
+            stage="authorization_gate",
+            message=(
+                "The approved capability boundary is insufficient. "
+                f"Return to stage 1 and approve an amended plan: {exc}"
+            ),
             result_package=package,
             manifest_sha256=digest,
         )

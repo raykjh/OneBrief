@@ -31,6 +31,7 @@ from onebrief.project_bootstrap import (
     draft_project_folder,
     register_project_folder,
 )
+from onebrief.preparation import PreparationPlan, build_preparation_plan
 from onebrief.jobs import JobStore, create_job, run_job
 from onebrief.producer import estimate_budget
 from onebrief.project_catalog import ProjectCatalog, RegisteredProject
@@ -80,6 +81,7 @@ class WebSession(BaseModel):
     continuation_context: ProjectContinuationContext | None = None
     reuse_source_job_uri: str | None = None
     previous_attempt: dict[str, object] | None = None
+    preparation: PreparationPlan | None = None
 
 
 class ExecutionLink(BaseModel):
@@ -91,6 +93,8 @@ class ExecutionLink(BaseModel):
 
 class RunApproval(BaseModel):
     approved_usd: float = Field(gt=0)
+    authorization_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    toolpack_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
 class WebSessionStore(Protocol):
@@ -350,6 +354,9 @@ def _public_session(session: WebSession) -> dict[str, object]:
         "selected_project": session.selected_project.model_dump(mode="json") if session.selected_project else None,
         "continuation": session.continuation_context.model_dump(mode="json") if session.continuation_context else None,
         "previous_attempt": session.previous_attempt,
+        "preparation": (
+            session.preparation.model_dump(mode="json") if session.preparation else None
+        ),
         "budget": session.budget.model_dump(mode="json") if session.budget else None,
         "approval_range": (
             {"minimum": session.budget.minimum_cost_usd, "maximum": _approval_ceiling(session)}
@@ -579,7 +586,7 @@ async def inspect(
     desired_output: Annotated[str | None, Form(max_length=2000)] = None,
     budget_limit_usd: Annotated[float | None, Form(gt=0)] = None,
     public_research_disabled: Annotated[bool, Form()] = False,
-    max_revision_rounds: Annotated[int, Form(ge=0, le=2)] = 2,
+    max_revision_rounds: Annotated[int, Form(ge=0, le=6)] = 6,
     existing_project_id: Annotated[str | None, Form(max_length=64)] = None,
     uploads: Annotated[list[UploadFile] | None, File()] = None,
     store: WebSessionStore = Depends(get_session_store),
@@ -587,6 +594,7 @@ async def inspect(
     sources = await _sources_from_uploads(uploads or [])
     selected_project = None
     continuation_context = None
+    toolpack_state = None
     if output_target == OutputTarget.EXISTING_PROJECT:
         if not existing_project_id:
             raise HTTPException(422, "기존 프로젝트 개선을 선택하면 대상 프로젝트를 골라야 합니다.")
@@ -594,15 +602,15 @@ async def inspect(
             selected_project = ProjectCatalog().get(existing_project_id)
         except KeyError as exc:
             raise HTTPException(422, str(exc)) from exc
-        if (
-            selected_project.toolpack_status != "approved"
-            or not selected_project.ready_for_isolated_edit
-        ):
-            blockers = " ".join(selected_project.toolpack_blockers)
-            raise HTTPException(
-                409,
-                "ToolPack is not execution-ready. " + blockers,
-            )
+        if selected_project.origin == "imported":
+            lifecycle = ProjectToolPackLifecycle(existing_project_id)
+            toolpack_state = lifecycle.state()
+            if (
+                toolpack_state.status in {"needs_generation", "validation_failed"}
+                or any("HEAD changed" in item for item in toolpack_state.execution_blockers)
+            ):
+                toolpack_state = lifecycle.generate_and_qualify()
+            selected_project = ProjectCatalog().get(existing_project_id)
         continuation_context = ProjectContinuityStore(
             selected_project, _local_jobs_root()
         ).context()
@@ -617,7 +625,9 @@ async def inspect(
         internal_sources=sources,
         public_research_allowed=not public_research_disabled,
         budget_limit_usd=budget_limit_usd,
-        max_revision_rounds=max_revision_rounds,
+        # Revision depth is an internal safety ceiling. The user approves money and
+        # permissions, not an arbitrary retry count.
+        max_revision_rounds=6,
     )
     intake = route_toolpack_candidates(intake)
     intake = attach_toolpack_descriptors(intake)
@@ -635,6 +645,7 @@ async def inspect(
         else:
             requirements = await inspect_requirements(intake)
         budget = estimate_budget(intake, requirements) if requirements.ready_for_estimate else None
+        preparation = build_preparation_plan(intake, requirements, budget, toolpack_state)
         session = WebSession(
             session_id=str(uuid4()),
             created_at=_now(),
@@ -646,6 +657,7 @@ async def inspect(
             continuation_context=continuation_context,
             reuse_source_job_uri=str(candidate.job_dir) if candidate else None,
             previous_attempt=candidate.public_summary() if candidate else None,
+            preparation=preparation,
         )
         store.create(session)
         return _public_session(session)
@@ -688,6 +700,14 @@ async def reinspect_session(
     try:
         requirements = await reinspect_requirements(augmented, previous.requirements)
         budget = estimate_budget(augmented, requirements) if requirements.ready_for_estimate else None
+        toolpack_state = None
+        if previous.selected_project and previous.selected_project.origin == "imported":
+            toolpack_state = ProjectToolPackLifecycle(
+                previous.selected_project.project_id
+            ).state()
+        preparation = build_preparation_plan(
+            augmented, requirements, budget, toolpack_state
+        )
         session = WebSession(
             session_id=str(uuid4()),
             created_at=_now(),
@@ -699,6 +719,7 @@ async def reinspect_session(
             continuation_context=previous.continuation_context,
             reuse_source_job_uri=None,
             previous_attempt=None,
+            preparation=preparation,
         )
         store.create(session)
         return _public_session(session)
@@ -717,15 +738,37 @@ async def run_session(
 ) -> dict[str, object]:
     try:
         session = store.read(session_id)
+        if session.preparation is not None:
+            if not session.preparation.ready_for_authorization:
+                raise ValueError(
+                    "Stage 1 is blocked: " + " ".join(session.preparation.blockers)
+                )
+            if approval.authorization_sha256 != session.preparation.authorization_sha256:
+                raise ValueError("The completion, permission, or budget plan changed before approval.")
+        validate_approval(session, approval.approved_usd)
         selected_project = None
         if session.intake.existing_project_id:
             selected_project = ProjectCatalog().get(session.intake.existing_project_id)
+            if selected_project.origin == "imported" and session.preparation is not None:
+                expected_toolpack = session.preparation.permission_manifest.toolpack_sha256
+                if not expected_toolpack or approval.toolpack_sha256 != expected_toolpack:
+                    raise ValueError("The exact generated ToolPack permissions were not approved.")
+                lifecycle = ProjectToolPackLifecycle(selected_project.project_id)
+                state = lifecycle.state()
+                if state.status == "validated":
+                    lifecycle.approve(expected_toolpack)
+                elif (
+                    state.status != "approved"
+                    or state.generated is None
+                    or state.generated.sha256 != expected_toolpack
+                ):
+                    raise ValueError("The ToolPack changed or is no longer qualified for execution.")
+                selected_project = ProjectCatalog().get(session.intake.existing_project_id)
             if not selected_project.ready_for_isolated_edit:
                 raise ValueError(
                     "선택한 프로젝트에 커밋되지 않은 변경이 있습니다. 현재 변경을 보존한 채 "
                     "안전하게 격리 실행할 수 있도록 먼저 정리해야 합니다."
                 )
-        validate_approval(session, approval.approved_usd)
         store.claim_run(session_id)
     except (FileNotFoundError, KeyError) as exc:
         raise HTTPException(404, str(exc)) from exc

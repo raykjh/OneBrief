@@ -123,7 +123,10 @@ def find_reuse_candidate(
         if request_fingerprint(prior) != wanted:
             continue
         status = str(record.get("status", ""))
-        if status not in {"failed", "partial", "needs_budget", "needs_information"}:
+        if status not in {
+            "failed", "partial", "needs_budget", "needs_information",
+            "needs_authorization",
+        }:
             continue
         inspected_head = _inspection_head(job_dir)
         code_compatible = bool(

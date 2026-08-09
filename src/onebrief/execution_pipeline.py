@@ -1466,6 +1466,30 @@ class ExecutionPipeline:
                 message=str(exc),
             )
             raise
+        except PermissionError as exc:
+            self._append_recovery(self.recovery_policy.decide(
+                exc, context="authorization_gate", attempt_number=1
+            ))
+            self._persist_recoveries(output_dir)
+            fail_running_graph(str(exc), blocked=True)
+            try:
+                BudgetStore(self.run_dir).fail(f"PermissionError: {exc}")
+            except Exception:
+                pass
+            self._checkpoint(
+                output_dir,
+                PipelineStatus.NEEDS_AUTHORIZATION,
+                "authorization_gate",
+                completed,
+                revision_round,
+                message=(
+                    "The approved capability boundary is insufficient. "
+                    f"Return to stage 1 and approve an amended plan: {exc}"
+                ),
+            )
+            return ExecutionCheckpoint.model_validate_json(
+                (output_dir / "execution_checkpoint.json").read_text(encoding="utf-8")
+            )
         except Exception as exc:
             self._capture_developer_recoveries()
             decision = self.recovery_policy.decide(

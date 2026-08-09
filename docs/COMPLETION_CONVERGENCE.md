@@ -9,9 +9,9 @@ It is not a general chatbot, an agent builder, an agent-count demonstration, or 
 that one prompt can solve every task. Agents are workers. OneBrief is the control system
 that defines, measures, rejects, revises, and proves their work.
 
-## Two product responsibilities
+## Two stages and two product responsibilities
 
-### 1. Establish the completion contract with minimal conversation
+### Stage 1. Establish and authorize the completion system
 
 Before paid execution, OneBrief converts the goal and authoritative sources into:
 
@@ -20,12 +20,19 @@ Before paid execution, OneBrief converts the goal and authoritative sources into
 - required quality criteria with stable `Qnn` identifiers;
 - the evidence required for every criterion;
 - a proof mode: deterministic verification or independent review;
-- authority, safety, and budget boundaries.
+- authority, safety, and budget boundaries;
+- a OneBrief-generated capability pack with exact read/write prefixes and evidence
+  adapters.
+
+The contract, capability permissions, and cost envelope are canonicalized into one
+authorization hash. Approval is valid only for that exact plan. External development
+assistants may prepare a clean repository, URL, or source material; OneBrief remains
+responsible for discovering, generating, qualifying, and proposing its own ToolPack.
 
 Only missing authoritative information, insufficient budget, or a decision outside AI
 authority may interrupt execution. Implementation preferences with safe defaults do not.
 
-### 2. Converge work until the contract is proven
+### Stage 2. Converge work until the contract is proven
 
 ```text
 completion contract
@@ -39,6 +46,11 @@ completion contract
   -> repeat within approved budget
   -> safe delivery/application only when all required criteria pass
 ```
+
+There is no silent authority expansion. `NEEDS_INFORMATION`, `NEEDS_BUDGET`, and
+`NEEDS_AUTHORIZATION` are structured returns to stage 1. The user approves an amended
+plan; OneBrief then resumes from persisted evidence instead of pretending the first run
+completed.
 
 ## Completion ledger
 
@@ -70,8 +82,8 @@ checks pass.
 4. Add explicit user-authority criteria for visual or creative judgments that cannot be
    honestly automated.
 5. Measure convergence: criteria passed, revisions required, stop reason, time, and cost.
-6. Demonstrate one small end-to-end case with an intentional failure, same-maker repair,
-   new evidence, PASS, and safe application.
+6. Demonstrate one small end-to-end case where a real first attempt may fail,
+   same-maker repair produces new evidence, and only PASS enables safe application.
 
 ## Deliberate exclusions
 
