@@ -200,7 +200,7 @@ def observe_web_application(clone: Path, evidence_dir: Path) -> tuple[Developmen
     )
     receipt = ObservationReceipt(
         capability=RealityCapability.SEMANTIC_OBSERVATION,
-        observer_pack_id="onebrief_web_ui_observer_v4",
+        observer_pack_id="onebrief_web_ui_observer_v5",
         status=ObservationStatus.FAILED if issues else ObservationStatus.OBSERVED,
         independent_from_maker=True,
         artifact_paths=[desktop_path.as_posix(), mobile_path.as_posix()],

@@ -936,6 +936,16 @@ class ExecutionPipeline:
                 if advertised_adk is not None
                 else callable(getattr(self.gateway, "generate_adk_response", None))
             )
+            # A trusted automatic-resume child already carries the same maker's
+            # verified change set. Continue with the independent verifier instead
+            # of paying a new maker to recreate identical work.
+            if (
+                use_adk_convergence
+                and self._is_development(intake)
+                and (output_dir / "automatic_resume.json").is_file()
+                and self._development_evidence(output_dir) is not None
+            ):
+                use_adk_convergence = False
             if use_adk_convergence and (output_dir / "adk_convergence_trace.json").is_file():
                 completed_rounds = sorted(
                     int(path.stem.rsplit("r", 1)[1])
@@ -993,6 +1003,7 @@ class ExecutionPipeline:
                     change_set = self._bind_project_change_set(
                         intake, development_pack, change_set, output_dir
                     )
+                    self._write(change_set_path, change_set.model_dump_json(indent=2))
                     development_run = self._load(
                         development_dir / "development_run.json", DevelopmentRun
                     )

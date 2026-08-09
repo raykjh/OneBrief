@@ -24,6 +24,11 @@ from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
 from onebrief.cloud_jobs import GCSJobStore, CloudExecutionReceipt, submit_cloud_job
+from onebrief.automatic_resume import (
+    can_attempt_automatic_resume,
+    revalidate_failed_development,
+    seed_automatic_resume,
+)
 from onebrief.completion_ledger import build_completion_ledger
 from onebrief.project_bootstrap import (
     FolderRegistrationRequest,
@@ -1153,13 +1158,119 @@ async def session_status(
                 and completion_proven
             )
             payload["project_id"] = session.intake.existing_project_id
+            payload["auto_resume_available"] = bool(
+                link.operation_name == "local"
+                and record.status.value == "failed"
+                and session.budget is not None
+                and session.intake.existing_project_id
+                and can_attempt_automatic_resume(Path(link.job_uri).resolve())
+            )
         except FileNotFoundError:
             payload["can_apply"] = False
+            payload["auto_resume_available"] = False
         return payload
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(502, f"Service operation failed: {type(exc).__name__}") from exc
+
+
+@app.post("/api/sessions/{session_id}/resume")
+async def automatically_resume_session(
+    session_id: str,
+    store: WebSessionStore = Depends(get_session_store),
+) -> dict[str, object]:
+    """Revalidate preserved work and continue under only the unused original budget."""
+    if not isinstance(store, InMemoryWebSessionStore):
+        raise HTTPException(409, "Automatic trusted revalidation is currently local-only.")
+    child_session_id = str(uuid4())
+    try:
+        previous = store.read(session_id)
+        link = store.read_execution(session_id)
+        if link.operation_name != "local" or previous.budget is None:
+            raise RuntimeError("this task has no resumable local execution")
+        source_job = Path(link.job_uri).resolve()
+        project_id = previous.intake.existing_project_id
+        if not project_id:
+            raise RuntimeError("automatic resume requires an existing project")
+        project = ProjectCatalog().get(project_id)
+        provenance_path = source_job / "work" / "project_snapshot" / "restore_evidence.json"
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        if provenance.get("source_head_sha") != project.head_sha:
+            raise RuntimeError("the source project changed after the failed run")
+        expected_toolpack = (
+            previous.preparation.permission_manifest.toolpack_sha256
+            if previous.preparation is not None else None
+        )
+        state = ProjectToolPackLifecycle(project_id).state()
+        if (
+            not expected_toolpack
+            or state.status != "approved"
+            or state.generated is None
+            or state.generated.sha256 != expected_toolpack
+        ):
+            raise RuntimeError("the approved ToolPack changed after the failed run")
+        plan = await asyncio.to_thread(
+            revalidate_failed_development, source_job, project_id
+        )
+        if plan.remaining_approved_usd < previous.budget.minimum_cost_usd:
+            raise RuntimeError(
+                "the unused original approval is below the minimum resumable budget"
+            )
+        child_job = create_job(
+            jobs_dir=_local_jobs_root(),
+            intake=previous.intake,
+            requirements=previous.requirements,
+            sources=previous.intake.internal_sources,
+            estimate=previous.budget,
+            approved_usd=plan.remaining_approved_usd,
+        )
+        seed_automatic_resume(source_job, child_job, plan)
+        child = previous.model_copy(update={
+            "session_id": child_session_id,
+            "created_at": _now(),
+            "selected_project": project,
+            "reuse_source_job_uri": str(source_job),
+            "previous_attempt": {
+                "job_id": plan.source_job_id,
+                "status": "failed",
+                "reusable_artifacts": ["code_change_set.json", "development/"],
+                "message": (
+                    "Trusted adapters revalidated the preserved result. "
+                    "The task resumed without calling the maker again."
+                ),
+            },
+            "parent_session_id": session_id,
+            "amendment_kind": "automatic_resume",
+            "amendment_reason": (
+                "A newer trusted verifier accepted the preserved candidate; "
+                "only the unused original approval was transferred."
+            ),
+        })
+        store.create(child)
+        store.claim_run(child_session_id)
+        store.save_execution(ExecutionLink(
+            session_id=child_session_id,
+            job_uri=str(child_job),
+            operation_name="local",
+            created_at=_now(),
+        ))
+        task = asyncio.create_task(asyncio.to_thread(run_job, child_job))
+        _local_tasks.add(task)
+        task.add_done_callback(_local_tasks.discard)
+        return {
+            "session_id": child_session_id,
+            "status": "queued",
+            "source_job_id": plan.source_job_id,
+            "source_actual_usd": plan.source_actual_usd,
+            "remaining_approved_usd": plan.remaining_approved_usd,
+            "maker_reused": True,
+            "message": "Trusted revalidation passed; the preserved maker result resumed.",
+        }
+    except (FileNotFoundError, KeyError) as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (OSError, PermissionError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.get("/api/sessions/{session_id}/criteria")

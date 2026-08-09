@@ -213,7 +213,7 @@ class ProjectToolPackLifecycle:
             )) if os.name == "nt" else bool(shutil.which("google-chrome") or shutil.which("chromium"))
             adapters.append(ToolAdapter(
                 adapter_id=AdapterId.NODE_WEB_OBSERVATION,
-                label="Run web UI observer v4 with exact viewport and state-aware controls",
+                label="Run web UI observer v5 with button and select state controls",
                 enabled=chrome_available,
                 parameter="start",
                 evidence=(
