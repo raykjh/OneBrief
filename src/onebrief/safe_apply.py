@@ -172,7 +172,11 @@ def apply_verified_project_result(
                     raise RuntimeError(f"changed-file artifact differs from its approved change set: {change.path}")
                 backup = None
                 if target.exists():
-                    if change.base_sha256 is None or _sha256(target) != change.base_sha256:
+                    committed_sha = hashlib.sha256(
+                        pack._blob(current_head, change.path)
+                    ).hexdigest()
+                    clean_worktree_sha = _sha256(target)
+                    if change.base_sha256 not in {committed_sha, clean_worktree_sha}:
                         raise RuntimeError(f"source file changed after Cloud inspection: {change.path}")
                     backup = originals / Path(*pure.parts)
                     backup.parent.mkdir(parents=True, exist_ok=True)
