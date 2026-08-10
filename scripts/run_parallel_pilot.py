@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "src") not in sys.path:
@@ -270,6 +271,82 @@ def dispatch_uploaded(campaign_root: Path, lane_id: str, job_uri: str) -> dict[s
     return receipt
 
 
+def resume_diagnostic(campaign_root: Path, lane_id: str) -> dict[str, object]:
+    """Resume a persisted stage-one session without another Gemini inspection."""
+    store = ParallelCampaignStore(campaign_root)
+    manifest = store.manifest()
+    spec = next(item for item in manifest.lanes if item.lane_id == lane_id)
+    runtime = _configure_lane(campaign_root, lane_id, spec.max_budget_usd)
+    diagnostic_path = runtime / "requirements-diagnostic.json"
+    diagnostic = json.loads(diagnostic_path.read_text(encoding="utf-8"))
+
+    from fastapi.testclient import TestClient
+    from onebrief.preparation import build_preparation_plan
+    from onebrief.producer import estimate_budget
+    from onebrief.requirements_gate import apply_requirements_gate
+    from onebrief.web_service import app, get_session_store
+
+    session_store = get_session_store()
+    previous = session_store.read(str(diagnostic["session_id"]))
+    requirements = apply_requirements_gate(
+        previous.intake,
+        previous.requirements,
+        previous.intake.internal_sources,
+    )
+    if not requirements.ready_for_estimate:
+        raise RuntimeError(
+            "updated deterministic gate still requires information: "
+            + "; ".join(requirements.consolidated_questions)
+        )
+    budget = estimate_budget(previous.intake, requirements)
+    preparation = build_preparation_plan(previous.intake, requirements, budget)
+    if preparation is None or not preparation.ready_for_authorization:
+        raise RuntimeError("the resumed session is not ready for authorization")
+    resumed = previous.model_copy(update={
+        "session_id": str(uuid4()),
+        "requirements": requirements,
+        "budget": budget,
+        "preparation": preparation,
+        "parent_session_id": previous.session_id,
+        "amendment_kind": "deterministic_gate_recovery",
+        "amendment_reason": "Removed a score-conversion request forbidden by authoritative rules.",
+    })
+    session_store.create(resumed)
+    execution_cap = spec.max_budget_usd - RESERVED_INTAKE_USD
+    if budget.minimum_cost_usd > execution_cap:
+        raise RuntimeError("resumed minimum budget exceeds the frozen lane cap")
+    approval = min(budget.recommended_approval_usd, execution_cap)
+    response = TestClient(app).post(
+        f"/api/sessions/{resumed.session_id}/run",
+        json={
+            "approved_usd": approval,
+            "authorization_sha256": preparation.authorization_sha256,
+            "toolpack_sha256": preparation.permission_manifest.toolpack_sha256,
+        },
+    )
+    submitted = _require_ok(response, "resumed Agent Platform dispatch")
+    link = session_store.read_execution(resumed.session_id)
+    receipt = {
+        "schema_version": "onebrief-parallel-lane-submission-v1",
+        "campaign_id": manifest.campaign_id,
+        "lane_id": lane_id,
+        "baseline_commit_sha": manifest.baseline.commit_sha,
+        "baseline_image_digest": manifest.baseline.image_digest,
+        "case_sha256": spec.case_sha256,
+        "approved_execution_usd": approval,
+        "reserved_intake_usd": RESERVED_INTAKE_USD,
+        "lane_total_cap_usd": spec.max_budget_usd,
+        "session_id": resumed.session_id,
+        "parent_session_id": previous.session_id,
+        "dispatch": submitted,
+        "execution": link.model_dump(mode="json"),
+    }
+    (runtime / "submission.json").write_text(
+        json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return receipt
+
+
 def submit_all(campaign_root: Path) -> None:
     manifest = ParallelCampaignStore(campaign_root).manifest()
     processes: list[tuple[str, subprocess.Popen[str], object]] = []
@@ -386,6 +463,9 @@ def main() -> None:
     redispatch.add_argument("campaign_root", type=Path)
     redispatch.add_argument("lane_id")
     redispatch.add_argument("job_uri")
+    resume = subparsers.add_parser("resume-diagnostic")
+    resume.add_argument("campaign_root", type=Path)
+    resume.add_argument("lane_id")
     args = parser.parse_args()
     campaign_root = args.campaign_root.resolve()
     if args.command == "submit":
@@ -395,9 +475,15 @@ def main() -> None:
             submit_all(campaign_root)
     elif args.command == "monitor":
         monitor(campaign_root, args.timeout)
-    else:
+    elif args.command == "dispatch-uploaded":
         print(json.dumps(
             dispatch_uploaded(campaign_root, args.lane_id, args.job_uri),
+            ensure_ascii=False,
+            indent=2,
+        ))
+    else:
+        print(json.dumps(
+            resume_diagnostic(campaign_root, args.lane_id),
             ensure_ascii=False,
             indent=2,
         ))

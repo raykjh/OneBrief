@@ -31,6 +31,13 @@ _THRESHOLD = re.compile(
 _FORMULA = re.compile(r"공식|계산식|정규화|formula|weighted\s+sum|normalize", re.IGNORECASE)
 _HANGUL = re.compile(r"[가-힣]")
 
+_EXPLICIT_NON_SCORING = re.compile(
+    r"(?:no|never|do\s+not|must\s+not)\s+(?:invent\s+|use\s+|create\s+)?"
+    r"(?:a\s+)?(?:numeric(?:al)?\s+)?(?:score|scoring)"
+    r"|(?:점수|채점).{0,30}(?:금지|사용하지|만들지|없음|요구되지)",
+    re.IGNORECASE,
+)
+
 _OUTPUT_TARGET_CONTRACTS = {
     OutputTarget.EXISTING_PROJECT: "기존 프로젝트의 원래 실행 형태를 유지한 개선본",
     OutputTarget.WEB_APP: "웹에서 직접 실행할 수 있는 프로그램",
@@ -147,6 +154,9 @@ def find_scoring_gap(
     sources: list[InternalSource] | None = None,
 ) -> ScoringGap | None:
     authoritative_sources = list(sources if sources is not None else intake.internal_sources)
+    authoritative_text = "\n".join(source.content for source in authoritative_sources)
+    if _EXPLICIT_NON_SCORING.search(authoritative_text):
+        return None
     if not _SCORING_TASK.search(_task_text(intake, analysis)):
         return None
     fields, categorical_groups, numeric_fields = _csv_profiles(authoritative_sources)
@@ -344,6 +354,44 @@ def _apply_confirmed_implementation_defaults(
     )
 
 
+def _apply_explicit_non_scoring_policy(
+    intake: IntakeRequest,
+    analysis: RequirementsAnalysis,
+    sources: list[InternalSource] | None = None,
+) -> RequirementsAnalysis:
+    """Remove a numeric-score gap when authoritative rules forbid scoring."""
+    authoritative = list(sources if sources is not None else intake.internal_sources)
+    if not _EXPLICIT_NON_SCORING.search("\n".join(item.content for item in authoritative)):
+        return analysis
+    removed_keys = {
+        item.key
+        for item in analysis.mandatory_information
+        if item.key == "scoring_conversion_rules"
+    }
+    if not removed_keys:
+        return analysis
+    remaining = [
+        item for item in analysis.mandatory_information if item.key not in removed_keys
+    ]
+    questions = [
+        question
+        for question in analysis.consolidated_questions
+        if not re.search(r"score|scoring|conversion table|점수|채점", question, re.IGNORECASE)
+    ]
+    assumption = (
+        "The authoritative policy explicitly forbids numerical scoring; use its "
+        "categorical ordering and tie rules without inventing a score."
+    )
+    return analysis.model_copy(
+        update={
+            "mandatory_information": remaining,
+            "consolidated_questions": questions,
+            "assumptions": list(dict.fromkeys([*analysis.assumptions, assumption]))[:10],
+            "ready_for_estimate": analysis.supported and not remaining,
+        }
+    )
+
+
 def apply_requirements_gate(
     intake: IntakeRequest,
     analysis: RequirementsAnalysis,
@@ -353,6 +401,7 @@ def apply_requirements_gate(
     analysis = _apply_public_research_defaults(intake, analysis)
     analysis = _apply_confirmed_implementation_defaults(intake, analysis)
     analysis = _apply_creative_defaults(intake, analysis)
+    analysis = _apply_explicit_non_scoring_policy(intake, analysis, sources)
     gap = find_scoring_gap(intake, analysis, sources)
     if gap is None:
         return analysis

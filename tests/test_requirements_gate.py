@@ -100,6 +100,51 @@ def test_complete_conversion_rules_allow_estimation() -> None:
     assert result.mandatory_information == []
     assert estimate.recommended_approval_usd > 0
 
+def test_explicit_non_scoring_policy_does_not_demand_conversion_formula() -> None:
+    csv_source = InternalSource(
+        name="requests.csv",
+        priority=SourcePriority.MANDATORY,
+        requirement_keys=["request_data"],
+        content=(
+            "request_id,status,impact,effort_hours\n"
+            "R1,open,high,4\n"
+            "R2,blocked,medium,8\n"
+        ),
+        media_type="text/csv",
+    )
+    rules = InternalSource(
+        name="rules.md",
+        priority=SourcePriority.MANDATORY,
+        requirement_keys=["priority_rules"],
+        content=(
+            "Never invent a numerical score. Sort risk using the explicit order "
+            "Critical, High, Medium, Normal and then by due date and request ID."
+        ),
+    )
+    intake = IntakeRequest(
+        goal="Create a workbook that assigns categorical priority to each request.",
+        internal_sources=[csv_source, rules],
+    )
+    scoring_requirement = InformationRequirement(
+        key="scoring_conversion_rules",
+        request="Provide a score conversion table and tie formula.",
+        reason="A numeric ranking would otherwise require invented rules.",
+        acceptable_evidence=["score table"],
+    )
+    analysis = _ready().model_copy(update={
+        "mandatory_information": [scoring_requirement],
+        "consolidated_questions": [scoring_requirement.request],
+        "ready_for_estimate": False,
+    })
+
+    result = apply_requirements_gate(intake, analysis)
+
+    assert result.ready_for_estimate is True
+    assert result.mandatory_information == []
+    assert result.consolidated_questions == []
+    assert find_scoring_gap(intake, result) is None
+
+
 def test_public_research_time_window_is_optional_and_disclosed() -> None:
     intake = IntakeRequest(
         goal="광교 지역의 조건별 주거 매물 목록을 만들어줘.",
