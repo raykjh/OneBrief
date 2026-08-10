@@ -13,6 +13,7 @@ from typing_extensions import override
 
 from onebrief.adk_convergence import (
     MAKER_STATE_KEY,
+    REVERIFY_EXISTING_STATE_KEY,
     VERIFICATION_STATE_KEY,
     AdkConvergenceAgent,
     BudgetedAdkLlm,
@@ -89,6 +90,28 @@ def test_adk_loop_reuses_original_maker_and_returns_feedback() -> None:
     assert state[VERIFICATION_STATE_KEY]["verdict"] == Verdict.PASS.value
     assert [item["author"] for item in trace].count("maker") == 2
     assert [item["author"] for item in trace].count("verifier") == 2
+
+
+def test_reverification_starts_with_existing_candidate_without_maker_call() -> None:
+    maker = FakeMaker(name="maker")
+    verifier = FakeVerifier(name="verifier", calls=1)
+    agent = AdkConvergenceAgent(
+        name="convergence", sub_agents=[maker, verifier], max_revision_rounds=1,
+    )
+
+    state, trace = asyncio.run(run_convergence_agent(
+        agent,
+        {"goal": "Reverify the existing candidate."},
+        initial_state={
+            MAKER_STATE_KEY: {"version": "existing"},
+            REVERIFY_EXISTING_STATE_KEY: True,
+        },
+    ))
+
+    assert maker.calls == 0
+    assert verifier.calls == 2
+    assert state[MAKER_STATE_KEY] == {"version": "existing"}
+    assert [item["author"] for item in trace].count("maker") == 0
 
 
 def test_adk_llm_retries_max_token_response_as_compact_increment() -> None:

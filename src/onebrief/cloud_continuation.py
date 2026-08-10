@@ -12,9 +12,11 @@ from onebrief.agent_platform_client import (
     AgentPlatformDispatchReceipt,
     dispatch_approved_job_via_agent_platform,
 )
+from onebrief.agent_registry import ApprovedModel
 from onebrief.budget_guard import BudgetStore, micros_to_dollars
 from onebrief.cloud_jobs import GCSJobStore, upload_cloud_job
 from onebrief.jobs import JobStatus, JobStore, create_job
+from onebrief.producer import PRICES
 from onebrief.schemas import BudgetEnvelope, IntakeRequest, InternalSource, RequirementsAnalysis
 from onebrief.team_planning import TeamPlan
 
@@ -51,13 +53,70 @@ def _read_models(job_dir: Path) -> tuple[
     return intake, requirements, sources, estimate
 
 
+def _targeted_repair_estimate(
+    estimate: BudgetEnvelope,
+    *,
+    low_cost_models: bool = False,
+) -> BudgetEnvelope:
+    """Re-estimate one evidenced code repair without charging completed stages."""
+    caps = {
+        "long_form_draft": (40_000, 8_000),
+        "independent_verification": (25_000, 1_000),
+        "final_approval": (10_000, 500),
+    }
+    selected = []
+    for stage in estimate.stages:
+        if stage.stage not in caps:
+            continue
+        input_tokens, output_tokens = caps[stage.stage]
+        model = "gemini-3.5-flash-lite" if low_cost_models else stage.model
+        price = PRICES[model]
+        per_call = (
+            input_tokens * price.input_per_million
+            + output_tokens * price.output_per_million
+        ) / 1_000_000 + stage.fixed_cost_usd_per_call
+        selected.append(stage.model_copy(update={
+            "model": model,
+            "input_tokens_per_call": input_tokens,
+            "output_tokens_per_call": output_tokens,
+            "minimum_calls": 1,
+            "recommended_calls": 1,
+            "maximum_calls": 1,
+            "minimum_cost_usd": round(per_call, 6),
+            "recommended_cost_usd": round(per_call, 6),
+            "maximum_cost_usd": round(per_call, 6),
+        }))
+    if len(selected) != len(caps):
+        raise RuntimeError("targeted repair estimate is missing a required model stage")
+    base = sum(item.minimum_cost_usd for item in selected)
+    return estimate.model_copy(update={
+        "stages": selected,
+        "minimum_cost_usd": round(base * 1.10, 4),
+        "recommended_cost_usd": round(base * 1.20, 4),
+        "maximum_cost_usd": round(base * 1.25, 4),
+        "recommended_approval_usd": round(base * 1.20, 4),
+        "estimated_minutes_minimum": 17,
+        "estimated_minutes_recommended": 17,
+        "estimated_minutes_maximum": 17,
+        "notes": [
+            *estimate.notes,
+            "Targeted continuation charges only one evidenced maker repair, independent verification, and final approval.",
+        ],
+    })
+
+
 def create_budget_preserving_continuation(
     *,
     source_job_dir: Path,
     source_job_uri: str,
     jobs_dir: Path,
     reusable_source: GCSJobStore,
+    supplemental_reusable_source: GCSJobStore | None = None,
     reusable_team_plan: TeamPlan | None = None,
+    explicit_child_approval_usd: float | None = None,
+    targeted_repair: bool = False,
+    low_cost_targeted_repair: bool = False,
+    reverify_existing_candidate: bool = False,
 ) -> tuple[Path, float, float, tuple[str, ...]]:
     """Create a child whose spend cannot exceed its parent's unused approval.
 
@@ -81,15 +140,24 @@ def create_budget_preserving_continuation(
         - source_ledger.actual_usd_micros
         - source_ledger.reserved_usd_micros
     )
-    if remaining_micros <= 0:
+    if remaining_micros <= 0 and explicit_child_approval_usd is None:
         raise RuntimeError("source approval has no unused budget")
 
     source_actual_usd = micros_to_dollars(source_ledger.actual_usd_micros)
-    child_approved_usd = micros_to_dollars(remaining_micros)
+    child_approved_usd = (
+        float(explicit_child_approval_usd)
+        if explicit_child_approval_usd is not None
+        else micros_to_dollars(remaining_micros)
+    )
     intake, requirements, sources, estimate = _read_models(source_job_dir)
+    if targeted_repair:
+        estimate = _targeted_repair_estimate(
+            estimate,
+            low_cost_models=low_cost_targeted_repair,
+        )
     if child_approved_usd < estimate.minimum_cost_usd:
         raise RuntimeError(
-            "unused source approval is below the immutable minimum estimate; "
+            "child approval is below the immutable minimum estimate; "
             "a new user approval is required"
         )
 
@@ -103,9 +171,30 @@ def create_budget_preserving_continuation(
         benchmark_variant=source_record.benchmark_variant,
     )
     reused_items = reusable_source.download_reusable_artifacts(child_dir / "work")
+    if supplemental_reusable_source is not None:
+        reused_items.extend(
+            supplemental_reusable_source.download_reusable_artifacts(child_dir / "work")
+        )
     if reusable_team_plan is not None:
         child_id = JobStore(child_dir).read().job_id
         plan = reusable_team_plan.model_copy(update={"project_id": child_id})
+        if low_cost_targeted_repair:
+            repair_owner_ids = {
+                plan.stage_owners[stage]
+                for stage in (
+                    "long_form_draft",
+                    "independent_verification",
+                    "final_approval",
+                )
+            }
+            plan = plan.model_copy(update={
+                "members": [
+                    member.model_copy(update={"model": ApprovedModel.GEMINI_3_5_FLASH_LITE})
+                    if member.instance_id in repair_owner_ids
+                    else member
+                    for member in plan.members
+                ]
+            })
         plan_path = (
             child_dir / "work" / "workspace" / "projects" / child_id
             / "02_plan_and_teams" / "team_plan.json"
@@ -126,6 +215,11 @@ def create_budget_preserving_continuation(
         )
         reused_items.append("team_plan.json")
     reused = tuple(dict.fromkeys(reused_items))
+    if reverify_existing_candidate:
+        (child_dir / "work" / "reverify_existing_candidate.json").write_text(
+            json.dumps({"enabled": True}, indent=2) + "\n",
+            encoding="utf-8",
+        )
     manifest = {
         "schema_version": "onebrief-cloud-continuation-v1",
         "source_job_uri": source_job_uri,
@@ -135,9 +229,26 @@ def create_budget_preserving_continuation(
         "child_approved_usd": child_approved_usd,
         "aggregate_approval_ceiling_usd": micros_to_dollars(
             source_ledger.approval.approved_usd_micros
+        ) if explicit_child_approval_usd is None else child_approved_usd,
+        "authorization_kind": (
+            "remaining_parent_approval"
+            if explicit_child_approval_usd is None
+            else "explicit_additional_user_approval"
         ),
+        "source_unused_usd_abandoned": (
+            0.0
+            if explicit_child_approval_usd is None
+            else micros_to_dollars(max(0, remaining_micros))
+        ),
+        "targeted_repair": targeted_repair,
+        "low_cost_targeted_repair": low_cost_targeted_repair,
+        "reverify_existing_candidate": reverify_existing_candidate,
         "reused_artifacts": list(reused),
-        "policy": "actual parent spend plus child approval cannot exceed the original approval",
+        "policy": (
+            "actual parent spend plus child approval cannot exceed the original approval"
+            if explicit_child_approval_usd is None
+            else "child has a new explicit approval; unused parent approval is not transferred"
+        ),
     }
     (child_dir / "work" / "continuation_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
@@ -164,6 +275,10 @@ def _has_code_candidate(job_dir: Path) -> bool:
     ))
 
 
+def _has_verification_failure(job_dir: Path) -> bool:
+    return (job_dir / "work" / "development_verification_failure.txt").is_file()
+
+
 def continue_cloud_job_via_agent_platform(
     *,
     source_job_uri: str,
@@ -175,6 +290,10 @@ def continue_cloud_job_via_agent_platform(
     user_id: str,
     storage_client: Any | None = None,
     agent_platform_client: Any | None = None,
+    explicit_child_approval_usd: float | None = None,
+    targeted_repair: bool = False,
+    low_cost_targeted_repair: bool = False,
+    reverify_existing_candidate: bool = False,
 ) -> CloudContinuationReceipt:
     source_store = GCSJobStore(source_job_uri, client=storage_client)
     with tempfile.TemporaryDirectory(prefix="onebrief_cloud_resume_") as temp:
@@ -182,12 +301,17 @@ def continue_cloud_job_via_agent_platform(
         source_job_dir = source_store.download_job(temp_root / "source")
         reusable_plan = _find_team_plan(source_job_dir)
         reusable_artifact_store = source_store
+        failure_artifact_store = source_store if _has_verification_failure(source_job_dir) else None
         has_code_candidate = _has_code_candidate(source_job_dir)
         ancestor_uri = source_job_uri
         visited = {ancestor_uri}
         depth = 0
         cursor = source_job_dir
-        while (reusable_plan is None or not has_code_candidate) and depth < 8:
+        while (
+            reusable_plan is None
+            or not has_code_candidate
+            or failure_artifact_store is None
+        ) and depth < 8:
             lineage_path = cursor / "work" / "continuation_manifest.json"
             if not lineage_path.is_file():
                 break
@@ -205,12 +329,19 @@ def continue_cloud_job_via_agent_platform(
             if not has_code_candidate and _has_code_candidate(cursor):
                 reusable_artifact_store = ancestor_store
                 has_code_candidate = True
+            if failure_artifact_store is None and _has_verification_failure(cursor):
+                failure_artifact_store = ancestor_store
         child_dir, actual, approved, reused = create_budget_preserving_continuation(
             source_job_dir=source_job_dir,
             source_job_uri=source_job_uri,
             jobs_dir=jobs_dir,
             reusable_source=reusable_artifact_store,
+            supplemental_reusable_source=failure_artifact_store or source_store,
             reusable_team_plan=reusable_plan,
+            explicit_child_approval_usd=explicit_child_approval_usd,
+            targeted_repair=targeted_repair,
+            low_cost_targeted_repair=low_cost_targeted_repair,
+            reverify_existing_candidate=reverify_existing_candidate,
         )
     child_uri = upload_cloud_job(child_dir, bucket=bucket, client=storage_client)
     dispatch = dispatch_approved_job_via_agent_platform(
@@ -221,7 +352,7 @@ def continue_cloud_job_via_agent_platform(
         location=location,
         client=agent_platform_client,
     )
-    ceiling = actual + approved
+    ceiling = approved if explicit_child_approval_usd is not None else actual + approved
     return CloudContinuationReceipt(
         source_job_uri=source_job_uri,
         child_job_uri=child_uri,

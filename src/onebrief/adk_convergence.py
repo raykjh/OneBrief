@@ -25,6 +25,7 @@ VERIFICATION_STATE_KEY = "onebrief_verification"
 ROUND_STATE_KEY = "onebrief_convergence_round"
 VERIFIER_CONTEXT_STATE_KEY = "onebrief_verifier_context"
 SKIP_VERIFIER_STATE_KEY = "onebrief_skip_verifier"
+REVERIFY_EXISTING_STATE_KEY = "onebrief_reverify_existing_candidate"
 
 
 class BudgetedAdkLlm(BaseLlm):
@@ -126,8 +127,14 @@ class AdkConvergenceAgent(BaseAgent):
                 }),
             )
             yield round_event
-            async for event in self.maker.run_async(ctx):
-                yield event
+            reverify_existing = (
+                round_number == 0
+                and bool(ctx.session.state.get(REVERIFY_EXISTING_STATE_KEY))
+                and ctx.session.state.get(self.maker_state_key) is not None
+            )
+            if not reverify_existing:
+                async for event in self.maker.run_async(ctx):
+                    yield event
             maker_output = ctx.session.state.get(self.maker_state_key)
             if maker_output is None:
                 raise RuntimeError("ADK maker produced no structured state output")
@@ -245,13 +252,19 @@ async def run_convergence_agent(
     payload: dict[str, Any],
     *,
     app_name: str = "onebrief-convergence",
+    initial_state: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Run and return final ADK state plus a durable, JSON-safe event trace."""
 
     user_id = "onebrief-worker"
     session_id = __import__("uuid").uuid4().hex
     sessions = InMemorySessionService()
-    await sessions.create_session(app_name=app_name, user_id=user_id, session_id=session_id)
+    await sessions.create_session(
+        app_name=app_name,
+        user_id=user_id,
+        session_id=session_id,
+        state=initial_state or {},
+    )
     runner = Runner(agent=agent, app_name=app_name, session_service=sessions)
     trace: list[dict[str, Any]] = []
     message = types.Content(

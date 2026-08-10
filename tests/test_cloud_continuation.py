@@ -6,7 +6,10 @@ from pathlib import Path
 import pytest
 
 from onebrief.budget_guard import BudgetStore
-from onebrief.cloud_continuation import create_budget_preserving_continuation
+from onebrief.cloud_continuation import (
+    _targeted_repair_estimate,
+    create_budget_preserving_continuation,
+)
 from onebrief.jobs import JobStatus, JobStore, create_job
 from onebrief.team_planning import TeamPlan
 from onebrief.schemas import (
@@ -26,6 +29,15 @@ class ReuseSource:
         destination.mkdir(parents=True, exist_ok=True)
         (destination / "analysis.json").write_text('{"ok":true}', "utf-8")
         return ["analysis.json"]
+
+
+class SupplementalReuseSource:
+    def download_reusable_artifacts(self, destination: Path) -> list[str]:
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "development_verification_failure.txt").write_text(
+            "latest failure", "utf-8"
+        )
+        return ["development_verification_failure.txt"]
 
 
 def _model(path: Path, model):
@@ -102,6 +114,7 @@ def test_continuation_inherits_only_remaining_approval(
         source_job_uri="gs://bucket/jobs/source",
         jobs_dir=tmp_path / "children",
         reusable_source=ReuseSource(),
+        supplemental_reusable_source=SupplementalReuseSource(),
         reusable_team_plan=minimal_team_plan("parent-job"),
     )
 
@@ -110,7 +123,14 @@ def test_continuation_inherits_only_remaining_approval(
     assert actual == 0
     assert child_ledger.approval.approved_usd_micros == parent_ledger.approval.approved_usd_micros
     assert approved == parent_ledger.approval.approved_usd_micros / 1_000_000
-    assert reused == ("analysis.json", "team_plan.json")
+    assert reused == (
+        "analysis.json",
+        "development_verification_failure.txt",
+        "team_plan.json",
+    )
+    assert (child / "work" / "development_verification_failure.txt").read_text(
+        "utf-8"
+    ) == "latest failure"
     manifest = json.loads((child / "work" / "continuation_manifest.json").read_text("utf-8"))
     assert manifest["source_job_id"] == record.job_id
     assert manifest["aggregate_approval_ceiling_usd"] == approved
@@ -150,3 +170,69 @@ def test_continuation_rejects_nonterminal_source(
             jobs_dir=tmp_path / "children",
             reusable_source=ReuseSource(),
         )
+
+
+def test_explicit_reauthorization_uses_only_new_approval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("onebrief.jobs.create_project_snapshot", lambda *_args: None)
+    source = InternalSource(
+        name="rules", priority=SourcePriority.MANDATORY,
+        content="truth", size_bytes=5,
+    )
+    estimate = _estimate()
+    source_dir = create_job(
+        jobs_dir=tmp_path / "source-jobs",
+        intake=_intake(source),
+        requirements=_requirements(),
+        sources=[source],
+        estimate=estimate,
+        approved_usd=estimate.recommended_cost_usd,
+    )
+    JobStore(source_dir).finish(
+        JobStatus.FAILED, stage="test", message="expected failure"
+    )
+
+    child, _actual, approved, _reused = create_budget_preserving_continuation(
+        source_job_dir=source_dir,
+        source_job_uri="gs://bucket/jobs/source",
+        jobs_dir=tmp_path / "children",
+        reusable_source=ReuseSource(),
+        explicit_child_approval_usd=0.15,
+    )
+
+    assert approved == 0.15
+    assert BudgetStore(child / "run").read().approval.approved_usd_micros == 150_000
+    manifest = json.loads((child / "work" / "continuation_manifest.json").read_text("utf-8"))
+    assert manifest["authorization_kind"] == "explicit_additional_user_approval"
+    assert manifest["aggregate_approval_ceiling_usd"] == 0.15
+    assert manifest["source_unused_usd_abandoned"] == 0.1
+
+
+def test_targeted_repair_estimate_charges_only_remaining_work() -> None:
+    base = _estimate()
+    template = base.stages[0]
+    estimate = base.model_copy(update={
+        "stages": [
+            template.model_copy(update={"stage": stage})
+            for stage in (
+                "long_form_draft",
+                "independent_verification",
+                "final_approval",
+            )
+        ],
+    })
+
+    targeted = _targeted_repair_estimate(estimate)
+
+    assert [item.stage for item in targeted.stages] == [
+        "long_form_draft", "independent_verification", "final_approval"
+    ]
+    assert targeted.minimum_cost_usd < 0.25
+    assert all(item.minimum_calls == item.maximum_calls == 1 for item in targeted.stages)
+
+    low_cost = _targeted_repair_estimate(estimate, low_cost_models=True)
+
+    assert all(item.model == "gemini-3.5-flash-lite" for item in low_cost.stages)
+    assert low_cost.minimum_cost_usd < 0.098586

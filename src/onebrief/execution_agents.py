@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable, Protocol, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -184,17 +185,37 @@ class DeveloperAgent:
                     needle = str(change.get("search") or "")
                     approved_baseline = str(source_map.get(path, {}).get("content", ""))
                     previous_baseline = previous_map.get(path, "")
-                    baseline = (
-                        previous_baseline
-                        if previous_baseline.count(needle) == 1
-                        else approved_baseline
-                    )
-                    if baseline.count(needle) != 1:
+                    baseline = ""
+                    match: tuple[int, int] | None = None
+                    for candidate in (previous_baseline, approved_baseline):
+                        if candidate.count(needle) == 1:
+                            start = candidate.index(needle)
+                            baseline = candidate
+                            match = (start, start + len(needle))
+                            break
+                    if match is None:
+                        # Preserve the exact non-whitespace token sequence while
+                        # tolerating a model's formatting-only JSX reflow. The
+                        # edit remains valid only when one approved baseline has
+                        # exactly one complete match.
+                        chunks = re.findall(r"\S+", needle)
+                        if chunks:
+                            pattern = re.compile(r"\s+".join(re.escape(chunk) for chunk in chunks))
+                            for candidate in (previous_baseline, approved_baseline):
+                                matches = list(pattern.finditer(candidate))
+                                if len(matches) == 1:
+                                    baseline = candidate
+                                    match = matches[0].span()
+                                    break
+                    if match is None:
                         raise ValueError(
                             f"exact search text must occur once in approved source: {path}"
                         )
-                    change["content"] = baseline.replace(
-                        needle, str(change.get("replace") or ""), 1
+                    start, end = match
+                    change["content"] = (
+                        baseline[:start]
+                        + str(change.get("replace") or "")
+                        + baseline[end:]
                     )
                     if change.get("base_sha256") is None and path in source_map:
                         change["base_sha256"] = source_map[path].get("sha256")
@@ -246,7 +267,10 @@ class DeveloperAgent:
             "with a non-null repository_path in approved_repository_files or add a necessary text source file "
             "under the same project. For an existing file, copy its exact "
             "sha256 into base_sha256. For a small existing-file edit, prefer one exact search/replace pair "
-            "instead of complete content; search must occur exactly once. For a new file use null and complete content. "
+            "instead of complete content; search must be copied verbatim and occur exactly once. Never invent, "
+            "summarize, or elide exact search text. When a repair changes multiple distant regions of one file "
+            "(for example a new interaction plus all affected visible copy), return that file's complete content "
+            "instead of a fragile search/replace edit. For a new file use null and complete content. "
             "Never touch secrets, dependencies, generated data, Git metadata, deployment, accounts, or trading. "
             "Files marked immutable_acceptance_contract are binding regression contracts: do not edit them and "
             "preserve every behavior, marker, control, and data contract they assert. Prefer additive, localized "

@@ -328,3 +328,34 @@ def test_latest_numbered_revision_overwrites_base_candidate(tmp_path: Path) -> N
     work = tmp_path / "work"
     GCSJobStore("gs://onebrief-test/jobs/prior", client=Client()).download_reusable_artifacts(work)
     assert json.loads((work / "code_change_set.json").read_text("utf-8"))["summary"] == "revision"
+
+
+def test_latest_development_failure_becomes_canonical_resume_feedback(tmp_path: Path) -> None:
+    objects = {
+        "jobs/prior/work/development_verification_failure_r0.txt": b"lint failed",
+        "jobs/prior/work/development_verification_failure_r1.txt": b"language control failed",
+        "jobs/prior/work/development_verification_failure.txt": b"english copy leaked",
+    }
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+        def download_to_filename(self, filename):
+            if self.name not in objects:
+                raise NotFound("missing")
+            Path(filename).write_bytes(objects[self.name])
+
+    class Client:
+        def bucket(self, _name):
+            return type("Bucket", (), {"blob": lambda _self, name: Blob(name)})()
+
+    work = tmp_path / "work"
+    copied = GCSJobStore(
+        "gs://onebrief-test/jobs/prior", client=Client()
+    ).download_reusable_artifacts(work)
+
+    assert "development_verification_failure.txt" in copied
+    assert (work / "development_verification_failure.txt").read_text("utf-8") == (
+        "english copy leaked"
+    )

@@ -31,6 +31,10 @@ REUSABLE_WORK_ARTIFACTS = (
     "code_change_set_r4.json",
     "code_change_set_r5.json",
     "code_change_set_r6.json",
+    "development_verification_failure_r0.txt",
+    "development_verification_failure_r1.txt",
+    "development_verification_failure_r2.txt",
+    "development_verification_failure.txt",
 )
 
 
@@ -231,21 +235,30 @@ class GCSJobStore:
         copied: list[dict[str, str]] = []
         for name in REUSABLE_WORK_ARTIFACTS:
             source_name = name
-            target_name = "code_change_set.json" if name.startswith("code_change_set") else name
+            target_name = (
+                "code_change_set.json"
+                if name.startswith("code_change_set")
+                else (
+                    "development_verification_failure.txt"
+                    if name.startswith("development_verification_failure")
+                    else name
+                )
+            )
             target = (destination_work / target_name).resolve()
+            temporary = destination_work / f".reuse-{source_name}.tmp"
             if not target.is_relative_to(destination_work):
                 raise ValueError("unsafe reusable artifact destination")
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 self.bucket.blob(self._name(f"work/{source_name}")).download_to_filename(
-                    str(target)
+                    str(temporary)
                 )
+                os.replace(temporary, target)
             except NotFound:
                 # Several versioned candidate names intentionally map to the
                 # same canonical target. A missing newer candidate must not
                 # erase an older allowlisted candidate already copied.
-                if not target.exists():
-                    target.unlink(missing_ok=True)
+                temporary.unlink(missing_ok=True)
                 continue
             digest = hashlib.sha256(target.read_bytes()).hexdigest()
             copied.append({"source": source_name, "target": target_name, "sha256": digest})

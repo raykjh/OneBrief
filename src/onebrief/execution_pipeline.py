@@ -19,6 +19,7 @@ from onebrief.adk_convergence import (
     ROUND_STATE_KEY,
     SKIP_VERIFIER_STATE_KEY,
     VERIFICATION_STATE_KEY,
+    REVERIFY_EXISTING_STATE_KEY,
     VERIFIER_CONTEXT_STATE_KEY,
     build_text_convergence_agent,
     run_convergence_agent,
@@ -397,7 +398,11 @@ class ExecutionPipeline:
             maker_instruction=maker_instruction,
             verifier_instruction=verifier_instruction,
             maker_output_tokens=WRITER_OUTPUT_CAP,
-            verifier_output_tokens=VERIFIER_OUTPUT_CAP,
+            verifier_output_tokens=(
+                min(VERIFIER_OUTPUT_CAP, 1_200)
+                if prior_failure.is_file()
+                else VERIFIER_OUTPUT_CAP
+            ),
             after_maker=after_maker,
             verification_gate=verification_gate,
         )
@@ -460,19 +465,71 @@ class ExecutionPipeline:
                 prepared["source_role"] = "read_only_context"
             prepared_sources.append(prepared)
 
-        previous_change_set: BaseModel | None = None
+        # A Cloud continuation may restore the last verified-or-failed candidate
+        # into the fresh child work directory.  Preserve that candidate as the
+        # same maker's starting point instead of silently asking the model to
+        # reconstruct the whole change set from source context again.
+        previous_change_set: BaseModel | None = self._load(
+            output_dir / "code_change_set.json", change_schema
+        )
         latest_run: DevelopmentRun | None = None
+        initial_state: dict[str, object] = {}
+        maker_sources = prepared_sources
+        prior_failure = output_dir / "development_verification_failure.txt"
+        if previous_change_set is not None:
+            initial_state[MAKER_STATE_KEY] = previous_change_set.model_dump(mode="json")
+            if (output_dir / "reverify_existing_candidate.json").is_file():
+                initial_state[REVERIFY_EXISTING_STATE_KEY] = True
+            changed_paths = {
+                str(getattr(item, "path", ""))
+                for item in getattr(previous_change_set, "changes", [])
+            }
+            # The current candidate is already supplied in ADK state. Avoid
+            # sending the original version of the same large file a second
+            # time, while retaining the trusted full sources in the closure
+            # for exact-edit promotion and base-hash enforcement.
+            maker_sources = []
+            for source in prepared_sources:
+                compact = dict(source)
+                if str(compact.get("repository_path", "")) in changed_paths:
+                    compact["content"] = (
+                        "Current candidate content is authoritative in previous_artifact. "
+                        "Use an exact small repair against that candidate."
+                    )
+                maker_sources.append(compact)
+        if previous_change_set is not None and prior_failure.is_file():
+            feedback = " ".join(prior_failure.read_text("utf-8").split())[:12_000]
+            initial_state[VERIFICATION_STATE_KEY] = VerificationReport(
+                verdict=Verdict.REVISE,
+                criterion_checks=[{
+                    "criterion": "Latest isolated continuation check",
+                    "passed": False,
+                    "evidence": feedback,
+                }],
+                blocking_issues=[feedback],
+                revision_instructions=[
+                    "Repair only this evidenced failure and preserve all passing behavior."
+                ],
+                missing_information=[],
+            ).model_dump(mode="json")
 
         def after_maker(raw: object, _ctx, round_number: int) -> dict[str, object]:
             nonlocal previous_change_set, latest_run
-            delta = developer.promote_candidate(
-                raw, prepared_sources, previous_change_set
+            reverify_existing = (
+                round_number == 0
+                and bool(_ctx.session.state.get(REVERIFY_EXISTING_STATE_KEY))
+                and previous_change_set is not None
+            )
+            delta = (
+                previous_change_set
+                if reverify_existing
+                else developer.promote_candidate(raw, prepared_sources, previous_change_set)
             )
             self._write(
                 output_dir / f"code_change_set_delta_r{round_number}.json",
                 delta.model_dump_json(indent=2),
             )
-            candidate = (
+            candidate = previous_change_set if reverify_existing else (
                 self._merge_development_retry(previous_change_set, delta)
                 if previous_change_set is not None
                 else delta
@@ -591,6 +648,12 @@ class ExecutionPipeline:
             "runtime, or independent-review failure while preserving all "
             "previously passing behavior. New files may use complete content; existing files must use exact edits. "
             "Prefer small incremental changes that can be verified and extended in later rounds. Return only the schema."
+            " For web language repairs, expose a real select whose identity contains language or locale and whose "
+            "option values are canonical locale codes such as ko and en. Activating every option must update "
+            "document.documentElement.lang and visibly change all meaningful page copy, not only the status line. "
+            "For an English state, translate or conditionally render the headings, controls, cards, explanatory "
+            "copy, and disclaimer so the remaining non-Latin copy does not dominate the page. A generic button with only "
+            "an aria-label is not a verifiable language control."
             + (("\n\n" + developer.skill_context) if developer.skill_context else "")
         )
         verifier_instruction = (
@@ -618,7 +681,17 @@ class ExecutionPipeline:
             max_revision_rounds=intake.max_revision_rounds,
             maker_instruction=maker_instruction,
             verifier_instruction=verifier_instruction,
-            maker_output_tokens=DEVELOPER_OUTPUT_CAP,
+            maker_output_tokens=(
+                min(
+                    DEVELOPER_OUTPUT_CAP,
+                    8_000
+                    if self.stage_models.get("long_form_draft")
+                    == "gemini-3.5-flash-lite"
+                    else 4_000,
+                )
+                if prior_failure.is_file()
+                else DEVELOPER_OUTPUT_CAP
+            ),
             verifier_output_tokens=VERIFIER_OUTPUT_CAP,
             after_maker=after_maker,
             verification_gate=verification_gate,
@@ -626,8 +699,8 @@ class ExecutionPipeline:
         state, trace = asyncio.run(run_convergence_agent(agent, {
             "work_contract": contract,
             "analysis_package": analysis.model_dump(mode="json"),
-            "approved_repository_files": prepared_sources,
-        }))
+            "approved_repository_files": maker_sources,
+        }, initial_state=initial_state))
         self._write(
             output_dir / "adk_convergence_trace.json",
             json.dumps({
@@ -1460,6 +1533,11 @@ class ExecutionPipeline:
                         self.gateway,
                         "final_approval",
                         self.stage_models.get("final_approval", "gemini-3.5-flash"),
+                        max_output_tokens=(
+                            600
+                            if (output_dir / "development_verification_failure.txt").is_file()
+                            else 1200
+                        ),
                     ).run({
                         "contract": contract,
                         "pipeline_status": status.value,

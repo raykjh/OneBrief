@@ -323,6 +323,92 @@ def test_adk_software_loop_repairs_failed_isolated_test_before_independent_revie
     assert trace["agent_tree"]["same_maker_reused"] is True
 
 
+def test_adk_software_continuation_restores_previous_change_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    previous = CodeChangeSet(summary="Prior candidate", changes=[{
+        "path": "web/src/status.ts", "base_sha256": None,
+        "content": "export const status = 'almost-ready';\n",
+        "reason": "Preserve the prior Cloud candidate.",
+    }])
+    repaired = CodeChangeSet(summary="Targeted repair", changes=[{
+        "path": "web/src/status.ts", "base_sha256": None,
+        "content": "export const status = 'ready';\n",
+        "reason": "Repair the one remaining criterion.",
+    }])
+
+    class ResumeGateway(BudgetedGeminiClient):
+        def __init__(self) -> None:
+            self.outputs = [
+                repaired.model_dump(mode="json"),
+                _verification("PASS").model_dump(mode="json"),
+            ]
+
+        def generate_adk_response(self, **_kwargs: object) -> types.GenerateContentResponse:
+            payload = self.outputs.pop(0)
+            return types.GenerateContentResponse(candidates=[types.Candidate(
+                content=types.Content(
+                    role="model", parts=[types.Part(text=json.dumps(payload))]
+                ),
+                finish_reason=types.FinishReason.STOP,
+            )])
+
+    observed_previous: list[CodeChangeSet | None] = []
+    original_promote = DeveloperAgent.promote_candidate
+
+    def capture_previous(
+        self: DeveloperAgent, raw: object, sources: list[dict[str, object]],
+        previous_change_set: CodeChangeSet | None = None,
+    ) -> CodeChangeSet:
+        observed_previous.append(previous_change_set)
+        return original_promote(self, raw, sources, previous_change_set)
+
+    def fake_apply(
+        _self: ExecutionPipeline, _intake: IntakeRequest, _pack: object,
+        supplied: CodeChangeSet, development_dir: Path, _contract: dict[str, object],
+    ) -> DevelopmentRun:
+        assert supplied.changes[0].content == "export const status = 'ready';\n"
+        return DevelopmentRun(
+            status="verified", repository_name="exchange", base_head_sha="a" * 40,
+            summary=supplied.summary, changed_paths=["web/src/status.ts"],
+            commands=[], patch_path="development/changes.patch",
+            safety_boundary=["isolated clone only"],
+        )
+
+    monkeypatch.setattr(DeveloperAgent, "promote_candidate", capture_previous)
+    monkeypatch.setattr(ExecutionPipeline, "_apply_development_change_set", fake_apply)
+    intake = IntakeRequest(
+        goal="Finish the prior Exchange repair.",
+        output_target=OutputTarget.EXISTING_PROJECT,
+        toolpack_ids=[ToolPackId.EXCHANGE_DEVELOPMENT],
+    )
+    output_dir = tmp_path / "continued"
+    output_dir.mkdir()
+    (output_dir / "code_change_set.json").write_text(
+        previous.model_dump_json(indent=2), encoding="utf-8"
+    )
+    (output_dir / "development_verification_failure.txt").write_text(
+        "Visible text did not change after the language control was activated.",
+        encoding="utf-8",
+    )
+
+    _, report, _ = ExecutionPipeline(
+        tmp_path / "run", gateway=ResumeGateway()
+    )._run_adk_development_convergence(
+        intake=intake, requirements=_requirements(), sources=[_source()],
+        source_payload=[{
+            "name": "exchange-source/web/src/status.ts", "priority": "mandatory",
+            "requirement_keys": ["status"], "content": "export const status = 'old';",
+            "sha256": "b" * 64,
+        }],
+        contract={"goal": intake.goal, "acceptance_criteria": ["Tests pass."]},
+        analysis=_analysis(), output_dir=output_dir,
+    )
+
+    assert report.verdict == Verdict.PASS
+    assert observed_previous == [previous]
+
+
 def test_budget_block_writes_resumable_checkpoint(tmp_path: Path) -> None:
     intake = IntakeRequest(goal="Create a guide.")
     source = _source()
@@ -788,6 +874,34 @@ def test_exact_retry_falls_back_to_approved_source_after_corrupt_full_file() -> 
     assert "corrupted" not in result.changes[0].content
     assert "aria-label" in result.changes[0].content
     assert "<option>한국어</option>" in result.changes[0].content
+
+def test_exact_retry_accepts_unique_jsx_whitespace_reflow() -> None:
+    original = '<header>\n  <select id="lang-select">\n    <option value="ko">KO</option>\n  </select>\n</header>\n'
+    proposal = ProposedProjectCodeChangeSet.model_validate({
+        "summary": "Repair the language control.",
+        "changes": [{
+            "path": "web/app/page.tsx",
+            "search": '<select id="lang-select"> <option value="ko">KO</option> </select>',
+            "replace": '<select id="lang-select"><option value="en">English</option></select>',
+            "reason": "Apply the unique bounded JSX repair despite formatting-only drift.",
+        }],
+    })
+    developer = DeveloperAgent(
+        FakeGateway([]),
+        change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/",
+        path_approver=lambda path: path if path == "web/app/page.tsx" else None,
+    )
+
+    result = developer.promote_candidate(proposal, [{
+        "repository_path": "web/app/page.tsx",
+        "sha256": "a" * 64,
+        "content": original,
+    }])
+
+    assert '<option value="en">English</option>' in result.changes[0].content
+    assert result.changes[0].content.startswith("<header>")
+
 
 def test_exchange_development_budget_includes_compact_retry_capacity() -> None:
     intake = IntakeRequest(goal="Improve Exchange.", toolpack_ids=[ToolPackId.EXCHANGE_DEVELOPMENT])

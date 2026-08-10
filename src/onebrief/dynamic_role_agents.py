@@ -55,10 +55,18 @@ class DynamicRoleAgent:
 
 
 class GovernanceAgent:
-    def __init__(self, gateway: StructuredGateway, stage: str, model: str):
+    def __init__(
+        self,
+        gateway: StructuredGateway,
+        stage: str,
+        model: str,
+        *,
+        max_output_tokens: int = 1200,
+    ):
         self.gateway = gateway
         self.stage = stage
         self.model = model
+        self.max_output_tokens = max_output_tokens
 
     def run(self, payload: dict[str, object]) -> GovernanceDecision:
         result = self.gateway.generate_json(
@@ -66,7 +74,7 @@ class GovernanceAgent:
             model=self.model,
             contents=json.dumps(payload, ensure_ascii=False),
             schema=GovernanceDecision,
-            max_output_tokens=1200,
+            max_output_tokens=self.max_output_tokens,
             temperature=0.0,
             system_instruction=(
                 f"You own the {self.stage} governance gate. Return PASS only when the supplied evidence, "
