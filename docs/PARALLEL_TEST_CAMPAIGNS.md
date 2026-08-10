@@ -62,3 +62,17 @@ The pilot configuration reserves at most USD 18: USD 8 for Exchange, USD 6 for t
 web application, and USD 4 for the workbook. This is a configuration ceiling, not
 permission to spend. Cloud execution still requires the user's explicit campaign
 approval.
+
+After approval, the reproducible pilot launcher submits all three stage-one flows in
+separate processes so environment state and session storage cannot leak across lanes:
+
+```powershell
+.venv\Scripts\python scripts\run_parallel_pilot.py submit `
+  benchmarks\campaigns\onebrief-pilot-20260810
+.venv\Scripts\python scripts\run_parallel_pilot.py monitor `
+  benchmarks\campaigns\onebrief-pilot-20260810 --timeout 3600
+```
+
+Each lane reserves USD 0.20 of its cap for bounded intake and approves at most the
+remaining amount for the immutable worker job. The three Cloud Run executions may run
+concurrently, but evidence and any later safe-apply operation remain isolated.
