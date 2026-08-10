@@ -175,19 +175,31 @@ class DeveloperAgent:
                 str(getattr(item, "path", "")): str(getattr(item, "content", ""))
                 for item in getattr(previous_change_set, "changes", [])
             }
-            changes: list[dict[str, Any]] = []
+            # Compose several bounded edits for one file into one final change.
+            # The trusted schema still receives exactly one row per path.
+            changes_by_path: dict[str, dict[str, Any]] = {}
             for item in proposed.changes:
                 change = item.model_dump(mode="json")
                 path = str(change.get("path", ""))
                 if self.path_approver(path) is None:
                     continue
+                pending = changes_by_path.get(path.casefold())
+                if pending is not None and change.get("content") is not None:
+                    raise ValueError(
+                        f"duplicate full-file proposals are ambiguous: {path}"
+                    )
                 if change.get("content") is None:
                     needle = str(change.get("search") or "")
                     approved_baseline = str(source_map.get(path, {}).get("content", ""))
                     previous_baseline = previous_map.get(path, "")
+                    pending_baseline = str(pending.get("content", "")) if pending else ""
                     baseline = ""
                     match: tuple[int, int] | None = None
-                    for candidate in (previous_baseline, approved_baseline):
+                    for candidate in (
+                        pending_baseline,
+                        previous_baseline,
+                        approved_baseline,
+                    ):
                         if candidate.count(needle) == 1:
                             start = candidate.index(needle)
                             baseline = candidate
@@ -201,7 +213,11 @@ class DeveloperAgent:
                         chunks = re.findall(r"\S+", needle)
                         if chunks:
                             pattern = re.compile(r"\s+".join(re.escape(chunk) for chunk in chunks))
-                            for candidate in (previous_baseline, approved_baseline):
+                            for candidate in (
+                                pending_baseline,
+                                previous_baseline,
+                                approved_baseline,
+                            ):
                                 matches = list(pattern.finditer(candidate))
                                 if len(matches) == 1:
                                     baseline = candidate
@@ -219,11 +235,13 @@ class DeveloperAgent:
                     )
                     if change.get("base_sha256") is None and path in source_map:
                         change["base_sha256"] = source_map[path].get("sha256")
+                    if pending is not None and pending.get("base_sha256") is not None:
+                        change["base_sha256"] = pending["base_sha256"]
                 change.pop("search", None)
                 change.pop("replace", None)
-                changes.append(change)
+                changes_by_path[path.casefold()] = change
             proposal = proposed.model_dump(mode="json")
-            proposal["changes"] = changes
+            proposal["changes"] = list(changes_by_path.values())
             return self.change_set_schema.model_validate(proposal)
         return self.change_set_schema.model_validate(raw)
 

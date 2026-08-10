@@ -838,6 +838,46 @@ def test_project_developer_promotes_exact_search_replace_without_rewriting_file(
     assert "<option>한국어</option>" in result.changes[0].content
 
 
+def test_project_developer_composes_multiple_exact_edits_for_one_path() -> None:
+    original = "<main><h1>Old</h1><p>Draft</p></main>"
+    proposal = ProposedProjectCodeChangeSet.model_validate({
+        "summary": "Complete two bounded edits in one approved file.",
+        "changes": [
+            {
+                "path": "src/index.html",
+                "base_sha256": "a" * 64,
+                "search": "<h1>Old</h1>",
+                "replace": "<h1>Ready</h1>",
+                "reason": "Update the primary heading.",
+            },
+            {
+                "path": "src/index.html",
+                "base_sha256": "a" * 64,
+                "search": "<p>Draft</p>",
+                "replace": "<p>Verified</p>",
+                "reason": "Update the supporting status.",
+            },
+        ],
+    })
+    developer = DeveloperAgent(
+        FakeGateway([]),
+        change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/",
+        path_approver=lambda path: path if path == "src/index.html" else None,
+    )
+
+    result = developer.promote_candidate(proposal, [{
+        "repository_path": "src/index.html",
+        "sha256": "a" * 64,
+        "content": original,
+    }])
+
+    assert len(result.changes) == 1
+    assert result.changes[0].content == (
+        "<main><h1>Ready</h1><p>Verified</p></main>"
+    )
+
+
 def test_exact_retry_falls_back_to_approved_source_after_corrupt_full_file() -> None:
     original = '<select id="langSelect">\n<option>한국어</option>\n</select>\n'
     proposal = ProposedProjectCodeChangeSet.model_validate({

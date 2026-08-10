@@ -15,6 +15,9 @@ if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
 from onebrief.cloud_jobs import GCSJobStore  # noqa: E402
+from onebrief.agent_platform_client import (  # noqa: E402
+    dispatch_approved_job_via_agent_platform,
+)
 from onebrief.evaluation import ExecutionEvaluation  # noqa: E402
 from onebrief.jobs import JobStatus  # noqa: E402
 from onebrief.parallel_campaign import (  # noqa: E402
@@ -144,7 +147,7 @@ def submit_lane(campaign_root: Path, lane_id: str) -> dict[str, object]:
         data["existing_project_id"] = project_id
     payload = _require_ok(client.post("/api/inspect", data=data, files=files), "inspection")
 
-    for _ in range(3):
+    for _ in range(6):
         if payload.get("sixsense_pending"):
             payload = _require_ok(
                 client.post(
@@ -164,7 +167,15 @@ def submit_lane(campaign_root: Path, lane_id: str) -> dict[str, object]:
             "mandatory information supplement",
         )
     if payload.get("sixsense_pending") or not payload["requirements"]["ready_for_estimate"]:
-        raise RuntimeError("lane did not reach an estimable completion contract")
+        diagnostic = runtime / "requirements-diagnostic.json"
+        diagnostic.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        questions = payload.get("requirements", {}).get("consolidated_questions", [])
+        raise RuntimeError(
+            "lane did not reach an estimable completion contract: "
+            + "; ".join(str(item) for item in questions)
+        )
     budget = payload.get("budget")
     preparation = payload.get("preparation")
     if not budget or not preparation or not preparation["ready_for_authorization"]:
@@ -205,6 +216,57 @@ def submit_lane(campaign_root: Path, lane_id: str) -> dict[str, object]:
     }
     target = runtime / "submission.json"
     target.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return receipt
+
+
+def dispatch_uploaded(campaign_root: Path, lane_id: str, job_uri: str) -> dict[str, object]:
+    """Retry only Agent Platform routing for an already approved immutable job."""
+    store = ParallelCampaignStore(campaign_root)
+    manifest = store.manifest()
+    spec = next(item for item in manifest.lanes if item.lane_id == lane_id)
+    remote = GCSJobStore(job_uri)
+    record = remote.read_job()
+    if record.status != JobStatus.QUEUED or record.attempts != 0:
+        raise RuntimeError(
+            f"only an unclaimed queued job can be redispatched, not {record.status.value} "
+            f"attempt {record.attempts}"
+        )
+    approval = remote.read_json("run/approval.json")
+    approved_usd = int(approval["approved_usd_micros"]) / 1_000_000
+    if approved_usd > spec.max_budget_usd - RESERVED_INTAKE_USD:
+        raise PermissionError("uploaded job approval exceeds the frozen lane budget")
+    dispatch = dispatch_approved_job_via_agent_platform(
+        resource_name=AGENT_ENGINE,
+        job_uri=job_uri,
+        user_id=f"onebrief-pilot-retry-{lane_id}",
+        project=PROJECT,
+        location=REGION,
+    )
+    receipt = {
+        "schema_version": "onebrief-parallel-lane-submission-v1",
+        "campaign_id": manifest.campaign_id,
+        "lane_id": lane_id,
+        "baseline_commit_sha": manifest.baseline.commit_sha,
+        "baseline_image_digest": manifest.baseline.image_digest,
+        "case_sha256": spec.case_sha256,
+        "approved_execution_usd": approved_usd,
+        "reserved_intake_usd": RESERVED_INTAKE_USD,
+        "lane_total_cap_usd": spec.max_budget_usd,
+        "session_id": f"retry-{lane_id}",
+        "dispatch": {"status": "queued", "event_count": dispatch.event_count},
+        "execution": {
+            "session_id": f"retry-{lane_id}",
+            "job_uri": job_uri,
+            "operation_name": dispatch.cloud_run_operation,
+            "agent_engine_resource": dispatch.agent_engine_resource,
+            "agent_engine_session": dispatch.agent_engine_session,
+        },
+    }
+    runtime = campaign_root / "runtime" / lane_id
+    runtime.mkdir(parents=True, exist_ok=True)
+    (runtime / "submission.json").write_text(
+        json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return receipt
 
 
@@ -320,6 +382,10 @@ def main() -> None:
     observe = subparsers.add_parser("monitor")
     observe.add_argument("campaign_root", type=Path)
     observe.add_argument("--timeout", type=int, default=3600)
+    redispatch = subparsers.add_parser("dispatch-uploaded")
+    redispatch.add_argument("campaign_root", type=Path)
+    redispatch.add_argument("lane_id")
+    redispatch.add_argument("job_uri")
     args = parser.parse_args()
     campaign_root = args.campaign_root.resolve()
     if args.command == "submit":
@@ -327,8 +393,14 @@ def main() -> None:
             print(json.dumps(submit_lane(campaign_root, args.lane_id), ensure_ascii=False, indent=2))
         else:
             submit_all(campaign_root)
-    else:
+    elif args.command == "monitor":
         monitor(campaign_root, args.timeout)
+    else:
+        print(json.dumps(
+            dispatch_uploaded(campaign_root, args.lane_id, args.job_uri),
+            ensure_ascii=False,
+            indent=2,
+        ))
 
 
 if __name__ == "__main__":

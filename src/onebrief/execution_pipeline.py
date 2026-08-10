@@ -398,11 +398,7 @@ class ExecutionPipeline:
             maker_instruction=maker_instruction,
             verifier_instruction=verifier_instruction,
             maker_output_tokens=WRITER_OUTPUT_CAP,
-            verifier_output_tokens=(
-                min(VERIFIER_OUTPUT_CAP, 1_200)
-                if prior_failure.is_file()
-                else VERIFIER_OUTPUT_CAP
-            ),
+            verifier_output_tokens=VERIFIER_OUTPUT_CAP,
             after_maker=after_maker,
             verification_gate=verification_gate,
         )
