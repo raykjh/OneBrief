@@ -74,3 +74,7 @@ and result package structure.
 
 See `docs/CLOUD_RUN_JOBS.md` for cloud deployment, submission, observation, and
 result retrieval.
+
+See `docs/PARALLEL_TEST_CAMPAIGNS.md` for the frozen-baseline architecture that runs
+three evidence-only test lanes and permits only one integration lane to patch common
+code and promote a fully revalidated candidate.
