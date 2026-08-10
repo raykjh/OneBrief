@@ -85,6 +85,11 @@ class RecoveryPolicy:
             "prohibited host-runtime capability",
             "absent from approved_repository_files",
         )
+        verification_setup_markers = (
+            "command not found", "eslint: not found",
+            "is not recognized as an internal or external command",
+            "could not determine executable to run",
+        )
 
         if isinstance(error, BudgetExceeded):
             error_class = ErrorClass.BUDGET
@@ -106,6 +111,26 @@ class RecoveryPolicy:
             rationale = (
                 "A required build artifact is missing; the runtime must repair command ordering rather "
                 "than asking the maker to alter product code."
+            )
+        elif context == "development_verification" and any(
+            marker in message for marker in verification_setup_markers
+        ):
+            error_class = ErrorClass.VERIFICATION_SETUP
+            responsible = "runtime"
+            rationale = (
+                "A fixed validator dependency is unavailable; the runtime must restore its locked "
+                "toolchain instead of spending maker retries on unchanged product code."
+            )
+        elif (
+            context == "development_verification"
+            and message.startswith("development verification failed: node_")
+            and "_dependencies" in message
+        ):
+            error_class = ErrorClass.VERIFICATION_SETUP
+            responsible = "runtime"
+            rationale = (
+                "Dependency restoration is a fixed runtime responsibility and must never consume "
+                "maker revision calls."
             )
         elif message.startswith((
             "development verification failed:",

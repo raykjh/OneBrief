@@ -23,7 +23,13 @@ from google.cloud import storage
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from onebrief.cloud_jobs import GCSJobStore, CloudExecutionReceipt, submit_cloud_job
+from onebrief.cloud_jobs import (
+    GCSJobStore,
+    CloudExecutionReceipt,
+    submit_cloud_job,
+    upload_cloud_job,
+)
+from onebrief.agent_platform_client import dispatch_approved_job_via_agent_platform
 from onebrief.automatic_resume import (
     can_attempt_automatic_resume,
     revalidate_failed_development,
@@ -111,6 +117,8 @@ class ExecutionLink(BaseModel):
     job_uri: str
     operation_name: str
     created_at: str
+    agent_engine_resource: str | None = None
+    agent_engine_session: str | None = None
 
 
 class RunApproval(BaseModel):
@@ -1103,25 +1111,57 @@ async def run_session(
                     GCSJobStore(session.reuse_source_job_uri).download_reusable_artifacts,
                     job_dir / "work",
                 )
-            receipt: CloudExecutionReceipt = await asyncio.to_thread(
-                submit_cloud_job,
-                job_dir,
-                bucket=bucket,
-                project=project,
-                region=region,
-                cloud_run_job=job_name,
-            )
+            agent_engine_resource = os.environ.get("ONEBRIEF_AGENT_ENGINE_RESOURCE")
+            if agent_engine_resource:
+                job_uri = await asyncio.to_thread(
+                    upload_cloud_job, job_dir, bucket=bucket
+                )
+                dispatch = await asyncio.to_thread(
+                    dispatch_approved_job_via_agent_platform,
+                    resource_name=agent_engine_resource,
+                    job_uri=job_uri,
+                    user_id=f"onebrief-web-{session_id}",
+                    project=project,
+                    location=region,
+                )
+                receipt = CloudExecutionReceipt(
+                    job_uri=job_uri,
+                    cloud_run_job=(
+                        f"projects/{project}/locations/{region}/jobs/{job_name}"
+                    ),
+                    operation_name=dispatch.cloud_run_operation,
+                )
+            else:
+                dispatch = None
+                receipt = await asyncio.to_thread(
+                    submit_cloud_job,
+                    job_dir,
+                    bucket=bucket,
+                    project=project,
+                    region=region,
+                    cloud_run_job=job_name,
+                )
         link = ExecutionLink(
             session_id=session_id,
             job_uri=receipt.job_uri,
             operation_name=receipt.operation_name,
             created_at=_now(),
+            agent_engine_resource=(
+                dispatch.agent_engine_resource if dispatch is not None else None
+            ),
+            agent_engine_session=(
+                dispatch.agent_engine_session if dispatch is not None else None
+            ),
         )
         store.save_execution(link)
         return {
             "session_id": session_id,
             "status": "queued",
-            "message": "The Cloud Run background job was queued within the approved budget.",
+            "message": (
+                "The Agent Platform project owner queued the approved Cloud Run job."
+                if dispatch is not None
+                else "The Cloud Run background job was queued within the approved budget."
+            ),
         }
     except Exception as exc:
         store.release_run(session_id)
@@ -1141,6 +1181,18 @@ async def session_status(
         )
         record = await asyncio.to_thread(repository.read_job)
         payload = record.model_dump(mode="json")
+        payload["execution_trace"] = {
+            "job_uri": link.job_uri,
+            "cloud_run_operation": link.operation_name,
+            "agent_engine_resource": link.agent_engine_resource,
+            "agent_dispatch_id": link.agent_engine_session,
+        }
+        try:
+            payload["evaluation"] = await asyncio.to_thread(
+                repository.read_json, "work/evaluation_metrics.json"
+            )
+        except FileNotFoundError:
+            payload["evaluation"] = None
         try:
             session = store.read(session_id)
             try:

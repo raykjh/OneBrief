@@ -1,6 +1,7 @@
 from pathlib import Path
 import hashlib
 import subprocess
+import sys
 
 import pytest
 from pydantic import ValidationError
@@ -9,12 +10,23 @@ from onebrief.development_toolpack import (
     CodeChangeSet,
     DevelopmentCommandResult,
     ExchangeDevelopmentToolPack,
+    _default_runner,
     FileChange,
     _bee_failure_diagnostics,
     _unity_test_failure_diagnostics,
     _verification_signals,
     sha256_file,
 )
+
+
+def test_default_runner_reports_process_exit_code(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match=r"exit_code=7"):
+        _default_runner(
+            "failing_fixture",
+            [sys.executable, "-c", "raise SystemExit(7)"],
+            tmp_path,
+            30,
+        )
 
 
 def test_unity_verification_signals_prioritize_compiler_errors() -> None:

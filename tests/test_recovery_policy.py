@@ -148,6 +148,32 @@ def test_missing_web_build_artifact_is_a_runtime_setup_error_not_a_maker_error()
     assert decision.responsible_party == "runtime"
 
 
+def test_missing_validator_binary_is_a_runtime_setup_error_not_a_maker_error() -> None:
+    decision = RecoveryPolicy().decide(
+        RuntimeError("development verification failed: node_web_lint\nsh: 1: eslint: not found"),
+        context="development_verification",
+    )
+
+    assert decision.error_class == ErrorClass.VERIFICATION_SETUP
+    assert decision.action == RecoveryAction.STOP
+    assert decision.responsible_party == "runtime"
+    assert decision.retry_allowed is False
+
+
+def test_dependency_restore_failure_is_never_returned_to_maker() -> None:
+    decision = RecoveryPolicy().decide(
+        RuntimeError(
+            "development verification failed: node_web_dependencies "
+            "Missing package from lock file; Usage: npm ci"
+        ),
+        context="development_verification",
+    )
+
+    assert decision.error_class == ErrorClass.VERIFICATION_SETUP
+    assert decision.action == RecoveryAction.STOP
+    assert decision.responsible_party == "runtime"
+
+
 @pytest.mark.parametrize(
     "error,error_class",
     [

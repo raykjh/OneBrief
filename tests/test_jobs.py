@@ -176,6 +176,9 @@ def test_changed_input_is_blocked_before_any_agent_call(tmp_path: Path) -> None:
     assert failed.status == JobStatus.FAILED
     assert "changed after approval" in failed.message
     assert gateway.calls == []
+    assert failed.result_package is not None
+    assert (job_dir / "work" / "evaluation_metrics.json").is_file()
+    assert (job_dir / failed.result_package / "artifacts" / "evaluation_metrics.json").is_file()
 
 
 def test_background_start_returns_without_running_pipeline(tmp_path: Path, monkeypatch) -> None:

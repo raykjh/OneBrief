@@ -23,12 +23,6 @@ SNAPSHOT_MANIFEST = "project_snapshot.json"
 MAX_SNAPSHOT_FILES = 5_000
 MAX_SNAPSHOT_FILE_BYTES = 5_000_000
 MAX_SNAPSHOT_BYTES = 50_000_000
-SAFE_ROOT_FILES = {
-    MANIFEST_NAME,
-    "Cargo.lock", "Cargo.toml", "go.mod", "go.sum", "package-lock.json",
-    "package.json", "pnpm-lock.yaml", "pyproject.toml", "pytest.ini",
-    "requirements.txt", "setup.cfg", "tsconfig.json", "uv.lock", "yarn.lock",
-}
 BLOCKED_PARTS = {
     ".git", ".ssh", "credentials", "library", "logs", "node_modules",
     "secrets", "service-account", "service_account", "temp", "usersettings",
@@ -56,6 +50,42 @@ def _git(root: Path, *args: str) -> str:
         detail = "\n".join(part.strip() for part in (completed.stdout, completed.stderr) if part.strip())
         raise RuntimeError(detail[:4000] or f"git {' '.join(args)} failed")
     return completed.stdout
+
+
+def _git_blobs(root: Path, relatives: list[str]) -> dict[str, bytes]:
+    """Read many committed blobs exactly through one persistent Git process."""
+    process = subprocess.Popen(
+        ["git", "cat-file", "--batch"], cwd=root, stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    if process.stdin is None or process.stdout is None:
+        process.kill()
+        raise RuntimeError("cannot open Git batch blob reader")
+    blobs: dict[str, bytes] = {}
+    try:
+        for relative in relatives:
+            process.stdin.write(f"HEAD:{relative}\n".encode("utf-8"))
+            process.stdin.flush()
+            header = process.stdout.readline().decode("utf-8", errors="replace").strip()
+            parts = header.rsplit(" ", 2)
+            if len(parts) != 3 or parts[1] != "blob" or not parts[2].isdigit():
+                raise RuntimeError(f"cannot read committed file {relative}: {header}")
+            size = int(parts[2])
+            data = process.stdout.read(size)
+            terminator = process.stdout.read(1)
+            if len(data) != size or terminator != b"\n":
+                raise RuntimeError(f"truncated committed file from Git: {relative}")
+            blobs[relative] = data
+        process.stdin.close()
+        if process.wait(timeout=30):
+            detail = (process.stderr.read() if process.stderr else b"").decode(
+                "utf-8", errors="replace"
+            ).strip()
+            raise RuntimeError(detail[:4000] or "Git batch blob reader failed")
+    finally:
+        if process.poll() is None:
+            process.kill()
+    return blobs
 
 
 def _safe_relative(value: str) -> PurePosixPath:
@@ -98,8 +128,18 @@ class ProjectSnapshotManifest(BaseModel):
         return self
 
 
-def _selected_files(root: Path, read_prefixes: list[str]) -> list[tuple[str, Path]]:
+def _selected_files(root: Path, read_prefixes: list[str]) -> list[tuple[str, bytes]]:
+    """Return a faithful, secret-filtered copy of the committed repository.
+
+    ``read_prefixes`` still limits which files are exposed to the maker's model
+    context.  It must not trim the filesystem supplied to deterministic build
+    and test adapters: tests commonly depend on committed fixtures, reports,
+    lockfiles, or generated reference data outside the editable source tree.
+    """
+    if not read_prefixes:
+        raise ValueError("approved project snapshot has no readable source prefixes")
     tracked = [item for item in _git(root, "ls-files", "-z").split("\0") if item]
+    tracked_set = set(tracked)
     # Folder registration deliberately creates the resident OneBrief manifest
     # without making a Git commit on the user's behalf.  It is nevertheless an
     # exact-hash-qualified root input required to restore the remote ToolPack,
@@ -107,26 +147,24 @@ def _selected_files(root: Path, read_prefixes: list[str]) -> list[tuple[str, Pat
     resident = root / MANIFEST_NAME
     if resident.is_file() and MANIFEST_NAME not in tracked:
         tracked.append(MANIFEST_NAME)
-    selected: list[tuple[str, Path]] = []
+    committed_blobs = _git_blobs(root, sorted(tracked_set))
+    selected: list[tuple[str, bytes]] = []
     for relative in tracked:
         pure = _safe_relative(relative)
         normalized = pure.as_posix()
-        if normalized not in SAFE_ROOT_FILES and not any(
-            normalized.startswith(prefix) for prefix in read_prefixes
-        ):
-            continue
         source = (root / Path(*pure.parts)).resolve()
         if not source.is_relative_to(root) or source.is_symlink() or not source.is_file():
             raise ValueError(f"snapshot source must be a regular in-repository file: {normalized}")
-        size = source.stat().st_size
+        data = committed_blobs[relative] if relative in tracked_set else source.read_bytes()
+        size = len(data)
         if size > MAX_SNAPSHOT_FILE_BYTES:
             raise ValueError(f"snapshot file is too large: {normalized}")
-        selected.append((normalized, source))
+        selected.append((normalized, data))
     if not selected:
         raise ValueError("approved project snapshot contains no files")
     if len(selected) > MAX_SNAPSHOT_FILES:
         raise ValueError("project snapshot contains too many files")
-    if sum(source.stat().st_size for _, source in selected) > MAX_SNAPSHOT_BYTES:
+    if sum(len(data) for _, data in selected) > MAX_SNAPSHOT_BYTES:
         raise ValueError("project snapshot exceeds the uncompressed size limit")
     return sorted(selected)
 
@@ -147,12 +185,12 @@ def create_project_snapshot(project_id: str, inputs_dir: Path) -> ProjectSnapsho
     archive = inputs_dir / SNAPSHOT_ARCHIVE
     records: list[SnapshotFile] = []
     with zipfile.ZipFile(archive, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as bundle:
-        for relative, source in files:
-            bundle.write(source, f"repository/{relative}")
+        for relative, data in files:
+            bundle.writestr(f"repository/{relative}", data)
             records.append(SnapshotFile(
                 path=relative,
-                size_bytes=source.stat().st_size,
-                sha256=_sha256(source),
+                size_bytes=len(data),
+                sha256=hashlib.sha256(data).hexdigest(),
             ))
     if archive.stat().st_size > MAX_SNAPSHOT_BYTES:
         archive.unlink(missing_ok=True)

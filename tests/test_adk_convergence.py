@@ -6,6 +6,7 @@ from typing import Any
 from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
+from google.adk.models.llm_request import LlmRequest
 from google.genai import types
 from pydantic import ConfigDict
 from typing_extensions import override
@@ -14,6 +15,7 @@ from onebrief.adk_convergence import (
     MAKER_STATE_KEY,
     VERIFICATION_STATE_KEY,
     AdkConvergenceAgent,
+    BudgetedAdkLlm,
     build_text_convergence_agent,
     run_convergence_agent,
 )
@@ -87,6 +89,50 @@ def test_adk_loop_reuses_original_maker_and_returns_feedback() -> None:
     assert state[VERIFICATION_STATE_KEY]["verdict"] == Verdict.PASS.value
     assert [item["author"] for item in trace].count("maker") == 2
     assert [item["author"] for item in trace].count("verifier") == 2
+
+
+def test_adk_llm_retries_max_token_response_as_compact_increment() -> None:
+    class Gateway:
+        def __init__(self):
+            self.calls = []
+
+        def generate_adk_response(self, *, stage, contents, **_kwargs):
+            self.calls.append((stage, contents))
+            finish = (
+                types.FinishReason.MAX_TOKENS
+                if len(self.calls) == 1
+                else types.FinishReason.STOP
+            )
+            return types.GenerateContentResponse(
+                candidates=[types.Candidate(
+                    finish_reason=finish,
+                    content=types.Content(
+                        role="model", parts=[types.Part(text='{"ok":true}')]
+                    ),
+                )]
+            )
+
+    async def collect():
+        gateway = Gateway()
+        model = BudgetedAdkLlm(
+            model="gemini-3.5-flash", gateway=gateway, stage="long_form_draft"
+        )
+        request = LlmRequest(
+            model="gemini-3.5-flash",
+            contents=[types.Content(role="user", parts=[types.Part(text="build")])],
+            config=types.GenerateContentConfig(max_output_tokens=20_000),
+        )
+        responses = [item async for item in model.generate_content_async(request)]
+        return gateway, responses
+
+    gateway, responses = asyncio.run(collect())
+    assert len(responses) == 1
+    assert [item[0] for item in gateway.calls] == [
+        "long_form_draft", "long_form_draft_compact_retry"
+    ]
+    retry_text = gateway.calls[1][1][-1].parts[0].text
+    assert "exact search/replace only" in retry_text
+    assert "under 12000 characters" in retry_text
 
 
 def test_deterministic_gate_overrules_model_pass_and_forces_original_maker_retry() -> None:

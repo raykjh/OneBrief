@@ -607,6 +607,8 @@ def test_status_exposes_safe_apply_only_for_completed_local_project_session(monk
             return record
 
         def read_json(self, relative):
+            if relative == "work/evaluation_metrics.json":
+                raise FileNotFoundError(relative)
             assert relative == "work/completion_ledger.json"
             return {"complete": True}
 

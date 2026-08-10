@@ -140,11 +140,19 @@ def test_node_toolpack_reads_fixed_scripts_without_granting_write_access(
     (root / "src").mkdir(parents=True)
     (root / "tests").mkdir()
     (root / "scripts").mkdir()
+    (root / "web" / "app").mkdir(parents=True)
     (root / "src" / "index.html").write_text("<!doctype html>\n", encoding="utf-8")
     (root / "tests" / "page.test.mjs").write_text("// fixed test\n", encoding="utf-8")
     (root / "scripts" / "verify.mjs").write_text("// fixed runner\n", encoding="utf-8")
     (root / "package.json").write_text(
         '{"scripts":{"test":"node scripts/verify.mjs"}}', encoding="utf-8"
+    )
+    (root / "web" / "package.json").write_text(
+        '{"scripts":{"test":"node --test","build":"node --check app/page.js",'
+        '"start":"node app/page.js"}}', encoding="utf-8"
+    )
+    (root / "web" / "app" / "page.js").write_text(
+        "console.log('ready');\n", encoding="utf-8"
     )
     _git(root, "init")
     _git(root, "config", "user.name", "OneBrief Test")
@@ -169,3 +177,8 @@ def test_node_toolpack_reads_fixed_scripts_without_granting_write_access(
     assert "scripts/" not in state.generated.allowed_write_prefixes
     assert "tests/" in state.generated.allowed_read_prefixes
     assert "tests/" not in state.generated.allowed_write_prefixes
+    parameters = {
+        item.parameter for item in state.generated.adapters
+        if item.adapter_id.value == "node_script"
+    }
+    assert {"test", "web::test", "web::build"}.issubset(parameters)

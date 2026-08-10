@@ -11,6 +11,7 @@ from onebrief.generic_development_toolpack import (
     ApprovedProjectDevelopmentToolPack,
     ProjectCodeChangeSet,
     ProjectFileChange,
+    ProposedProjectCodeChangeSet,
 )
 from onebrief.development_toolpack import DevelopmentCommandResult
 from onebrief.project_import import ExternalProjectImporter, MANIFEST_NAME
@@ -25,6 +26,35 @@ def _git(root: Path, *args: str) -> str:
         text=True, encoding="utf-8",
     )
     return completed.stdout.strip()
+
+
+def test_proposed_exact_edit_accepts_bounded_component_replacement() -> None:
+    proposal = ProposedProjectCodeChangeSet.model_validate({
+        "summary": "Replace one bounded component.",
+        "changes": [{
+            "path": "web/app/page.tsx",
+            "base_sha256": "a" * 64,
+            "search": "export default function Page() {}",
+            "replace": "x" * 12_000,
+            "reason": "Implement the approved screen in one exact edit.",
+        }],
+    })
+    assert len(proposal.changes[0].replace or "") == 12_000
+
+
+def test_proposed_exact_edit_supports_mature_single_file_components() -> None:
+    proposal = ProposedProjectCodeChangeSet.model_validate({
+        "summary": "Update a mature component without rewriting the repository.",
+        "changes": [{
+            "path": "web/app/page.tsx",
+            "base_sha256": "a" * 64,
+            "search": "old component",
+            "replace": "x" * 40_000,
+            "reason": "The resulting file remains within the aggregate text-size limit.",
+        }],
+    })
+
+    assert len(proposal.changes[0].replace or "") == 40_000
 
 
 def _approved_node_project(tmp_path: Path) -> tuple[Path, Path]:
@@ -104,6 +134,114 @@ def test_approved_generic_runner_edits_only_clone_and_returns_verified_patch(tmp
     assert (root / "src" / "app.js").read_bytes() == original
     assert "answer = 42" in (output / "changed_files" / "src" / "app.js").read_text(encoding="utf-8")
     assert "src/app.js" in (output / "changes.patch").read_text(encoding="utf-8")
+
+
+def test_node_dependency_bootstrap_is_lockfile_bound_and_disables_scripts(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    web = project / "web"
+    web.mkdir(parents=True)
+    (web / "package.json").write_text(
+        '{"devDependencies":{"eslint":"1.0.0"}}', encoding="utf-8"
+    )
+    (web / "package-lock.json").write_text('{"lockfileVersion":3}', encoding="utf-8")
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.NODE_SCRIPT, parameter="web::lint"
+    )])
+    pack = object.__new__(ApprovedProjectDevelopmentToolPack)
+
+    commands = pack._dependency_commands(profile, project)
+
+    assert len(commands) == 1
+    command_id, argv, timeout = commands[0]
+    assert command_id == "node_web_dependencies"
+    assert argv[1:] == [
+        "--prefix", "web", "ci", "--ignore-scripts", "--no-audit", "--no-fund"
+    ]
+    assert timeout == 600
+
+
+def test_node_validation_orders_lint_then_build_then_test(tmp_path: Path) -> None:
+    pack = object.__new__(ApprovedProjectDevelopmentToolPack)
+    profile = SimpleNamespace(adapters=[
+        SimpleNamespace(enabled=True, adapter_id=AdapterId.NODE_SCRIPT, parameter="web::test"),
+        SimpleNamespace(enabled=True, adapter_id=AdapterId.NODE_SCRIPT, parameter="web::build"),
+        SimpleNamespace(enabled=True, adapter_id=AdapterId.NODE_SCRIPT, parameter="web::lint"),
+    ])
+    commands = pack._commands(profile, tmp_path, "Complete the web application")
+    assert [item[0] for item in commands] == [
+        "node_web_lint", "node_web_build", "node_web_test"
+    ]
+
+
+def test_node_dependency_restore_repairs_lock_then_retries_clean_install(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    web = project / "web"
+    web.mkdir(parents=True)
+    (web / "package.json").write_text(
+        '{"devDependencies":{"eslint":"1.0.0"}}', encoding="utf-8"
+    )
+    (web / "package-lock.json").write_text('{"lockfileVersion":3}', encoding="utf-8")
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.NODE_SCRIPT, parameter="web::lint"
+    )])
+    calls: list[tuple[str, list[str]]] = []
+
+    def runner(command_id: str, argv: list[str], cwd: Path, timeout: int):
+        calls.append((command_id, argv))
+        if len(calls) == 1:
+            raise RuntimeError(
+                "development verification failed: node_web_dependencies "
+                "Missing package from lock file; Clean install a project; Usage: npm ci"
+            )
+        return DevelopmentCommandResult(
+            command_id=command_id, argv=argv, exit_code=0,
+            duration_seconds=0.01, output_tail="ok",
+        )
+
+    pack = object.__new__(ApprovedProjectDevelopmentToolPack)
+    pack.runner = runner
+
+    results, repaired = pack._restore_node_dependencies(profile, project)
+
+    assert repaired == ["web/package-lock.json"]
+    assert [item[0] for item in calls] == [
+        "node_web_dependencies", "node_web_dependencies_lock_repair", "node_web_dependencies"
+    ]
+    assert "--package-lock-only" in calls[1][1]
+    assert len(results) == 2
+
+
+def test_node_dependency_restore_retries_one_transient_runtime_failure(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    web = project / "web"
+    web.mkdir(parents=True)
+    (web / "package.json").write_text(
+        '{"devDependencies":{"eslint":"1.0.0"}}', encoding="utf-8"
+    )
+    (web / "package-lock.json").write_text('{"lockfileVersion":3}', encoding="utf-8")
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.NODE_SCRIPT, parameter="web::lint"
+    )])
+    calls = []
+
+    def runner(command_id: str, argv: list[str], cwd: Path, timeout: int):
+        calls.append(command_id)
+        if len(calls) == 1:
+            raise RuntimeError(
+                "development verification failed: node_web_dependencies (exit_code=137)"
+            )
+        return DevelopmentCommandResult(
+            command_id=command_id, argv=argv, exit_code=0,
+            duration_seconds=0.01, output_tail="ok",
+        )
+
+    pack = object.__new__(ApprovedProjectDevelopmentToolPack)
+    pack.runner = runner
+    results, repaired = pack._restore_node_dependencies(profile, project)
+
+    assert calls == ["node_web_dependencies", "node_web_dependencies_retry"]
+    assert [item.command_id for item in results] == ["node_web_dependencies_retry"]
+    assert repaired == []
 
 
 def test_generic_runner_rejects_unapproved_path_and_stale_base(tmp_path: Path) -> None:

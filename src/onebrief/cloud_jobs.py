@@ -25,6 +25,12 @@ REUSABLE_WORK_ARTIFACTS = (
     "analysis.json",
     "code_change_set.json",
     "code_change_set_retry_r1.json",
+    "code_change_set_r1.json",
+    "code_change_set_r2.json",
+    "code_change_set_r3.json",
+    "code_change_set_r4.json",
+    "code_change_set_r5.json",
+    "code_change_set_r6.json",
 )
 
 
@@ -235,7 +241,11 @@ class GCSJobStore:
                     str(target)
                 )
             except NotFound:
-                target.unlink(missing_ok=True)
+                # Several versioned candidate names intentionally map to the
+                # same canonical target. A missing newer candidate must not
+                # erase an older allowlisted candidate already copied.
+                if not target.exists():
+                    target.unlink(missing_ok=True)
                 continue
             digest = hashlib.sha256(target.read_bytes()).hexdigest()
             copied.append({"source": source_name, "target": target_name, "sha256": digest})
@@ -244,7 +254,7 @@ class GCSJobStore:
                 json.dumps({
                     "schema_version": "onebrief-reuse-manifest-v1",
                     "source_job_uri": self.location.uri,
-                    "reason": "stage-one budget amendment with identical approved request",
+                    "reason": "identical approved request continuation within the original budget ceiling",
                     "artifacts": copied,
                 }, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",

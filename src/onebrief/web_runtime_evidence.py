@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import html
+import http.server
 import json
 import os
 import re
 import shutil
 import socket
 import subprocess
+import threading
 import time
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
 
 from onebrief.development_toolpack import DevelopmentCommandResult
@@ -47,6 +50,65 @@ def _wait(url: str, process: subprocess.Popen[bytes]) -> None:
         except OSError:
             time.sleep(0.1)
     raise RuntimeError("approved web start script did not expose a local HTTP page")
+
+
+@contextmanager
+def _observer_proxy(upstream: str, pages: dict[str, str]):
+    """Expose trusted observer pages and the app through one loopback origin.
+
+    Framework servers do not consistently serve files written into their build
+    directory. A fixed local reverse proxy gives the observer iframe same-origin
+    access without depending on a framework-specific static-file policy.
+    """
+
+    encoded = {path: content.encode("utf-8") for path, content in pages.items()}
+    upstream = upstream.rstrip("/")
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
+            observer = encoded.get(self.path.split("?", 1)[0])
+            if observer is not None:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(observer)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(observer)
+                return
+            try:
+                with urllib.request.urlopen(upstream + self.path, timeout=10) as response:
+                    payload = response.read(20_000_001)
+                    if len(payload) > 20_000_000:
+                        raise RuntimeError("observer proxy response exceeded 20 MB")
+                    self.send_response(response.status)
+                    content_type = response.headers.get("Content-Type")
+                    if content_type:
+                        self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(payload)
+            except Exception as exc:
+                detail = str(exc).encode("utf-8", errors="replace")[:1000]
+                self.send_response(502)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(detail)))
+                self.end_headers()
+                self.wfile.write(detail)
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        yield f"http://{host}:{port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def _stop_tree(process: subprocess.Popen[bytes]) -> None:
@@ -101,7 +163,7 @@ def _wrapper(*, toggle: bool, viewport_width: int) -> str:
     mode = "true" if toggle else "false"
     return f"""<!doctype html><html><head><meta charset=\"utf-8\"><style>
 html,body{{width:{viewport_width}px;max-width:{viewport_width}px;height:100%;margin:0;overflow:hidden}}iframe{{display:block;width:{viewport_width}px;height:100%;margin:0;border:0}}#result{{display:none}}
-</style></head><body><iframe id=\"app\" src=\"/\"></iframe><pre id=\"result\"></pre><script>
+</style></head><body><iframe id=\"app\" src=\"about:blank\"></iframe><pre id=\"result\"></pre><script>
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const frame=document.getElementById('app'),out=document.getElementById('result');
 function sample(){{const d=frame.contentDocument,de=d.documentElement,b=d.body;
@@ -113,8 +175,12 @@ function sample(){{const d=frame.contentDocument,de=d.documentElement,b=d.body;
  return {{lang:de?.lang||'',text:text.slice(0,5000),semanticText:semanticText.slice(0,5000),horizontalOverflow:de.scrollWidth>de.clientWidth+2,
   images:[...d.images].map(i=>({{src:i.getAttribute('src')||'',complete:i.complete,width:i.naturalWidth,height:i.naturalHeight}})),replacement:text.includes('\\uFFFD'),clipped}};}}
 async function exerciseLanguages(){{const d=frame.contentDocument,states=[];
- const selects=[...d.querySelectorAll('select')],select=selects.find(x=>x.options.length>1);
- if(select){{for(const option of [...select.options].filter(o=>o.value)){{
+ const locale=/^(ko|en|ja|zh(?:[-_](?:cn|tw))?|es|fr|de|it|pt(?:[-_]br)?)(?:$|[-_])/i;
+ const selects=[...d.querySelectorAll('select')],select=selects.find(x=>{{
+  const identity=[x.id,x.name,x.getAttribute('aria-label'),x.getAttribute('data-language'),x.getAttribute('data-locale')].filter(Boolean).join(' ');
+  return /(lang|language|locale)/i.test(identity)||[...x.options].filter(o=>locale.test(String(o.value||'').trim())).length>=2;
+ }});
+ if(select){{for(const option of [...select.options].filter(o=>locale.test(String(o.value||'').trim()))){{
   select.value=option.value;select.dispatchEvent(new Event('input',{{bubbles:true}}));select.dispatchEvent(new Event('change',{{bubbles:true}}));await delay(350);
   states.push({{control:'select',requested:String(option.value),label:(option.textContent||'').trim(),state:sample()}});
  }}return states;}}
@@ -122,8 +188,9 @@ async function exerciseLanguages(){{const d=frame.contentDocument,states=[];
  for(const button of buttons){{button.click();await delay(350);states.push({{control:'button',requested:button.dataset.language||button.dataset.lang||'',label:(button.textContent||'').trim(),state:sample()}});}}
  if(!states.length){{const button=d.querySelector('#lang-toggle,[data-language-toggle]');if(button){{button.click();await delay(350);states.push({{control:'toggle',requested:'',label:(button.textContent||'').trim(),state:sample()}});}}}}
  return states;}}
-frame.addEventListener('load',async()=>{{await delay(400);const before=sample();const states={mode}?await exerciseLanguages():[];
+frame.addEventListener('load',async()=>{{if(frame.contentWindow.location.href==='about:blank')return;await delay(400);const before=sample();const states={mode}?await exerciseLanguages():[];
  const after=states.length?states[states.length-1].state:sample();out.textContent=JSON.stringify({{clicked:states.length>0,before,after,states}});document.body.dataset.done='true';}});
+frame.src='/';
 </script></body></html>"""
 
 
@@ -220,7 +287,7 @@ def validate_preserved_language_states(
 
 def _extract(dom: str) -> dict[str, object]:
     match = re.search(r'<pre id="result">(.*?)</pre>', dom, re.DOTALL | re.IGNORECASE)
-    if not match:
+    if not match or not match.group(1).strip():
         raise RuntimeError("browser observer did not publish a result")
     return json.loads(html.unescape(match.group(1)))
 
@@ -240,22 +307,38 @@ def _capture(chrome: Path, url: str, screenshot: Path, width: int, height: int) 
     )
     if completed.returncode != 0 or not screenshot.is_file() or screenshot.stat().st_size < 5_000:
         raise RuntimeError("headless browser did not produce a usable rendered screenshot")
-    return _extract(completed.stdout)
+    try:
+        return _extract(completed.stdout)
+    except RuntimeError as exc:
+        stderr = completed.stderr.strip().replace("\n", " ")[:1000]
+        stdout = completed.stdout.strip().replace("\n", " ")[:2000]
+        raise RuntimeError(
+            f"{exc}; chrome_exit={completed.returncode}; "
+            f"stderr={stderr or 'empty'}; dom={stdout or 'empty'}"
+        ) from exc
 
 
-def observe_web_application(clone: Path, evidence_dir: Path) -> tuple[DevelopmentCommandResult, ObservationReceipt]:
+def observe_web_application(
+    clone: Path,
+    evidence_dir: Path,
+    *,
+    application_subdir: str = ".",
+) -> tuple[DevelopmentCommandResult, ObservationReceipt]:
     """Exercise one approved start script and issue pipeline-owned observation evidence."""
 
     chrome = _chrome()
     npm = shutil.which("npm.cmd" if os.name == "nt" else "npm")
-    package_path = clone / "package.json"
+    application_root = (clone / application_subdir).resolve()
+    if not application_root.is_relative_to(clone.resolve()):
+        raise RuntimeError("approved web observation path left the project clone")
+    package_path = application_root / "package.json"
     if chrome is None or npm is None or not package_path.is_file():
         raise RuntimeError("approved web observation requires Chrome, npm, and package.json")
     scripts = json.loads(package_path.read_text(encoding="utf-8")).get("scripts", {})
     if not isinstance(scripts, dict) or not isinstance(scripts.get("start"), str):
         raise RuntimeError("approved web observation requires a package.json start script")
 
-    dist = clone / "dist"
+    dist = application_root / "dist"
     if not dist.is_dir():
         raise RuntimeError("approved web observation requires a built dist directory")
     (dist / "__onebrief_desktop.html").write_text(
@@ -270,7 +353,7 @@ def observe_web_application(clone: Path, evidence_dir: Path) -> tuple[Developmen
     creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     started = time.perf_counter()
     server = subprocess.Popen(
-        [npm, "run", "start"], cwd=clone, env=env,
+        [npm, "run", "start"], cwd=application_root, env=env,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         creationflags=creationflags,
     )
@@ -279,8 +362,16 @@ def observe_web_application(clone: Path, evidence_dir: Path) -> tuple[Developmen
         _wait(base + "/", server)
         desktop_path = evidence_dir / "desktop-ko.png"
         mobile_path = evidence_dir / "mobile-en.png"
-        desktop = _capture(chrome, base + "/__onebrief_desktop.html", desktop_path, 1200, 900)
-        mobile = _capture(chrome, base + "/__onebrief_mobile.html", mobile_path, 375, 812)
+        with _observer_proxy(base, {
+            "/__onebrief_desktop.html": _wrapper(toggle=False, viewport_width=1200),
+            "/__onebrief_mobile.html": _wrapper(toggle=True, viewport_width=375),
+        }) as observer:
+            desktop = _capture(
+                chrome, observer + "/__onebrief_desktop.html", desktop_path, 1200, 900
+            )
+            mobile = _capture(
+                chrome, observer + "/__onebrief_mobile.html", mobile_path, 375, 812
+            )
     finally:
         _stop_tree(server)
 
@@ -307,7 +398,10 @@ def observe_web_application(clone: Path, evidence_dir: Path) -> tuple[Developmen
         if state.get("replacement"):
             issues.append(f"The {label} rendered page contains Unicode replacement characters.")
         images = state.get("images", [])
-        if not images or any(not item.get("complete") or not item.get("width") for item in images if isinstance(item, dict)):
+        if any(
+            not item.get("complete") or not item.get("width")
+            for item in images if isinstance(item, dict)
+        ):
             issues.append(f"The {label} rendered page has missing or unloaded first-party images.")
     if hashlib.sha256(desktop_path.read_bytes()).digest() == hashlib.sha256(mobile_path.read_bytes()).digest():
         issues.append("Desktop and mobile rendered screenshots are identical.")

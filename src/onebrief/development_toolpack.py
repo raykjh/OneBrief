@@ -295,7 +295,9 @@ def _default_runner(
     if result.exit_code != 0:
         detail = result.output_tail[-4_000:].strip()
         suffix = f"\n{detail}" if detail else ""
-        raise RuntimeError(f"development verification failed: {command_id}{suffix}")
+        raise RuntimeError(
+            f"development verification failed: {command_id} (exit_code={result.exit_code}){suffix}"
+        )
     return result
 
 

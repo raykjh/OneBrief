@@ -277,3 +277,54 @@ def test_budget_amendment_downloads_only_allowlisted_cloud_artifacts(tmp_path: P
     assert {item["target"] for item in manifest["artifacts"]} == {
         "analysis.json", "public_research.md"
     }
+
+
+def test_missing_newer_code_candidate_does_not_delete_base_candidate(tmp_path: Path) -> None:
+    objects = {
+        "jobs/prior/work/code_change_set.json": b'{"summary":"base"}',
+    }
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+        def download_to_filename(self, filename):
+            if self.name not in objects:
+                raise NotFound("missing")
+            Path(filename).write_bytes(objects[self.name])
+
+    class Client:
+        def bucket(self, _name):
+            return type("Bucket", (), {"blob": lambda _self, name: Blob(name)})()
+
+    work = tmp_path / "work"
+    copied = GCSJobStore(
+        "gs://onebrief-test/jobs/prior", client=Client()
+    ).download_reusable_artifacts(work)
+
+    assert "code_change_set.json" in copied
+    assert json.loads((work / "code_change_set.json").read_text("utf-8"))["summary"] == "base"
+
+
+def test_latest_numbered_revision_overwrites_base_candidate(tmp_path: Path) -> None:
+    objects = {
+        "jobs/prior/work/code_change_set.json": b'{"summary":"base"}',
+        "jobs/prior/work/code_change_set_r1.json": b'{"summary":"revision"}',
+    }
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+        def download_to_filename(self, filename):
+            if self.name not in objects:
+                raise NotFound("missing")
+            Path(filename).write_bytes(objects[self.name])
+
+    class Client:
+        def bucket(self, _name):
+            return type("Bucket", (), {"blob": lambda _self, name: Blob(name)})()
+
+    work = tmp_path / "work"
+    GCSJobStore("gs://onebrief-test/jobs/prior", client=Client()).download_reusable_artifacts(work)
+    assert json.loads((work / "code_change_set.json").read_text("utf-8"))["summary"] == "revision"

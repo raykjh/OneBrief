@@ -48,6 +48,31 @@ class BudgetedAdkLlm(BaseLlm):
             contents=llm_request.contents,
             config=llm_request.config,
         )
+        candidates = list(getattr(response, "candidates", None) or [])
+        finish_reason = getattr(candidates[0], "finish_reason", None) if candidates else None
+        if "MAX_TOKENS" in str(finish_reason).upper():
+            # A truncated structured response is not useful evidence and cannot be
+            # parsed by ADK. Retry once as a deliberately small incremental edit.
+            # Later convergence rounds can add the next increment after deterministic
+            # verification, avoiding a fragile whole-project JSON blob.
+            compact_contents = list(llm_request.contents) + [types.Content(
+                role="user",
+                parts=[types.Part(text=(
+                    "The previous structured response exhausted its output limit and was discarded. "
+                    "Return a valid, much smaller incremental change set: at most two changed files; "
+                    "for existing files use exact search/replace only; keep every search and replace "
+                    "under 12000 characters. Do not return complete existing-file contents. Implement "
+                    "the highest-priority verified slice now; later maker rounds will handle remaining "
+                    "criteria. Return only the required schema."
+                ))],
+            )]
+            response = await asyncio.to_thread(
+                self.gateway.generate_adk_response,
+                stage=f"{self.stage}_compact_retry",
+                model=self.model,
+                contents=compact_contents,
+                config=llm_request.config,
+            )
         yield LlmResponse.create(response)
 
 

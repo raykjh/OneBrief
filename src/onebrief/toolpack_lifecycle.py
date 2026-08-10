@@ -190,23 +190,38 @@ class ProjectToolPackLifecycle:
 
     @staticmethod
     def _node_adapters(root: Path) -> list[ToolAdapter]:
-        package = root / "package.json"
-        if not package.is_file():
-            return []
-        try:
-            scripts = json.loads(package.read_text(encoding="utf-8")).get("scripts", {})
-        except (OSError, json.JSONDecodeError):
-            return []
         adapters: list[ToolAdapter] = []
-        for name in ("lint", "test", "build"):
-            if isinstance(scripts, dict) and isinstance(scripts.get(name), str):
-                adapters.append(ToolAdapter(
-                    adapter_id=AdapterId.NODE_SCRIPT,
-                    label=f"Run package script: {name}",
-                    parameter=name,
-                    evidence=f"package.json defines the {name!r} script.",
-                ))
-        if isinstance(scripts, dict) and isinstance(scripts.get("start"), str):
+        packages = [
+            root / "package.json",
+            *(root / scope / "package.json" for scope in ("app", "web", "src", "public")),
+        ]
+        for package in packages[:4]:
+            if not package.is_file() or package.parent.name == "node_modules":
+                continue
+            try:
+                scripts = json.loads(package.read_text(encoding="utf-8")).get("scripts", {})
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(scripts, dict):
+                continue
+            scope = package.parent.relative_to(root).as_posix()
+            parameter_prefix = "" if scope == "." else f"{scope}::"
+            label_prefix = "" if scope == "." else f"{scope} "
+            for name in ("lint", "test", "build"):
+                if isinstance(scripts.get(name), str):
+                    adapters.append(ToolAdapter(
+                        adapter_id=AdapterId.NODE_SCRIPT,
+                        label=f"Run {label_prefix}package script: {name}",
+                        parameter=f"{parameter_prefix}{name}",
+                        evidence=(
+                            f"{package.relative_to(root).as_posix()} defines the {name!r} script."
+                        ),
+                    ))
+            if not (
+                isinstance(scripts.get("start"), str)
+                and isinstance(scripts.get("build"), str)
+            ):
+                continue
             chrome_available = any(path.is_file() for path in (
                 Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
                 Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
@@ -215,14 +230,14 @@ class ProjectToolPackLifecycle:
                 adapter_id=AdapterId.NODE_WEB_OBSERVATION,
                 label="Run web UI observer v7 with locale preservation checks",
                 enabled=chrome_available,
-                parameter="start",
+                parameter=scope,
                 evidence=(
-                    "package.json defines the 'start' script and a local headless Chrome runtime is available."
+                    f"{package.relative_to(root).as_posix()} defines build/start scripts and a local headless Chrome runtime is available."
                     if chrome_available else
                     "A local headless Chrome runtime was not found."
                 ),
             ))
-        return adapters
+        return adapters[:11]
 
     @staticmethod
     def _unity_editor(root: Path) -> Path | None:
@@ -322,6 +337,7 @@ class ProjectToolPackLifecycle:
                 "read bounded project context",
                 "prepare changes only in an isolated repository snapshot",
                 "verify exact base hashes before applying changes",
+                "restore Node dependencies only from package manifests with lifecycle scripts disabled",
                 "run only approved deterministic validation adapters",
                 "return a reviewable patch without modifying the source repository",
             ],
@@ -333,7 +349,7 @@ class ProjectToolPackLifecycle:
                 "source repository writes",
                 "credentials, secret stores, accounts, payments, and personal data",
                 "network deployment, release, publishing, and Git push",
-                "dependency installation and arbitrary shell commands",
+                "arbitrary dependency commands, dependency lifecycle scripts, and arbitrary shell commands",
                 "destructive Git operations and generated build directories",
             ],
         )

@@ -178,12 +178,19 @@ class BudgetedGeminiClient:
         generation = config.model_copy(deep=True) if config is not None else types.GenerateContentConfig()
         generation.thinking_config = types.ThinkingConfig(thinking_budget=0)
         max_output_tokens = int(generation.max_output_tokens or 4096)
+        count_generation = types.GenerationConfig(
+            max_output_tokens=max_output_tokens,
+            temperature=generation.temperature,
+            response_mime_type=generation.response_mime_type,
+            response_schema=generation.response_schema,
+            thinking_config=generation.thinking_config,
+        )
         count = self.client.models.count_tokens(
             model=model,
             contents=contents,
             config=types.CountTokensConfig(
                 system_instruction=generation.system_instruction,
-                generation_config=generation,
+                generation_config=count_generation,
             ),
         )
         schema_text = str(generation.response_schema or "")

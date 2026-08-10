@@ -20,6 +20,10 @@ def test_mobile_observer_forces_the_exact_css_viewport_and_checks_clipping() -> 
     assert "dispatchEvent(new Event('change'" in document
     assert "for(const option of [...select.options]" in document
     assert "semanticText" in document
+    assert 'src="about:blank"' in document
+    assert "frame.src='/'" in document
+    assert "location.href==='about:blank'" in document
+    assert document.index("frame.addEventListener('load'") < document.index("frame.src='/'")
 
 
 def test_language_observer_rejects_korean_fragments_in_japanese_content() -> None:

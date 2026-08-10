@@ -89,6 +89,7 @@ class JobRecord(BaseModel):
     run_id: str
     result_package: str | None = None
     result_manifest_sha256: str | None = None
+    benchmark_variant: str = "onebrief_convergence"
 
 
 class PackageFile(BaseModel):
@@ -212,6 +213,7 @@ def create_job(
     sources: list[InternalSource],
     estimate: BudgetEnvelope,
     approved_usd: float,
+    benchmark_variant: str = "onebrief_convergence",
 ) -> Path:
     """Create an atomic, self-contained work order with immutable budget approval."""
     requirements = require_ready_for_estimate(
@@ -252,6 +254,7 @@ def create_job(
             attempts=0,
             run_id=ledger.run_id,
             message="Inputs and budget approval were snapshotted; waiting for a worker.",
+            benchmark_variant=benchmark_variant,
         )
         _atomic_json(staging / "job.json", record)
         os.replace(staging, job_dir)
@@ -418,6 +421,9 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
             output_dir=job_dir / "work",
         )
         status = _pipeline_status(checkpoint.status)
+        from onebrief.evaluation import persist_execution_evaluation
+
+        persist_execution_evaluation(job_dir, status)
         ProjectClosureManager(workspace_root / "pack_registry").close(
             project_id=claimed.job_id,
             project_dir=project_dir,
@@ -435,6 +441,9 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
         _record_project_continuity(job_dir, intake)
         return finished
     except BudgetExceeded as exc:
+        from onebrief.evaluation import persist_execution_evaluation
+
+        persist_execution_evaluation(job_dir, JobStatus.NEEDS_BUDGET)
         package, digest = build_result_package(
             job_dir,
             status=JobStatus.NEEDS_BUDGET,
@@ -450,6 +459,9 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
         _record_project_continuity(job_dir, intake)
         return finished
     except PermissionError as exc:
+        from onebrief.evaluation import persist_execution_evaluation
+
+        persist_execution_evaluation(job_dir, JobStatus.NEEDS_AUTHORIZATION)
         package, digest = build_result_package(
             job_dir,
             status=JobStatus.NEEDS_AUTHORIZATION,
@@ -468,10 +480,20 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
         _record_project_continuity(job_dir, intake)
         return finished
     except Exception as exc:
+        from onebrief.evaluation import persist_execution_evaluation
+
+        persist_execution_evaluation(job_dir, JobStatus.FAILED)
+        package, digest = build_result_package(
+            job_dir,
+            status=JobStatus.FAILED,
+            attempt=claimed.attempts,
+        )
         finished = store.finish(
             JobStatus.FAILED,
             stage="failed",
             message=f"{type(exc).__name__}: {exc}",
+            result_package=package,
+            manifest_sha256=digest,
         )
         _record_project_continuity(job_dir, intake)
         return finished

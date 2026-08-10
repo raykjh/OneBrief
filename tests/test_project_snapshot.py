@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import subprocess
@@ -40,12 +41,16 @@ def _approved_python_project(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     (root / "src" / "sample").mkdir(parents=True)
     (root / "tests").mkdir()
     (root / "docs").mkdir()
+    (root / "reports").mkdir()
     (root / "src" / "sample" / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
     (root / "tests" / "test_sample.py").write_text(
         "from sample import VALUE\n\ndef test_value():\n    assert VALUE == 1\n",
         encoding="utf-8",
     )
     (root / "docs" / "TASK.md").write_text("Keep the sample tested.\n", encoding="utf-8")
+    (root / "reports" / "baseline.json").write_text(
+        '{"status": "approved-fixture"}\n', encoding="utf-8"
+    )
     (root / "pyproject.toml").write_text(
         "[tool.pytest.ini_options]\npythonpath = ['src']\ntestpaths = ['tests']\n",
         encoding="utf-8",
@@ -86,6 +91,17 @@ def test_snapshot_restores_only_current_approved_tree_and_rebuilds_toolpack(
         names = set(archive.namelist())
     assert "repository/.git/config" not in names
     assert "repository/src/sample/__init__.py" in names
+    # Deterministic adapters receive the complete committed tree even though
+    # maker context remains restricted to the approved read prefixes.
+    assert "repository/reports/baseline.json" in names
+    committed = subprocess.run(
+        ["git", "show", "HEAD:src/sample/__init__.py"], cwd=root,
+        check=True, capture_output=True,
+    ).stdout
+    with zipfile.ZipFile(inputs / SNAPSHOT_ARCHIVE) as archive:
+        assert archive.read("repository/src/sample/__init__.py") == committed
+    record = next(item for item in manifest.files if item.path == "src/sample/__init__.py")
+    assert record.sha256 == hashlib.sha256(committed).hexdigest()
     assert manifest.source_head_sha == _git(root, "rev-parse", "HEAD")
 
     original_registry = os.environ["ONEBRIEF_PROJECTS_ROOT"]
@@ -151,7 +167,7 @@ def test_cloud_image_contains_the_approved_web_verification_runtime() -> None:
     dockerfile = (Path(__file__).parents[1] / "Dockerfile").read_text(encoding="utf-8")
 
     for package in (
-        "FROM node:22-bookworm-slim AS node_runtime",
+        "FROM node:24-bookworm-slim AS node_runtime",
         "COPY --from=node_runtime /usr/local/bin/node",
         "chromium",
         "fonts-noto-cjk",

@@ -22,6 +22,7 @@ from onebrief.development_toolpack import (
     MAX_CONTEXT_BYTES,
     MAX_CONTEXT_FILE_BYTES,
     CommandRunner,
+    DevelopmentCommandResult,
     DevelopmentRun,
     RepositoryContextFile,
     RepositoryInspection,
@@ -106,8 +107,12 @@ class ProposedProjectFileChange(BaseModel):
     path: str
     base_sha256: str | None = None
     content: str | None = Field(default=None, max_length=MAX_CHANGE_BYTES)
-    search: str | None = Field(default=None, min_length=1, max_length=8_000)
-    replace: str | None = Field(default=None, max_length=8_000)
+    # Exact edits remain bounded by the same aggregate 60 KiB change-set limit.
+    # Mature single-file applications can legitimately contain a component
+    # larger than 20k, so a smaller per-field cap would make safe exact edits
+    # impossible even though the promoted result still satisfies the total cap.
+    search: str | None = Field(default=None, min_length=1, max_length=MAX_CHANGE_BYTES)
+    replace: str | None = Field(default=None, max_length=MAX_CHANGE_BYTES)
     reason: str = Field(min_length=3, max_length=500)
 
     @field_validator("path")
@@ -336,8 +341,8 @@ class ApprovedProjectDevelopmentToolPack:
                 "exact-hash approved project and clean Git HEAD",
                 "bounded committed text context prioritized by the approved goal",
                 "all edits occur in a disposable local clone",
-                "only generated fixed validation adapters may execute",
-                "no install, deploy, push, credentials, accounts, or arbitrary commands",
+                "only lockfile-bound dependency restore and generated fixed validation adapters may execute",
+                "dependency lifecycle scripts, deploy, push, credentials, accounts, and arbitrary commands are blocked",
             ],
         )
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -359,7 +364,15 @@ class ApprovedProjectDevelopmentToolPack:
             ):
                 continue
             if adapter.adapter_id == AdapterId.NODE_SCRIPT:
-                commands.append((f"node_{adapter.parameter}", [npm, "run", str(adapter.parameter)], 300))
+                parameter = str(adapter.parameter)
+                if "::" in parameter:
+                    scope, script = parameter.split("::", 1)
+                    argv = [npm, "--prefix", scope, "run", script]
+                    command_id = f"node_{scope.replace('/', '_')}_{script}"
+                else:
+                    argv = [npm, "run", parameter]
+                    command_id = f"node_{parameter}"
+                commands.append((command_id, argv, 300))
             elif adapter.adapter_id == AdapterId.PYTHON_TESTS:
                 commands.append(("python_tests", [sys.executable, "-m", "pytest"], 300))
             elif adapter.adapter_id in {
@@ -392,7 +405,95 @@ class ApprovedProjectDevelopmentToolPack:
                         "-testResults", str(clone / "onebrief-playmode-visual-results.xml"),
                     ]
                 commands.append((adapter.adapter_id.value, argv, 900))
+        def priority(item: tuple[str, list[str], int]) -> tuple[int, str]:
+            command_id = item[0]
+            if "lint" in command_id or command_id == AdapterId.UNITY_COMPILE.value:
+                return (10, command_id)
+            if "build" in command_id or "compile" in command_id:
+                return (20, command_id)
+            if "test" in command_id:
+                return (30, command_id)
+            return (25, command_id)
+
+        # Some package-defined tests import the built server bundle. Preserve a
+        # deterministic validation lifecycle instead of trusting manifest or
+        # filesystem discovery order.
+        return sorted(commands, key=priority)
+
+    def _dependency_commands(
+        self, profile, clone: Path
+    ) -> list[tuple[str, list[str], int]]:
+        """Restore Node tools from committed lockfiles without lifecycle scripts."""
+        npm = "npm.cmd" if os.name == "nt" else "npm"
+        scopes: set[str] = set()
+        for adapter in profile.adapters:
+            if not adapter.enabled or adapter.adapter_id != AdapterId.NODE_SCRIPT:
+                continue
+            parameter = str(adapter.parameter)
+            scopes.add(parameter.split("::", 1)[0] if "::" in parameter else ".")
+        commands: list[tuple[str, list[str], int]] = []
+        for scope in sorted(scopes):
+            package_dir = clone if scope == "." else clone / Path(*PurePosixPath(scope).parts)
+            package_json = package_dir / "package.json"
+            lockfile = package_dir / "package-lock.json"
+            if not package_json.is_file():
+                raise RuntimeError(f"node adapter scope has no package.json: {scope}")
+            package = json.loads(package_json.read_text(encoding="utf-8"))
+            has_dependencies = any(package.get(key) for key in ("dependencies", "devDependencies"))
+            if not lockfile.is_file():
+                if has_dependencies:
+                    raise RuntimeError(
+                        f"node dependency bootstrap requires a committed package-lock.json: {scope}"
+                    )
+                continue
+            argv = [npm]
+            if scope != ".":
+                argv += ["--prefix", scope]
+            argv += ["ci", "--ignore-scripts", "--no-audit", "--no-fund"]
+            command_id = (
+                "node_dependencies" if scope == "."
+                else f"node_{scope.replace('/', '_')}_dependencies"
+            )
+            commands.append((command_id, argv, 600))
         return commands
+
+    def _restore_node_dependencies(
+        self, profile, clone: Path
+    ) -> tuple[list[DevelopmentCommandResult], list[str]]:
+        """Run clean installs with one bounded runtime retry.
+
+        A transient registry/process failure is a runtime responsibility and must
+        not consume a maker revision. Lock mismatches use the stricter manifest-
+        only repair path; every other failure gets exactly one identical retry.
+        """
+        results: list[DevelopmentCommandResult] = []
+        repaired_locks: list[str] = []
+        for command_id, argv, timeout in self._dependency_commands(profile, clone):
+            try:
+                results.append(self.runner(command_id, argv, clone, timeout))
+                continue
+            except RuntimeError as exc:
+                message = str(exc)
+                lock_mismatch = "npm ci" in message and any(marker in message for marker in (
+                    "EUSAGE", "Clean install a project", "lock file", "package-lock",
+                ))
+                if not lock_mismatch:
+                    results.append(
+                        self.runner(f"{command_id}_retry", argv, clone, timeout)
+                    )
+                    continue
+            prefix = argv[:-4]
+            repair_argv = prefix + [
+                "install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"
+            ]
+            results.append(self.runner(f"{command_id}_lock_repair", repair_argv, clone, timeout))
+            results.append(self.runner(command_id, argv, clone, timeout))
+            if "--prefix" in argv:
+                scope = argv[argv.index("--prefix") + 1]
+                repaired_locks.append(f"{scope}/package-lock.json")
+            else:
+                repaired_locks.append("package-lock.json")
+        return results, repaired_locks
 
     @staticmethod
     def _requires_unity_visual_runtime(goal_text: str) -> bool:
@@ -681,19 +782,29 @@ class ApprovedProjectDevelopmentToolPack:
                 raise RuntimeError(
                     f"development patch hygiene failed: {hygiene_failure}"
                 ) from hygiene_failure
+            dependency_results, repaired_locks = self._restore_node_dependencies(profile, clone)
+            for repaired in repaired_locks:
+                if self.approved_edit_path(repaired) is None:
+                    raise PermissionError(
+                        f"repaired lockfile is outside the approved project source area: {repaired}"
+                    )
+                if repaired not in approved_paths:
+                    approved_paths.append(repaired)
             commands = self._commands(profile, clone, goal_text)
-            results = [
+            results = dependency_results + [
                 self.runner(command_id, argv, clone, timeout)
                 for command_id, argv, timeout in commands
             ]
             evidence_paths: list[str] = []
-            if any(
-                item.adapter_id == AdapterId.NODE_WEB_OBSERVATION and item.enabled
-                for item in profile.adapters
-            ):
+            web_observer = next((
+                item for item in profile.adapters
+                if item.adapter_id == AdapterId.NODE_WEB_OBSERVATION and item.enabled
+            ), None)
+            if web_observer is not None:
+                web_scope = str(web_observer.parameter or ".")
                 evidence_dir = output_dir / "web_observation_evidence"
                 observation_command, receipt = observe_web_application(
-                    clone, evidence_dir
+                    clone, evidence_dir, application_subdir=web_scope
                 )
                 if re.search(r"(?:\bpreserv(?:e|es|ed|ing)\b|보존|유지)", goal_text, re.IGNORECASE):
                     baseline = Path(temporary) / "baseline"
@@ -701,28 +812,34 @@ class ApprovedProjectDevelopmentToolPack:
                         "clone", "--local", "--no-hardlinks", str(self.root), str(baseline),
                         cwd=Path(temporary),
                     )
+                    expected_build = "build" if web_scope == "." else f"{web_scope}::build"
                     build_adapter = next((
                         item for item in profile.adapters
                         if item.enabled
                         and item.adapter_id == AdapterId.NODE_SCRIPT
-                        and str(item.parameter) == "build"
+                        and str(item.parameter) == expected_build
                     ), None)
                     if build_adapter is None:
                         raise RuntimeError(
                             "web content preservation requires an approved baseline build adapter"
                         )
                     npm = "npm.cmd" if os.name == "nt" else "npm"
+                    baseline_argv = (
+                        [npm, "run", "build"] if web_scope == "."
+                        else [npm, "--prefix", web_scope, "run", "build"]
+                    )
+                    baseline_dependencies, _ = self._restore_node_dependencies(profile, baseline)
                     baseline_result = self.runner(
-                        "baseline_node_build", [npm, "run", "build"], baseline, 300
+                        "baseline_node_build", baseline_argv, baseline, 300
                     )
                     baseline_evidence = output_dir / "baseline_web_observation_evidence"
                     baseline_observation, _ = observe_web_application(
-                        baseline, baseline_evidence
+                        baseline, baseline_evidence, application_subdir=web_scope
                     )
                     validate_preserved_language_states(
                         baseline_evidence, evidence_dir
                     )
-                    results.extend([baseline_result, baseline_observation])
+                    results.extend([*baseline_dependencies, baseline_result, baseline_observation])
                 results.append(observation_command)
                 observation_dir = output_dir.parent / "independent_observations"
                 observation_dir.mkdir(parents=True, exist_ok=True)
@@ -749,22 +866,22 @@ class ApprovedProjectDevelopmentToolPack:
                 raise ValueError("development change set produced no repository diff")
             patch_path = output_dir / "changes.patch"
             patch_path.write_text(patch, encoding="utf-8", newline="\n")
-            for change in change_set.changes:
-                source = clone / Path(*PurePosixPath(change.path).parts)
-                destination = output_dir / "changed_files" / Path(*PurePosixPath(change.path).parts)
+            for relative in approved_paths:
+                source = clone / Path(*PurePosixPath(relative).parts)
+                destination = output_dir / "changed_files" / Path(*PurePosixPath(relative).parts)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, destination)
             run = DevelopmentRun(
                 status="verified", repository_name=self.root.name, base_head_sha=head,
-                summary=change_set.summary, changed_paths=[item.path for item in change_set.changes],
+                summary=change_set.summary, changed_paths=approved_paths,
                 commands=results, patch_path=patch_path.relative_to(output_dir.parent).as_posix(),
                 evidence_paths=evidence_paths,
                 safety_boundary=[
                     "original repository remained read-only",
                     "exact approved HEAD and per-file base hashes were enforced",
                     "edits were limited to approved prefixes and text suffixes",
-                    "only fixed generated validation adapters executed in the clone",
-                    "no install, deploy, push, credentials, accounts, or arbitrary commands",
+                    "only lockfile-bound dependency restore and fixed validation adapters executed in the clone",
+                    "dependency lifecycle scripts, deploy, push, credentials, accounts, and arbitrary commands were blocked",
                 ],
             )
             (output_dir / "development_run.json").write_text(run.model_dump_json(indent=2) + "\n", encoding="utf-8")
