@@ -754,6 +754,11 @@ def test_developer_supplies_exact_small_anchors_for_language_repair() -> None:
     assert "환율 분석" in payload["exact_edit_anchors"][0]["anchors"][0]["text"]
     assert result.changes[0].content is not None
 
+    direct = DeveloperAgent.exact_edit_anchors(
+        previous, "English locale contains an unexpected CJK fragment."
+    )
+    assert direct == payload["exact_edit_anchors"]
+
 
 def test_developer_rejects_blind_existing_file_replacement_and_uses_sidecar() -> None:
     blind = CodeChangeSet(

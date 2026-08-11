@@ -532,6 +532,14 @@ class ExecutionPipeline:
                 ],
                 missing_information=[],
             ).model_dump(mode="json")
+        repair_feedback = (
+            " ".join(prior_failure.read_text("utf-8").split())[:12_000]
+            if prior_failure.is_file()
+            else None
+        )
+        exact_edit_anchors = developer.exact_edit_anchors(
+            previous_change_set, repair_feedback
+        )
 
         def after_maker(raw: object, _ctx, round_number: int) -> dict[str, object]:
             nonlocal previous_change_set, latest_run
@@ -669,6 +677,8 @@ class ExecutionPipeline:
             "Git metadata, deployment, accounts, financial transactions, or paths outside the approved project. "
             "For every existing-file change, use one exact search/replace edit and never return the entire file; "
             "the search text must occur exactly once in the approved source. On revision, repair every build, test, "
+            "When exact_edit_anchors are supplied, copy search text only from those verbatim windows and keep each "
+            "edit to the smallest anchor that uniquely identifies the intended region. "
             "runtime, or independent-review failure while preserving all "
             "previously passing behavior. New files may use complete content; existing files must use exact edits. "
             "Prefer small incremental changes that can be verified and extended in later rounds. Return only the schema."
@@ -724,6 +734,7 @@ class ExecutionPipeline:
             "work_contract": contract,
             "analysis_package": analysis.model_dump(mode="json"),
             "approved_repository_files": maker_sources,
+            "exact_edit_anchors": exact_edit_anchors,
         }, initial_state=initial_state))
         self._write(
             output_dir / "adk_convergence_trace.json",
