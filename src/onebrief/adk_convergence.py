@@ -60,11 +60,13 @@ class BudgetedAdkLlm(BaseLlm):
                 role="user",
                 parts=[types.Part(text=(
                     "The previous structured response exhausted its output limit and was discarded. "
-                    "Return a valid, much smaller incremental change set: at most two changed files; "
-                    "for existing files use exact search/replace only; keep every search and replace "
-                    "under 12000 characters. Do not return complete existing-file contents. Implement "
-                    "the highest-priority verified slice now; later maker rounds will handle remaining "
-                    "criteria. Return only the required schema."
+                    "Return a valid, much smaller response in the required schema. If the schema is a "
+                    "code change set, return at most two changed files, use exact search/replace only "
+                    "for existing files, and keep every search and replacement under 12000 characters; "
+                    "do not return complete existing-file contents. If the schema is a narrative artifact, "
+                    "keep its body under 8000 characters while covering every acceptance criterion with "
+                    "concise evidence. Implement the highest-priority verified slice now; later maker "
+                    "rounds can add remaining detail. Return only the required schema."
                 ))],
             )]
             response = await asyncio.to_thread(

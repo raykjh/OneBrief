@@ -156,6 +156,8 @@ def test_adk_llm_retries_max_token_response_as_compact_increment() -> None:
     retry_text = gateway.calls[1][1][-1].parts[0].text
     assert "exact search/replace only" in retry_text
     assert "under 12000 characters" in retry_text
+    assert "narrative artifact" in retry_text
+    assert "under 8000 characters" in retry_text
 
 
 def test_deterministic_gate_overrules_model_pass_and_forces_original_maker_retry() -> None:
