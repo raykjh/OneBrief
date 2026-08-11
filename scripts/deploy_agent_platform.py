@@ -62,8 +62,11 @@ def _config() -> dict[str, object]:
             "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY": "true",
         },
         "service_account": SERVICE_ACCOUNT,
-        "min_instances": 0,
-        "max_instances": 1,
+        # Campaign lanes dispatch concurrently. Keep one warm router and permit
+        # one isolated runtime per active lane so cold starts do not serialize
+        # or time out otherwise independent work orders.
+        "min_instances": 1,
+        "max_instances": 3,
         "resource_limits": {"cpu": "1", "memory": "1Gi"},
         "labels": {"app": "onebrief", "component": "project-owner"},
         "python_version": "3.12",

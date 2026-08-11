@@ -108,6 +108,16 @@ def _lane_inputs(
     raise KeyError(f"unknown pilot lane: {lane_id}")
 
 
+def _public_research_allowed(lane_id: str, case: dict[str, object]) -> bool:
+    intake = case.get("intake")
+    if isinstance(intake, dict) and "public_research_allowed" in intake:
+        return bool(intake["public_research_allowed"])
+    # Frozen benchmark intent: source-bounded artifact lanes must not pay for or
+    # be contaminated by public search. Only cases whose goal requires current
+    # public data receive the grounded-search capability.
+    return lane_id in {"public-data-greenfield", "exchange-existing"}
+
+
 def _configure_lane(campaign_root: Path, lane_id: str, budget_cap: float) -> Path:
     runtime = campaign_root / "runtime" / lane_id
     runtime.mkdir(parents=True, exist_ok=True)
@@ -168,6 +178,9 @@ def submit_lane(campaign_root: Path, lane_id: str) -> dict[str, object]:
         "output_target": output_target,
         "desired_output": desired_output,
         "budget_limit_usd": f"{spec.max_budget_usd - RESERVED_INTAKE_USD:.2f}",
+        "public_research_disabled": (
+            "false" if _public_research_allowed(lane_id, case) else "true"
+        ),
     }
     if project_id:
         data["existing_project_id"] = project_id
