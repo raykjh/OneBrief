@@ -92,6 +92,8 @@ def test_home_serves_the_real_workflow() -> None:
     assert 'id="criteriaList"' in response.text
     assert 'id="criteriaScore"' in response.text
     assert '"/criteria"' in response.text
+    assert "계약 기준 " in response.text
+    assert "최종 미완료" in response.text
     assert "에이전트 실행 흐름" in response.text
     assert 'new URLSearchParams(location.search).get("session")' in response.text
     assert "terminalWaits>=5" in response.text
