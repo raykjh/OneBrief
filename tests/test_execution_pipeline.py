@@ -343,8 +343,11 @@ def test_adk_software_continuation_restores_previous_change_set(
                 repaired.model_dump(mode="json"),
                 _verification("PASS").model_dump(mode="json"),
             ]
+            self.output_caps: list[int | None] = []
 
-        def generate_adk_response(self, **_kwargs: object) -> types.GenerateContentResponse:
+        def generate_adk_response(self, **kwargs: object) -> types.GenerateContentResponse:
+            config = kwargs.get("config")
+            self.output_caps.append(getattr(config, "max_output_tokens", None))
             payload = self.outputs.pop(0)
             return types.GenerateContentResponse(candidates=[types.Candidate(
                 content=types.Content(
@@ -392,8 +395,9 @@ def test_adk_software_continuation_restores_previous_change_set(
         encoding="utf-8",
     )
 
+    gateway = ResumeGateway()
     _, report, _ = ExecutionPipeline(
-        tmp_path / "run", gateway=ResumeGateway()
+        tmp_path / "run", gateway=gateway
     )._run_adk_development_convergence(
         intake=intake, requirements=_requirements(), sources=[_source()],
         source_payload=[{
@@ -407,6 +411,7 @@ def test_adk_software_continuation_restores_previous_change_set(
 
     assert report.verdict == Verdict.PASS
     assert observed_previous == [previous]
+    assert gateway.output_caps[0] == 8_000
 
 
 def test_adk_software_failure_keeps_most_progressed_candidate(

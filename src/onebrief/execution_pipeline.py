@@ -44,6 +44,7 @@ from onebrief.development_toolpack import (
 from onebrief.development_progress import development_failure_quality
 from onebrief.generic_development_toolpack import (
     ApprovedProjectDevelopmentToolPack,
+    CompactProposedProjectCodeChangeSet,
     ProjectCodeChangeSet,
     ProposedProjectCodeChangeSet,
 )
@@ -787,7 +788,11 @@ class ExecutionPipeline:
                 "independent_verification", "gemini-3.5-flash"
             ),
             maker_schema=(
-                ProposedProjectCodeChangeSet
+                (
+                    CompactProposedProjectCodeChangeSet
+                    if prior_failure.is_file()
+                    else ProposedProjectCodeChangeSet
+                )
                 if change_schema is ProjectCodeChangeSet
                 else change_schema
             ),
@@ -795,13 +800,7 @@ class ExecutionPipeline:
             maker_instruction=maker_instruction,
             verifier_instruction=verifier_instruction,
             maker_output_tokens=(
-                min(
-                    DEVELOPER_OUTPUT_CAP,
-                    8_000
-                    if self.stage_models.get("long_form_draft")
-                    == "gemini-3.5-flash-lite"
-                    else 4_000,
-                )
+                min(DEVELOPER_OUTPUT_CAP, 8_000)
                 if prior_failure.is_file()
                 else DEVELOPER_OUTPUT_CAP
             ),
