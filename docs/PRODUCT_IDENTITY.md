@@ -81,6 +81,10 @@ completion.
    material choices in one Gemini pass. The browser presents them as an instant,
    one-question-at-a-time sequence with recommended defaults and no network wait between
    questions.
+   Its choices resolve user preferences only. Facts or candidates that the approved
+   execution is supposed to research may not be smuggled into a recommended option.
+   When the goal delegates discovery or selection to OneBrief, SixSense does not return
+   that delegated decision to the user; only a genuine mandatory information gap may stop intake.
 3. OneBrief asks separately only for genuinely missing authoritative information that
    cannot be inferred or safely defaulted.
 4. OneBrief creates the completion contract and generates and qualifies the smallest

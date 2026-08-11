@@ -17,6 +17,7 @@ def run_grounded_research(
     *,
     goal: str,
     desired_output: str | None,
+    completion_contract: dict[str, object] | None = None,
 ) -> PublicResearchResult:
     """Run exactly one grounded prompt under a fixed worst-case fee reservation."""
     model = (
@@ -28,14 +29,19 @@ def run_grounded_research(
     system_instruction = (
         "You are OneBrief's public research agent. Use Google Search for current public facts. "
         "Never invent a listing, price, fee, date, or URL. Distinguish an explicitly advertised "
-        "value from an estimate. For lists, return one Markdown table with one item per row and "
-        "include source, checked date, and uncertainty columns. When a requested value is absent, "
-        "write '확인 필요' rather than guessing. Keep high-impact decisions with the user."
+        "value from an estimate. Satisfy the supplied completion contract's evidence requirements, "
+        "not merely the broad goal. For lists, return one Markdown table with one individually named "
+        "item per row and include a direct source URL, checked date, and uncertainty columns. A category "
+        "or market segment is not a named item. Never infer that no equivalent exists merely because a "
+        "candidate is new; search named comparisons and use bounded wording such as 'not identified within "
+        "this search scope'. Never use absolute safety or no-side-effect language. When a requested value is "
+        "absent, write '확인 필요' rather than guessing. Keep high-impact decisions with the user."
     )
     contents = json.dumps(
         {
             "goal": goal,
             "desired_output": desired_output,
+            "completion_contract": completion_contract,
             "instructions": (
                 "Research enough current candidates to answer the goal. Apply every numeric and "
                 "geographic condition exactly. Preserve direct source links in the report."

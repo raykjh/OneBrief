@@ -1,0 +1,113 @@
+from onebrief.evidence_sufficiency import (
+    apply_evidence_sufficiency_override,
+    validate_evidence_sufficiency,
+)
+from onebrief.execution_schemas import DraftArtifact, VerificationReport
+from onebrief.schemas import (
+    CompletionContract,
+    IntakeRequest,
+    InternalSource,
+    QualityCriterion,
+    RequirementsAnalysis,
+    SourcePriority,
+)
+
+
+def _requirements() -> RequirementsAnalysis:
+    return RequirementsAnalysis(
+        supported=True,
+        support_reason="Supported.",
+        normalized_goal="Compare current candidates.",
+        deliverables=["Comparison"],
+        mandatory_information=[],
+        optional_information=[],
+        acceptance_criteria=["Compare at least three named products."],
+        completion_contract=CompletionContract(
+            target_state="A sourced comparison is complete.",
+            quality_criteria=[QualityCriterion(
+                criterion_id="Q01",
+                description="기존 시장 유사 제품 조사 및 차별성 검증",
+                evidence_required="국내 유통 중인 유사 제품 3종 이상과의 비교 분석표",
+            )],
+        ),
+        assumptions=[],
+        consolidated_questions=[],
+        ready_for_estimate=True,
+    )
+
+
+def _public_source() -> InternalSource:
+    return InternalSource(
+        name="public_research.md",
+        priority=SourcePriority.MANDATORY,
+        content="Grounded research\n\n[W01] Example — https://example.com/one",
+    )
+
+
+def _draft(body: str) -> DraftArtifact:
+    return DraftArtifact(
+        title="Comparison",
+        body_markdown=body,
+        cited_finding_ids=["F01"],
+        drafting_decisions=[],
+    )
+
+
+def test_rejects_category_comparison_as_named_product_evidence() -> None:
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="유사 제품이 없으면 후보를 추천해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft("# 결과\n\n| 구분 | 비교 |\n|---|---|\n| 루테인 제품군 | 차별화 |\n\n유사 제품이 없는 독점적 후보입니다."),
+    )
+
+    kinds = {item.kind.value for item in result.issues}
+    assert "missing_direct_source" in kinds
+    assert "quantified_evidence_shortfall" in kinds
+    assert "unbounded_absence_claim" in kinds
+    assert result.verdict_override == "REVISE"
+
+
+def test_accepts_three_named_source_linked_rows_with_bounded_wording() -> None:
+    body = """# 결과
+
+| 제품 | 출처 |
+|---|---|
+| Alpha | https://example.com/a |
+| Beta | https://example.com/b |
+| Gamma | https://example.com/c |
+
+이 검색 범위에서 동등한 조합은 확인되지 않았으며 추가 확인이 필요합니다.
+"""
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="후보를 조사해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft(body),
+    )
+
+    assert result.issues == []
+    assert result.verdict_override is None
+
+
+def test_scope_and_safety_absolutes_override_model_pass() -> None:
+    evidence = validate_evidence_sufficiency(
+        IntakeRequest(goal="제품 콘셉트까지만 정해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft("# 콘셉트\n\n부작용 없는 안전한 제품입니다. https://example.com/a\n\n## 후속 작업\n생산합니다."),
+    )
+    report = apply_evidence_sufficiency_override(
+        VerificationReport(
+            verdict="PASS",
+            criterion_checks=[{"criterion_id": "Q01", "criterion": "Comparison", "passed": True, "evidence": "Looks complete."}],
+            blocking_issues=[],
+            revision_instructions=[],
+            missing_information=[],
+        ),
+        evidence,
+    )
+
+    assert report.verdict == "REVISE"
+    assert any("scope ceiling" in item for item in report.revision_instructions)
+    assert any("absolute safety" in item for item in report.revision_instructions)

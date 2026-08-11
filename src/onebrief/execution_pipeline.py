@@ -36,6 +36,10 @@ from onebrief.deterministic_verification import (
     apply_deterministic_override,
     validate_draft_grounding,
 )
+from onebrief.evidence_sufficiency import (
+    apply_evidence_sufficiency_override,
+    validate_evidence_sufficiency,
+)
 from onebrief.development_toolpack import (
     CodeChangeSet,
     DevelopmentRun,
@@ -397,6 +401,14 @@ class ExecutionPipeline:
             )
             report = apply_completion_evidence_override(model_report, completion)
             report = apply_deterministic_override(report, grounding)
+            sufficiency = validate_evidence_sufficiency(
+                intake, requirements, sources, draft
+            )
+            self._write(
+                output_dir / f"evidence_sufficiency_r{round_number}.json",
+                sufficiency.model_dump_json(indent=2),
+            )
+            report = apply_evidence_sufficiency_override(report, sufficiency)
             reality = evaluate_reality_check(intake, requirements, None)
             self._write(
                 output_dir / f"reality_check_r{round_number}.json",
@@ -418,7 +430,11 @@ class ExecutionPipeline:
             "the work contract, analysis package, and authoritative sources in the user payload. On later "
             "iterations revise your own prior artifact, address every blocking issue, and preserve passing "
             "content. Every material claim must cite supplied F-prefixed finding IDs. Never change the goal, "
-            "invent evidence, or make a high-impact human decision. Return only the required structured object. "
+            "invent evidence, or make a high-impact human decision. For public research, expose direct source "
+            "URLs beside the claims or rows they support; an F-prefixed finding ID alone is not inspectable "
+            "evidence. Never infer that no equivalent exists from novelty, a registration date, or category-level "
+            "comparison. Use bounded search-scope language and preserve uncertainty. Do not add unsolicited next "
+            "steps beyond an explicit scope ceiling. Return only the required structured object. "
             + WRITER_PROFILE.instruction()
         )
         verifier_instruction = (
@@ -426,6 +442,10 @@ class ExecutionPipeline:
             "criterion, grounding, citation, consistency, completeness, and authority boundary against the "
             "user payload and current artifact. PASS only with explicit evidence and no blocker. Use REVISE for "
             "correctable maker work and NEEDS_INFORMATION only for missing authoritative user information. "
+            "A category or market segment is not an individually named product or item. If a criterion requires "
+            "N products or examples, verify N named, directly source-linked entries. Novelty does not prove absence "
+            "of equivalents, and absolute safety or uniqueness claims fail without bounded evidence. Reject any "
+            "section beyond an explicit user scope ceiling. "
             "For each completion_contract criterion, return exactly one check with its Q-prefixed criterion_id; "
             "leave criterion_id null only for additional system checks. Give exact revision instructions and "
             "never edit the artifact. Return only the structured object. "
@@ -1142,7 +1162,13 @@ class ExecutionPipeline:
                             return existing
                         try:
                             result = run_grounded_research(
-                                self.gateway, goal=intake.goal, desired_output=intake.desired_output
+                                self.gateway,
+                                goal=intake.goal,
+                                desired_output=intake.desired_output,
+                                completion_contract=(
+                                    requirements.completion_contract.model_dump(mode="json")
+                                    if requirements.completion_contract else None
+                                ),
                             )
                         except ValueError as exc:
                             if (
