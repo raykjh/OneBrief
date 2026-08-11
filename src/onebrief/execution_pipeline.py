@@ -1541,6 +1541,9 @@ class ExecutionPipeline:
             grounding_path = output_dir / f"deterministic_verification_r{active_verification_round}.json"
             completion_evidence_path = output_dir / f"completion_evidence_r{active_verification_round}.json"
             reality_check_path = output_dir / f"reality_check_r{active_verification_round}.json"
+            evidence_sufficiency_path = (
+                output_dir / f"evidence_sufficiency_r{active_verification_round}.json"
+            )
             model_verification_path = output_dir / f"model_verification_r{active_verification_round}.json"
             report = adk_report or self._load(verification_path, VerificationReport)
             if (
@@ -1548,6 +1551,7 @@ class ExecutionPipeline:
                 or not grounding_path.exists()
                 or not completion_evidence_path.exists()
                 or not reality_check_path.exists()
+                or not evidence_sufficiency_path.exists()
             ):
                 self._checkpoint(output_dir, PipelineStatus.RUNNING, "verification_r0", completed, 0)
                 model_report = self._load(model_verification_path, VerificationReport)
@@ -1575,6 +1579,16 @@ class ExecutionPipeline:
                     model_report, completion_evidence
                 )
                 report = apply_deterministic_override(report, grounding)
+                evidence_sufficiency = validate_evidence_sufficiency(
+                    intake, requirements, sources, draft
+                )
+                self._write(
+                    evidence_sufficiency_path,
+                    evidence_sufficiency.model_dump_json(indent=2),
+                )
+                report = apply_evidence_sufficiency_override(
+                    report, evidence_sufficiency
+                )
                 reality_check = evaluate_reality_check(
                     intake, requirements, self._development_evidence(output_dir)
                 )
@@ -1697,6 +1711,16 @@ class ExecutionPipeline:
                         model_report, completion_evidence
                     )
                     report = apply_deterministic_override(report, grounding)
+                    evidence_sufficiency = validate_evidence_sufficiency(
+                        intake, requirements, sources, draft
+                    )
+                    self._write(
+                        output_dir / f"evidence_sufficiency_r{revision_round}.json",
+                        evidence_sufficiency.model_dump_json(indent=2),
+                    )
+                    report = apply_evidence_sufficiency_override(
+                        report, evidence_sufficiency
+                    )
                     reality_check = evaluate_reality_check(
                         intake, requirements, self._development_evidence(output_dir)
                     )
@@ -1741,6 +1765,9 @@ class ExecutionPipeline:
                 completion_evidence_path = output_dir / f"completion_evidence_r{revision_round}.json"
                 reality_check_path = output_dir / f"reality_check_r{revision_round}.json"
                 grounding_path = output_dir / f"deterministic_verification_r{revision_round}.json"
+                evidence_sufficiency_path = (
+                    output_dir / f"evidence_sufficiency_r{revision_round}.json"
+                )
                 model_verification_path = output_dir / f"model_verification_r{revision_round}.json"
                 next_report = self._load(verification_path, VerificationReport)
                 if (
@@ -1748,6 +1775,7 @@ class ExecutionPipeline:
                     or not grounding_path.exists()
                     or not completion_evidence_path.exists()
                     or not reality_check_path.exists()
+                    or not evidence_sufficiency_path.exists()
                 ):
                     self._checkpoint(
                         output_dir,
@@ -1781,6 +1809,16 @@ class ExecutionPipeline:
                         model_report, completion_evidence
                     )
                     next_report = apply_deterministic_override(next_report, grounding)
+                    evidence_sufficiency = validate_evidence_sufficiency(
+                        intake, requirements, sources, draft
+                    )
+                    self._write(
+                        evidence_sufficiency_path,
+                        evidence_sufficiency.model_dump_json(indent=2),
+                    )
+                    next_report = apply_evidence_sufficiency_override(
+                        next_report, evidence_sufficiency
+                    )
                     reality_check = evaluate_reality_check(
                         intake, requirements, self._development_evidence(output_dir)
                     )
@@ -1796,6 +1834,7 @@ class ExecutionPipeline:
                 f"reality_check_r{revision_round}.json",
                 f"verification_r{revision_round}.json",
                 f"deterministic_verification_r{revision_round}.json",
+                f"evidence_sufficiency_r{revision_round}.json",
             )
 
             governance: GovernanceDecision | None = None

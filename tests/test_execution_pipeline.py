@@ -21,7 +21,16 @@ from onebrief.execution_schemas import (
     Verdict,
 )
 from onebrief.producer import estimate_budget
-from onebrief.schemas import IntakeRequest, InternalSource, OutputTarget, RequirementsAnalysis, SourcePriority, ToolPackId
+from onebrief.schemas import (
+    CompletionContract,
+    IntakeRequest,
+    InternalSource,
+    OutputTarget,
+    QualityCriterion,
+    RequirementsAnalysis,
+    SourcePriority,
+    ToolPackId,
+)
 
 
 class FakeGateway:
@@ -1330,6 +1339,91 @@ def test_resume_reuses_completed_analysis_without_a_new_model_call(tmp_path: Pat
     final_text = (output_dir / "final.md").read_text(encoding="utf-8")
     assert "Remote Work Guide" in final_text
     assert json.loads((output_dir / "temperament_decisions.json").read_text(encoding="utf-8")) == []
+
+
+def test_reused_research_draft_cannot_bypass_evidence_sufficiency_gate(
+    tmp_path: Path,
+) -> None:
+    intake = IntakeRequest(
+        goal="유사 제품이 없으면 제품 콘셉트까지만 정해줘.",
+        public_research_allowed=True,
+        max_revision_rounds=0,
+    )
+    source = InternalSource(
+        name="public_research.md",
+        priority=SourcePriority.MANDATORY,
+        requirement_keys=["market"],
+        content="[W01] Product — https://example.com/products/a",
+    )
+    requirements = RequirementsAnalysis(
+        supported=True,
+        support_reason="Supported.",
+        normalized_goal="Select a differentiated product concept.",
+        deliverables=["Product concept"],
+        mandatory_information=[],
+        optional_information=[],
+        acceptance_criteria=["Compare current products."],
+        completion_contract=CompletionContract(
+            target_state="A sourced product concept is complete.",
+            quality_criteria=[QualityCriterion(
+                criterion_id="Q01",
+                description="현재 시장의 유사 제품 조사 및 차별성 검증",
+                evidence_required="비교한 제품과 직접 출처를 제시한다.",
+            )],
+        ),
+        assumptions=[],
+        consolidated_questions=[],
+        ready_for_estimate=True,
+    )
+    run_dir = _approve(tmp_path, intake, source)
+    output_dir = tmp_path / "reused-research"
+    output_dir.mkdir()
+    (output_dir / "analysis.json").write_text(
+        _analysis().model_dump_json(indent=2), encoding="utf-8"
+    )
+    (output_dir / "public_research.json").write_text(
+        json.dumps({
+            "query": intake.goal,
+            "answer_markdown": "Product evidence.",
+            "sources": [{
+                "source_id": "W01",
+                "title": "Product",
+                "url": "https://example.com/products/a",
+                "domain": "example.com",
+            }],
+            "search_queries": ["product"],
+            "search_suggestions_html": "",
+        }),
+        encoding="utf-8",
+    )
+    (output_dir / "draft_r0.json").write_text(
+        _draft(
+            "이 원료는 시장에 유사 제품이 없는 독점적 후보입니다. [F01]\n\n"
+            "https://example.com/products/a\n\n"
+            "## 생산 단계\n\n품목제조신고를 즉시 진행합니다."
+        ).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    gateway = FakeGateway([_verification("PASS")])
+
+    result = ExecutionPipeline(run_dir, gateway=gateway).run(
+        intake=intake,
+        requirements=requirements,
+        sources=[source],
+        output_dir=output_dir,
+    )
+
+    assert result.status == PipelineStatus.PARTIAL
+    evidence = json.loads(
+        (output_dir / "evidence_sufficiency_r0.json").read_text(encoding="utf-8")
+    )
+    kinds = {item["kind"] for item in evidence["issues"]}
+    assert "unbounded_absence_claim" in kinds
+    assert "out_of_scope_followup" in kinds
+    verification = json.loads(
+        (output_dir / "verification_r0.json").read_text(encoding="utf-8")
+    )
+    assert verification["verdict"] == "REVISE"
 
 
 def test_exchange_development_returns_failed_acceptance_to_the_software_maker(
