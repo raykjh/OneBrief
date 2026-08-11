@@ -178,6 +178,40 @@ def test_continuation_rejects_nonterminal_source(
         )
 
 
+def test_authorization_gate_can_resume_under_explicit_remaining_approval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("onebrief.jobs.create_project_snapshot", lambda *_args: None)
+    source = InternalSource(
+        name="rules", priority=SourcePriority.MANDATORY, content="truth", size_bytes=5
+    )
+    source_dir = create_job(
+        jobs_dir=tmp_path / "source-jobs",
+        intake=_intake(source),
+        requirements=_requirements(),
+        sources=[source],
+        estimate=_estimate(),
+        approved_usd=0.10,
+    )
+    JobStore(source_dir).finish(
+        JobStatus.NEEDS_AUTHORIZATION,
+        stage="authorization_gate",
+        message="A dynamic repair stage needs the existing approved model binding.",
+    )
+
+    child, _actual, approved, _reused = create_budget_preserving_continuation(
+        source_job_dir=source_dir,
+        source_job_uri="gs://bucket/jobs/source",
+        jobs_dir=tmp_path / "children",
+        reusable_source=ReuseSource(),
+        explicit_child_approval_usd=0.05,
+    )
+
+    assert approved == 0.05
+    assert JobStore(child).read().status == JobStatus.QUEUED
+
+
 def test_explicit_reauthorization_uses_only_new_approval(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

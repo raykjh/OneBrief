@@ -115,11 +115,19 @@ def test_gateway_applies_the_same_model_policy_to_native_adk_turns() -> None:
     assert gateway.generate_adk_response(
         stage="long_form_draft", model="gemini-3.5-flash", contents=[]
     ) == {"adk": True}
+    assert gateway.generate_adk_response(
+        stage="long_form_draft_revision_r5",
+        model="gemini-3.5-flash",
+        contents=[],
+    ) == {"adk": True}
     with pytest.raises(PermissionError, match="blocked before provider call"):
         gateway.generate_adk_response(
             stage="long_form_draft", model="gemini-3.5-flash-lite", contents=[]
         )
-    assert raw.calls == [("long_form_draft", "gemini-3.5-flash")]
+    assert raw.calls == [
+        ("long_form_draft", "gemini-3.5-flash"),
+        ("long_form_draft_revision_r5", "gemini-3.5-flash"),
+    ]
 
 
 @pytest.mark.parametrize(

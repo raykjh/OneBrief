@@ -279,6 +279,44 @@ def test_budget_amendment_downloads_only_allowlisted_cloud_artifacts(tmp_path: P
     }
 
 
+def test_budget_amendment_restores_only_latest_narrative_candidate_as_round_zero(
+    tmp_path: Path,
+) -> None:
+    objects = {
+        "jobs/prior/work/draft_r0.json": b'{"title":"old"}',
+        "jobs/prior/work/draft_r4.json": b'{"title":"latest"}',
+    }
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+        def download_to_filename(self, filename):
+            if self.name not in objects:
+                raise NotFound("missing")
+            Path(filename).write_bytes(objects[self.name])
+
+    class Client:
+        def bucket(self, _name):
+            return type("Bucket", (), {"blob": lambda _self, name: Blob(name)})()
+
+    work = tmp_path / "work"
+    copied = GCSJobStore(
+        "gs://onebrief-test/jobs/prior", client=Client()
+    ).download_reusable_artifacts(work)
+
+    assert copied == ["draft_r0.json"]
+    assert json.loads((work / "draft_r0.json").read_text("utf-8"))["title"] == "latest"
+    assert not (work / "draft_r4.json").exists()
+    manifest = json.loads((work / "reuse_manifest.json").read_text("utf-8"))
+    assert manifest["artifacts"] == [{
+        "source": "draft_r4.json",
+        "target": "draft_r0.json",
+        "sha256": hashlib.sha256(objects["jobs/prior/work/draft_r4.json"]).hexdigest(),
+        "selection": "most_progressed_narrative_candidate",
+    }]
+
+
 def test_missing_newer_code_candidate_does_not_delete_base_candidate(tmp_path: Path) -> None:
     objects = {
         "jobs/prior/work/code_change_set.json": b'{"summary":"base"}',

@@ -130,6 +130,7 @@ def create_budget_preserving_continuation(
         JobStatus.FAILED,
         JobStatus.PARTIAL,
         JobStatus.NEEDS_BUDGET,
+        JobStatus.NEEDS_AUTHORIZATION,
     }:
         raise RuntimeError(
             f"cloud continuation requires a terminal resumable source, not {source_record.status.value}"

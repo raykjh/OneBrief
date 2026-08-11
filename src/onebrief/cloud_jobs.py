@@ -269,6 +269,36 @@ class GCSJobStore:
                 continue
             digest = hashlib.sha256(target.read_bytes()).hexdigest()
             copied.append({"source": source_name, "target": target_name, "sha256": digest})
+        # Narrative revisions are checkpoints from one prior attempt, not
+        # prepaid future turns in the child. Restore only the most progressed
+        # candidate as round zero so every later round is a newly billed repair
+        # followed by fresh verification.
+        draft_candidates = sorted(
+            (
+                int(name.removeprefix("draft_r").removesuffix(".json")),
+                name,
+            )
+            for name in downloaded
+            if name.startswith("draft_r")
+            and name.endswith(".json")
+            and name.removeprefix("draft_r").removesuffix(".json").isdigit()
+        )
+        if draft_candidates:
+            _round, source_name = draft_candidates[-1]
+            target = destination_work / "draft_r0.json"
+            target.write_bytes(downloaded[source_name])
+            for index in range(1, 13):
+                (destination_work / f"draft_r{index}.json").unlink(missing_ok=True)
+            copied = [
+                item for item in copied
+                if not str(item["target"]).startswith("draft_r")
+            ]
+            copied.append({
+                "source": source_name,
+                "target": "draft_r0.json",
+                "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+                "selection": "most_progressed_narrative_candidate",
+            })
         # Older runs predate explicit best-candidate checkpoints.  Derive the
         # most progressed paired candidate deterministically instead of blindly
         # resuming from the final (possibly regressed) revision.
