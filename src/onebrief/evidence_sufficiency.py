@@ -105,7 +105,9 @@ def _direct_urls(markdown: str) -> set[str]:
         url = match.group(0).rstrip(".,;]")
         parsed = urlparse(url)
         if (parsed.path and parsed.path != "/") or parsed.query:
-            direct.add(url.casefold())
+            # URL hosts are case-insensitive, but paths and query keys may not be.
+            # Preserve the observed spelling and normalize only in _normalize_url.
+            direct.add(url)
     return direct
 
 
@@ -157,6 +159,10 @@ def _grounded_source_urls(sources: list[InternalSource]) -> set[str]:
             status = int(match.group("status")) if match.group("status") else None
             if status is None or 200 <= status < 400:
                 grounded.add(_normalize_url(match.group("url")))
+            for url_match in _URL.finditer(raw):
+                url = url_match.group(0).rstrip(".,;])")
+                if (urlparse(url).hostname or "").casefold() == "vertexaisearch.cloud.google.com":
+                    grounded.add(_normalize_url(url))
     return grounded
 
 
@@ -241,12 +247,16 @@ def validate_evidence_sufficiency(
         candidate_urls = _table_row_direct_urls(body) if requires_table else _direct_urls(body)
         grounded_source_urls = _grounded_source_urls(sources)
         grounded_urls = {
-            url for url in candidate_urls
+            _normalize_url(url) for url in candidate_urls
             if not grounded_source_urls or _normalize_url(url) in grounded_source_urls
+        }
+        ungrounded_urls = {
+            url for url in candidate_urls
+            if grounded_source_urls and _normalize_url(url) not in grounded_source_urls
         }
         observed = len(grounded_urls)
         if observed < required:
-            ungrounded = len(candidate_urls - grounded_urls)
+            ungrounded = len(ungrounded_urls)
             issues.append(EvidenceSufficiencyIssue(
                 kind=EvidenceSufficiencyIssueKind.QUANTIFIED_EVIDENCE_SHORTFALL,
                 message=(
@@ -259,8 +269,8 @@ def validate_evidence_sufficiency(
                     "do not count as named items."
                 ),
             ))
-        if grounded_source_urls and candidate_urls - grounded_urls:
-            examples = ", ".join(sorted(candidate_urls - grounded_urls)[:5])
+        if ungrounded_urls:
+            examples = ", ".join(sorted(ungrounded_urls)[:5])
             issues.append(EvidenceSufficiencyIssue(
                 kind=EvidenceSufficiencyIssueKind.UNGROUNDED_MODEL_URL,
                 message=(

@@ -119,6 +119,46 @@ def test_google_grounding_redirect_is_resolved_to_observed_public_url(monkeypatc
     assert "https://vendor.example/products/42 [HTTP 200]" in internal.content
 
 
+def test_head_not_allowed_falls_back_to_bounded_get(monkeypatch) -> None:
+    class Response:
+        def __init__(self, status_code, url):
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def head(self, url):
+            return Response(405, url)
+
+        def stream(self, method, url, headers):
+            assert method == "GET"
+            assert headers == {"Range": "bytes=0-0"}
+            return Response(200, url)
+
+    monkeypatch.setattr("onebrief.public_research._public_host", lambda _host: True)
+    monkeypatch.setattr("onebrief.public_research.httpx.Client", Client)
+    source = web_source("W01", "vendor.example", "https://vendor.example/products/42")
+
+    resolved = resolve_public_source(source)
+
+    assert resolved.http_status == 200
+
+
 def test_refinement_source_merge_preserves_prior_observed_evidence() -> None:
     first = web_source("W01", "a.example", "https://a.example/products/1").model_copy(
         update={"resolved_url": "https://a.example/products/1", "http_status": 200}
@@ -133,6 +173,19 @@ def test_refinement_source_merge_preserves_prior_observed_evidence() -> None:
         "https://a.example/products/1",
         "https://b.example/products/2",
     ]
+
+
+def test_refinement_source_merge_upgrades_failed_observation() -> None:
+    stale = web_source("W01", "a.example", "https://google.example/redirect").model_copy(
+        update={"resolved_url": "https://a.example/products/1", "http_status": 405}
+    )
+    observed = stale.model_copy(update={"source_id": "W07", "http_status": 200})
+
+    merged = merge_public_sources([stale], [observed])
+
+    assert len(merged) == 1
+    assert merged[0].source_id == "W01"
+    assert merged[0].http_status == 200
 
 
 def test_markdown_table_becomes_real_xlsx_with_sources(tmp_path: Path) -> None:

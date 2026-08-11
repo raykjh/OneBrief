@@ -146,6 +146,37 @@ def test_accepts_three_named_source_linked_rows_with_bounded_wording() -> None:
     assert result.verdict_override is None
 
 
+def test_exact_grounding_preserves_case_sensitive_paths_and_query_keys() -> None:
+    source = InternalSource(
+        name="public_research.md",
+        priority=SourcePriority.MANDATORY,
+        content=(
+            "Grounded research\n\n## 공개 출처\n"
+            "- [W01] Alpha — https://example.com/Product/View?goodsNo=101 [HTTP 200]\n"
+            "- [W02] Beta — https://example.com/Product/View?goodsNo=102 [HTTP 200]\n"
+            "- [W03] Gamma — https://example.com/Product/View?goodsNo=103 [HTTP 200]"
+        ),
+    )
+    body = """| 제품 | 출처 |
+|---|---|
+| Alpha | https://example.com/Product/View?goodsNo=101 |
+| Beta | https://example.com/Product/View?goodsNo=102 |
+| Gamma | https://example.com/Product/View?goodsNo=103 |
+"""
+
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="후보를 조사해줘.", public_research_allowed=True),
+        _requirements(),
+        [source],
+        _draft(body),
+    )
+
+    assert not any(
+        item.kind.value in {"quantified_evidence_shortfall", "ungrounded_model_url"}
+        for item in result.issues
+    )
+
+
 def test_scope_and_safety_absolutes_override_model_pass() -> None:
     evidence = validate_evidence_sufficiency(
         IntakeRequest(goal="제품 콘셉트까지만 정해줘.", public_research_allowed=True),

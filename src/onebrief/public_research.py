@@ -100,15 +100,25 @@ def resolve_public_source(
                 if not _public_host(parsed.hostname):
                     return source
                 response = client.head(current)
-                if response.status_code in {301, 302, 303, 307, 308}:
-                    location = response.headers.get("location")
+                status_code = response.status_code
+                response_url = str(response.url)
+                response_headers = response.headers
+                if status_code in {403, 405}:
+                    with client.stream(
+                        "GET", current, headers={"Range": "bytes=0-0"}
+                    ) as fallback:
+                        status_code = fallback.status_code
+                        response_url = str(fallback.url)
+                        response_headers = fallback.headers
+                if status_code in {301, 302, 303, 307, 308}:
+                    location = response_headers.get("location")
                     if not location:
                         return source
                     current = urljoin(current, location)
                     continue
                 return source.model_copy(update={
-                    "resolved_url": str(response.url),
-                    "http_status": response.status_code,
+                    "resolved_url": response_url,
+                    "http_status": status_code,
                 })
     except (httpx.HTTPError, OSError):
         return source
@@ -121,14 +131,28 @@ def merge_public_sources(
     """Keep grounded evidence discovered in any refinement round."""
 
     merged: list[PublicWebSource] = []
-    seen: set[str] = set()
+    seen: dict[str, int] = {}
     for group in source_groups:
         for raw_source in group:
             source = PublicWebSource.model_validate(raw_source)
             key = (source.resolved_url or source.url).casefold()
             if key in seen:
+                existing_index = seen[key]
+                existing = merged[existing_index]
+                existing_ok = (
+                    existing.http_status is not None
+                    and 200 <= existing.http_status < 400
+                )
+                source_ok = (
+                    source.http_status is not None
+                    and 200 <= source.http_status < 400
+                )
+                if source_ok and not existing_ok:
+                    merged[existing_index] = source.model_copy(update={
+                        "source_id": existing.source_id,
+                    })
                 continue
-            seen.add(key)
+            seen[key] = len(merged)
             merged.append(source.model_copy(update={
                 "source_id": f"W{len(merged) + 1:02d}",
             }))
