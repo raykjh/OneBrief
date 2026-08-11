@@ -1247,7 +1247,10 @@ class ExecutionPipeline:
                                         result.answer_markdown,
                                     )
                                     remaining_issues = research_reentry_issues(
-                                        intake, requirements, result.answer_markdown
+                                        intake,
+                                        requirements,
+                                        result.answer_markdown,
+                                        grounded_sources=result.sources,
                                     )
                                     if not remaining_issues:
                                         break

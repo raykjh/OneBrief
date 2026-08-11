@@ -69,6 +69,60 @@ def test_rejects_category_comparison_as_named_product_evidence() -> None:
     assert result.verdict_override == "REVISE"
 
 
+def test_unbounded_absence_issue_quotes_the_exact_offending_segment() -> None:
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="후보를 조사해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft(
+            "| 제품 | 출처 |\n|---|---|\n"
+            "| Alpha | https://example.com/products/a |\n"
+            "| Beta | https://example.com/products/b |\n"
+            "| Gamma | https://example.com/products/c |\n\n"
+            "이 조합은 기존 시장에 유사 제품이 없습니다. [F01]"
+        ),
+    )
+
+    issue = next(
+        item for item in result.issues
+        if item.kind.value == "unbounded_absence_claim"
+    )
+    assert "기존 시장에 유사 제품이 없습니다" in issue.message
+
+
+def test_model_written_product_urls_do_not_count_without_grounding_binding() -> None:
+    source = InternalSource(
+        name="public_research.md",
+        priority=SourcePriority.MANDATORY,
+        content=(
+            "Research prose may mention https://invented.example/products/a\n\n"
+            "## 공개 출처\n"
+            "- [W01] verified.example — https://vertexaisearch.cloud.google.com/grounding-api-redirect/abc"
+        ),
+    )
+    body = """# 결과
+
+| 제품 | 출처 |
+|---|---|
+| Alpha | https://verified.example/products/a |
+| Beta | https://invented.example/products/b |
+| Gamma | https://another-fake.example/products/c |
+"""
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="후보를 조사해줘.", public_research_allowed=True),
+        _requirements(),
+        [source],
+        _draft(body),
+    )
+
+    issue = next(
+        item for item in result.issues
+        if item.kind.value == "quantified_evidence_shortfall"
+    )
+    assert "only 1" in issue.message
+    assert "2 additional model-written URL(s) were ignored" in issue.message
+
+
 def test_accepts_three_named_source_linked_rows_with_bounded_wording() -> None:
     body = """# 결과
 

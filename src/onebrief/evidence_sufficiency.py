@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, Field
 
 from onebrief.execution_schemas import CriterionCheck, DraftArtifact, VerificationReport, Verdict
+from onebrief.public_research import PublicWebSource
 from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis
 
 
@@ -125,6 +126,45 @@ def _table_row_direct_urls(markdown: str) -> set[str]:
     return direct
 
 
+def _grounded_domain_hints(sources: list[InternalSource]) -> set[str]:
+    """Return canonical domains preserved in the grounded-source registry only.
+
+    The generated research prose is deliberately excluded: a model-written URL is
+    not evidence that Google Search actually grounded that URL.
+    """
+
+    hints: set[str] = set()
+    registry_line = re.compile(
+        r"^-\s+\[W\d+\]\s+(?P<title>.*?)\s+—\s+(?P<url>https?://\S+)",
+        re.IGNORECASE,
+    )
+    for source in sources:
+        if source.name != "public_research.md" or "## 공개 출처" not in source.content:
+            continue
+        registry = source.content.rsplit("## 공개 출처", 1)[-1]
+        for raw in registry.splitlines():
+            match = registry_line.match(raw.strip())
+            if not match:
+                continue
+            title = match.group("title").strip().casefold()
+            if re.fullmatch(r"(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}", title):
+                hints.add(title.removeprefix("www."))
+            hostname = (urlparse(match.group("url")).hostname or "").casefold()
+            if hostname and hostname != "vertexaisearch.cloud.google.com":
+                hints.add(hostname.removeprefix("www."))
+    return hints
+
+
+def _url_matches_grounded_domain(url: str, grounded_domains: set[str]) -> bool:
+    if not grounded_domains:
+        return True
+    hostname = (urlparse(url).hostname or "").casefold().removeprefix("www.")
+    return any(
+        hostname == domain or hostname.endswith(f".{domain}")
+        for domain in grounded_domains
+    )
+
+
 def _unbounded_negative_segments(markdown: str) -> list[str]:
     segments = [
         item.strip()
@@ -135,6 +175,18 @@ def _unbounded_negative_segments(markdown: str) -> list[str]:
         item for item in segments
         if _NEGATIVE_ABSOLUTE.search(item) and not _BOUNDED_UNCERTAINTY.search(item)
     ]
+
+
+def _claim_excerpt(segment: str, pattern: re.Pattern[str], *, width: int = 240) -> str:
+    normalized = re.sub(r"\s+", " ", segment).strip()
+    match = pattern.search(normalized)
+    if match is None or len(normalized) <= width:
+        return normalized[:width]
+    padding = max(20, (width - len(match.group(0))) // 2)
+    start = max(0, match.start() - padding)
+    end = min(len(normalized), match.end() + padding)
+    excerpt = normalized[start:end]
+    return f"{'…' if start else ''}{excerpt}{'…' if end < len(normalized) else ''}"
 
 
 def _uncited_material_claims(markdown: str) -> list[str]:
@@ -191,26 +243,41 @@ def validate_evidence_sufficiency(
     if has_public_research and required_counts:
         required = max(required_counts)
         requires_table = bool(re.search(r"비교\s*(?:분석\s*)?(?:표|테이블)|\btable\b", research_text, re.IGNORECASE))
-        observed = len(_table_row_direct_urls(body) if requires_table else _direct_urls(body))
+        candidate_urls = _table_row_direct_urls(body) if requires_table else _direct_urls(body)
+        grounded_domains = _grounded_domain_hints(sources)
+        grounded_urls = {
+            url for url in candidate_urls
+            if _url_matches_grounded_domain(url, grounded_domains)
+        }
+        observed = len(grounded_urls)
         if observed < required:
+            ungrounded = len(candidate_urls - grounded_urls)
             issues.append(EvidenceSufficiencyIssue(
                 kind=EvidenceSufficiencyIssueKind.QUANTIFIED_EVIDENCE_SHORTFALL,
                 message=(
                     f"The completion contract requires at least {required} individually inspectable "
-                    f"research items, but only {observed} distinct item-level source URLs were found"
+                    f"research items, but only {observed} distinct item-level source URLs were found "
+                    "and bound to the Google Search grounding registry"
                     f"{' on comparison-table data rows' if requires_table else ''}. "
-                    "Homepage links, categories, or market segments do not count as named items."
+                    f"{ungrounded} additional model-written URL(s) were ignored because their domains "
+                    "were absent from that registry. Homepage links, categories, or market segments "
+                    "do not count as named items."
                 ),
             ))
 
     negative_segments = _unbounded_negative_segments(body) if has_public_research else []
     if negative_segments:
+        examples = " | ".join(
+            _claim_excerpt(segment, _NEGATIVE_ABSOLUTE)
+            for segment in negative_segments[:3]
+        )
         issues.append(EvidenceSufficiencyIssue(
             kind=EvidenceSufficiencyIssueKind.UNBOUNDED_ABSENCE_CLAIM,
             message=(
                 "The artifact makes an absolute absence, uniqueness, or exclusivity claim. Replace it "
                 "with a bounded search-scope conclusion, list the compared named candidates and sources, "
-                "and preserve uncertainty in the same claim; novelty alone does not prove that no equivalent exists."
+                "and preserve uncertainty in the same claim; novelty alone does not prove that no equivalent exists. "
+                f"Remove or rewrite every quoted offending segment: {examples}"
             ),
         ))
 
@@ -264,14 +331,24 @@ def research_reentry_issues(
     intake: IntakeRequest,
     requirements: RequirementsAnalysis,
     research_markdown: str,
+    grounded_sources: list[PublicWebSource] | None = None,
 ) -> list[EvidenceSufficiencyIssue]:
     """Return evidence defects that require new research rather than maker prose repair."""
 
+    registry_lines = ["## 공개 출처"]
+    registry_lines.extend(
+        f"- [{getattr(item, 'source_id', 'W00')}] {getattr(item, 'title', '')} — {getattr(item, 'url', '')}"
+        for item in (grounded_sources or [])
+    )
     source = InternalSource(
         name="public_research.md",
         priority="mandatory",
         requirement_keys=["public_research"],
-        content=research_markdown,
+        content=(
+            research_markdown
+            if not grounded_sources
+            else research_markdown.rstrip() + "\n\n" + "\n".join(registry_lines)
+        ),
     )
     probe = DraftArtifact(
         title="Public research evidence probe",
