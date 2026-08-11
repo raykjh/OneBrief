@@ -155,3 +155,24 @@ def test_uncited_material_claim_is_rejected_at_row_or_paragraph_level() -> None:
     )
 
     assert any(item.kind.value == "uncited_material_claim" for item in result.issues)
+
+
+def test_grouped_finding_citations_count_as_same_paragraph_evidence() -> None:
+    body = """# 결과
+
+| 제품 | 출처 |
+|---|---|
+| Alpha | https://example.com/products/a |
+| Beta | https://example.com/products/b |
+| Gamma | https://example.com/products/c |
+
+이 성분은 피로 개선에 도움을 줄 수 있습니다. [F01, F04]
+"""
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="후보를 조사해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft(body),
+    )
+
+    assert not any(item.kind.value == "uncited_material_claim" for item in result.issues)

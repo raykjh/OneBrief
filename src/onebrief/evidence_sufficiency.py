@@ -78,7 +78,10 @@ _MATERIAL_CLAIM = re.compile(
     r"safe|risk|side\s+effects?|effective|proven|confirmed|market\s+share|price)\b",
     re.IGNORECASE,
 )
-_FINDING_CITATION = re.compile(r"\[F\d{2,}\]", re.IGNORECASE)
+_FINDING_CITATION = re.compile(
+    r"\[F\d{2,}(?:\s*,\s*F\d{2,})*\]",
+    re.IGNORECASE,
+)
 
 
 def _research_text(requirements: RequirementsAnalysis) -> str:

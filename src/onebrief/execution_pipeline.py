@@ -365,6 +365,28 @@ class ExecutionPipeline:
     ) -> tuple[DraftArtifact, VerificationReport, int]:
         """Run the real ADK maker/verifier loop while deterministic gates retain veto power."""
 
+        repair_fingerprints: list[str] = []
+
+        def prepare_repair(
+            report: VerificationReport, round_number: int
+        ) -> RepairPlan | None:
+            if requirements.completion_contract is None or report.verdict != Verdict.REVISE:
+                return None
+            plan = build_repair_plan(
+                requirements.completion_contract,
+                report,
+                round_number=round_number,
+                prior_fingerprints=repair_fingerprints,
+            )
+            if plan is None:
+                return None
+            repair_fingerprints.extend(item.fingerprint for item in plan.tasks)
+            self._write(
+                output_dir / f"repair_plan_r{round_number}.json",
+                plan.model_dump_json(indent=2),
+            )
+            return plan
+
         def after_maker(raw: object, _ctx, round_number: int) -> dict[str, object]:
             draft = enforce_temperament_audit(
                 DraftArtifact.model_validate(raw), WRITER_PROFILE
@@ -419,6 +441,25 @@ class ExecutionPipeline:
                 report = settle_consistent_verification(
                     requirements.completion_contract, report
                 )
+            repair_plan = prepare_repair(report, round_number)
+            if repair_plan is not None:
+                _ctx.session.state[REPAIR_PLAN_STATE_KEY] = repair_plan.model_dump(mode="json")
+                if repair_plan.stop_after_this_round:
+                    message = (
+                        "The same evidence failures repeated after bounded repair and decomposition. "
+                        "OneBrief stopped blind retry and preserved the unresolved candidate for a new plan."
+                    )
+                    report = VerificationReport(
+                        verdict=Verdict.UNVERIFIABLE,
+                        criterion_checks=report.criterion_checks,
+                        blocking_issues=list(dict.fromkeys([
+                            *report.blocking_issues,
+                            message,
+                        ])),
+                        revision_instructions=[],
+                        missing_information=report.missing_information,
+                        temperament_decisions=report.temperament_decisions,
+                    )
             self._write(
                 output_dir / f"verification_r{round_number}.json",
                 report.model_dump_json(indent=2),
@@ -434,7 +475,9 @@ class ExecutionPipeline:
             "URLs beside the claims or rows they support; an F-prefixed finding ID alone is not inspectable "
             "evidence. Never infer that no equivalent exists from novelty, a registration date, or category-level "
             "comparison. Use bounded search-scope language and preserve uncertainty. Do not add unsolicited next "
-            "steps beyond an explicit scope ceiling. Return only the required structured object. "
+            "steps beyond an explicit scope ceiling. When repair_plan is present, treat it as the complete scope "
+            "of the revision, repair each listed evidence failure, and preserve passing criteria. Return only the "
+            "required structured object. "
             + WRITER_PROFILE.instruction()
         )
         verifier_instruction = (
