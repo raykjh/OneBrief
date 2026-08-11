@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import ipaddress
+import socket
 from urllib.parse import urlparse
+from urllib.parse import urljoin
+
+import httpx
 
 from pydantic import BaseModel, Field
 
@@ -14,6 +19,8 @@ class PublicWebSource(BaseModel):
     title: str
     url: str
     domain: str = ""
+    resolved_url: str | None = None
+    http_status: int | None = None
 
 
 class PublicResearchResult(BaseModel):
@@ -25,10 +32,19 @@ class PublicResearchResult(BaseModel):
 
     def as_internal_source(self) -> InternalSource:
         source_lines = ["## 공개 출처"]
-        source_lines.extend(
-            f"- [{source.source_id}] {source.title} — {source.url}"
-            for source in self.sources
-        )
+        for source in self.sources:
+            inspectable_url = source.resolved_url or source.url
+            status = (
+                f" [HTTP {source.http_status}]"
+                if source.http_status is not None else ""
+            )
+            grounding = (
+                f" (Google grounding: {source.url})"
+                if source.resolved_url and source.resolved_url != source.url else ""
+            )
+            source_lines.append(
+                f"- [{source.source_id}] {source.title} — {inspectable_url}{status}{grounding}"
+            )
         content = self.answer_markdown.rstrip() + "\n\n" + "\n".join(source_lines)
         return InternalSource(
             name="public_research.md",
@@ -48,3 +64,72 @@ def web_source(source_id: str, title: str | None, url: str) -> PublicWebSource:
         url=url,
         domain=urlparse(url).netloc,
     )
+
+
+def _public_host(hostname: str) -> bool:
+    try:
+        addresses = {
+            item[4][0]
+            for item in socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+        }
+    except OSError:
+        return False
+    return bool(addresses) and all(ipaddress.ip_address(item).is_global for item in addresses)
+
+
+def resolve_public_source(
+    source: PublicWebSource,
+    *,
+    timeout_seconds: float = 8.0,
+    max_redirects: int = 6,
+) -> PublicWebSource:
+    """Resolve one Google grounding redirect without following private-network hops."""
+
+    current = source.url
+    headers = {"User-Agent": "OneBriefEvidenceObserver/1.0"}
+    try:
+        with httpx.Client(
+            follow_redirects=False,
+            timeout=timeout_seconds,
+            headers=headers,
+        ) as client:
+            for _ in range(max_redirects + 1):
+                parsed = urlparse(current)
+                if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                    return source
+                if not _public_host(parsed.hostname):
+                    return source
+                response = client.head(current)
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    location = response.headers.get("location")
+                    if not location:
+                        return source
+                    current = urljoin(current, location)
+                    continue
+                return source.model_copy(update={
+                    "resolved_url": str(response.url),
+                    "http_status": response.status_code,
+                })
+    except (httpx.HTTPError, OSError):
+        return source
+    return source
+
+
+def merge_public_sources(
+    *source_groups: list[PublicWebSource],
+) -> list[PublicWebSource]:
+    """Keep grounded evidence discovered in any refinement round."""
+
+    merged: list[PublicWebSource] = []
+    seen: set[str] = set()
+    for group in source_groups:
+        for raw_source in group:
+            source = PublicWebSource.model_validate(raw_source)
+            key = (source.resolved_url or source.url).casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(source.model_copy(update={
+                "source_id": f"W{len(merged) + 1:02d}",
+            }))
+    return merged

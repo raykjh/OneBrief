@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from math import ceil
 
 from google.genai import types
 
 from onebrief.execution_limits import PUBLIC_RESEARCH_OUTPUT_CAP
 from onebrief.producer import approximate_tokens
-from onebrief.public_research import PublicResearchResult, web_source
+from onebrief.public_research import PublicResearchResult, resolve_public_source, web_source
 
 
 def run_grounded_research(
@@ -132,6 +133,8 @@ def run_grounded_research(
     )
     if not sources:
         raise ValueError("Google Search returned no grounded source URLs.")
+    with ThreadPoolExecutor(max_workers=min(6, len(sources))) as executor:
+        sources = list(executor.map(resolve_public_source, sources))
     entry = getattr(metadata, "search_entry_point", None)
     return PublicResearchResult(
         query=goal,

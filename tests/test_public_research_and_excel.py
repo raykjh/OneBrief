@@ -4,7 +4,12 @@ from pathlib import Path
 from onebrief.budget_guard import BudgetStore
 from onebrief.jobs import create_job
 from onebrief.producer import estimate_budget
-from onebrief.public_research import PublicResearchResult
+from onebrief.public_research import (
+    PublicResearchResult,
+    merge_public_sources,
+    resolve_public_source,
+    web_source,
+)
 from onebrief.schemas import IntakeRequest, RequirementsAnalysis
 from onebrief.workbook_export import export_workbook, markdown_tables
 
@@ -73,6 +78,61 @@ def test_grounded_prompt_fixed_fee_is_reserved_and_settled(tmp_path: Path) -> No
     )
     assert ledger.actual_usd_micros >= 35_000
     assert ledger.actual_usd_micros <= ledger.approval.approved_usd_micros
+
+
+def test_google_grounding_redirect_is_resolved_to_observed_public_url(monkeypatch) -> None:
+    class Response:
+        def __init__(self, status_code, url, location=None):
+            self.status_code = status_code
+            self.url = url
+            self.headers = {"location": location} if location else {}
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def head(self, url):
+            if "grounding-api-redirect" in url:
+                return Response(302, url, "https://vendor.example/products/42")
+            return Response(200, url)
+
+    monkeypatch.setattr("onebrief.public_research._public_host", lambda _host: True)
+    monkeypatch.setattr("onebrief.public_research.httpx.Client", Client)
+    source = web_source(
+        "W01", "vendor.example",
+        "https://vertexaisearch.cloud.google.com/grounding-api-redirect/abc",
+    )
+
+    resolved = resolve_public_source(source)
+
+    assert resolved.resolved_url == "https://vendor.example/products/42"
+    assert resolved.http_status == 200
+    internal = PublicResearchResult(
+        query="test", answer_markdown="answer", sources=[resolved]
+    ).as_internal_source()
+    assert "https://vendor.example/products/42 [HTTP 200]" in internal.content
+
+
+def test_refinement_source_merge_preserves_prior_observed_evidence() -> None:
+    first = web_source("W01", "a.example", "https://a.example/products/1").model_copy(
+        update={"resolved_url": "https://a.example/products/1", "http_status": 200}
+    )
+    repeated = first.model_copy(update={"source_id": "W09"})
+    second = web_source("W01", "b.example", "https://b.example/products/2")
+
+    merged = merge_public_sources([first], [repeated, second])
+
+    assert [item.source_id for item in merged] == ["W01", "W02"]
+    assert [item.url for item in merged] == [
+        "https://a.example/products/1",
+        "https://b.example/products/2",
+    ]
 
 
 def test_markdown_table_becomes_real_xlsx_with_sources(tmp_path: Path) -> None:

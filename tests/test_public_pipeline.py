@@ -169,7 +169,12 @@ def test_research_reentry_refines_evidence_before_rebuilding_analysis(
             "| Alpha | A | https://example.com/products/a |\n"
             "| Beta | B | https://example.com/products/b |\n"
             "| Gamma | C | https://example.com/products/c |"
-        )
+        ),
+        "sources": [
+            {"source_id": "W01", "title": "Alpha", "url": "https://example.com/products/a", "domain": "example.com"},
+            {"source_id": "W02", "title": "Beta", "url": "https://example.com/products/b", "domain": "example.com"},
+            {"source_id": "W03", "title": "Gamma", "url": "https://example.com/products/c", "domain": "example.com"},
+        ],
     })
     calls = []
 

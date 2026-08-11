@@ -81,6 +81,7 @@ from onebrief.execution_profile import (
 )
 from onebrief.guarded_gemini import BudgetedGeminiClient
 from onebrief.grounded_search import run_grounded_research
+from onebrief.public_research import merge_public_sources
 from onebrief.recovery_policy import RecoveryAction, RecoveryDecision, RecoveryPolicy
 from onebrief.repair_planning import RepairPlan, build_repair_plan
 from onebrief.reality_check import apply_reality_check_override, evaluate_reality_check
@@ -1234,9 +1235,17 @@ class ExecutionPipeline:
                                         if requirements.completion_contract else None
                                     ),
                                     stage=stage,
-                                    prior_research=(prior.answer_markdown if prior else None),
+                                    prior_research=(
+                                        prior.as_internal_source().content if prior else None
+                                    ),
                                     blocking_issues=blockers,
                                 )
+                                if prior is not None:
+                                    result = result.model_copy(update={
+                                        "sources": merge_public_sources(
+                                            prior.sources, result.sources
+                                        ),
+                                    })
                                 if research_reentry_requested:
                                     self._write(
                                         output_dir / f"public_research_refinement_r{attempt}.json",

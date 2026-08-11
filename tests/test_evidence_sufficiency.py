@@ -97,7 +97,8 @@ def test_model_written_product_urls_do_not_count_without_grounding_binding() -> 
         content=(
             "Research prose may mention https://invented.example/products/a\n\n"
             "## 공개 출처\n"
-            "- [W01] verified.example — https://vertexaisearch.cloud.google.com/grounding-api-redirect/abc"
+            "- [W01] verified.example — https://verified.example/products/a [HTTP 200] "
+            "(Google grounding: https://vertexaisearch.cloud.google.com/grounding-api-redirect/abc)"
         ),
     )
     body = """# 결과
