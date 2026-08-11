@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from onebrief.development_toolpack import ExchangeDevelopmentToolPack
 from onebrief.generic_development_toolpack import ApprovedProjectDevelopmentToolPack
+from onebrief.greenfield_web_toolpack import GreenfieldWebDevelopmentToolPack
 from onebrief.schemas import InternalSource, OutputTarget, SourcePriority, ToolPackId
 
 
@@ -106,6 +107,14 @@ def toolpack_descriptor(toolpack_id: ToolPackId) -> InternalSource:
             "the source repository, install dependencies, deploy, push, access secrets or run arbitrary commands."
         )
         summary = "Approved isolated development for the selected imported project."
+    elif toolpack_id == ToolPackId.GREENFIELD_WEB_DEVELOPMENT:
+        content = (
+            "Greenfield Web Development supplies a dependency-free disposable web scaffold. "
+            "It permits bounded product-source edits, fixed tests and build, a real local HTTP probe, "
+            "and independent headless-browser observation. It cannot install packages, deploy, access "
+            "credentials, or modify an existing project."
+        )
+        summary = "Disposable web creation with fixed HTTP and browser verification."
     elif toolpack_id == ToolPackId.EXCHANGE_DEVELOPMENT:
         content = (
             "Exchange Development is an approved isolated source-development ToolPack. It may read "
@@ -150,6 +159,10 @@ def route_toolpack_candidates(intake):
     if intake.existing_project_id:
         return intake.model_copy(update={
             "toolpack_ids": [ToolPackId.PROJECT_DEVELOPMENT]
+        })
+    if intake.output_target == OutputTarget.WEB_APP:
+        return intake.model_copy(update={
+            "toolpack_ids": [ToolPackId.GREENFIELD_WEB_DEVELOPMENT]
         })
     text = "\n".join((intake.goal, intake.desired_output or "")).casefold()
     exchange_markers = (
@@ -338,6 +351,41 @@ def _execute_project_development(
     return run, sources
 
 
+def _execute_greenfield_web_development(
+    output_dir: Path,
+) -> tuple[ToolPackRun, list[InternalSource]]:
+    pack_dir = output_dir / ToolPackId.GREENFIELD_WEB_DEVELOPMENT.value
+    evidence_root = pack_dir / "evidence"
+    inspection, sources = GreenfieldWebDevelopmentToolPack(
+        pack_dir / "scaffold"
+    ).inspect(evidence_root)
+    evidence: list[ToolEvidence] = []
+    for relative in [
+        "repository_inspection.json",
+        *(f"repository_context/{item.path}" for item in inspection.context_files),
+    ]:
+        path = evidence_root / relative
+        evidence.append(ToolEvidence(
+            source_path=relative,
+            packaged_path=path.relative_to(output_dir.parent).as_posix(),
+            size_bytes=path.stat().st_size,
+            sha256=_sha256(path),
+        ))
+    run = ToolPackRun(
+        toolpack_id=ToolPackId.GREENFIELD_WEB_DEVELOPMENT,
+        readonly=False,
+        status="ready",
+        commands=[],
+        evidence=evidence,
+        safety_boundary=inspection.safety_boundary,
+    )
+    pack_dir.mkdir(parents=True, exist_ok=True)
+    (pack_dir / "toolpack_run.json").write_text(
+        run.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
+    return run, sources
+
+
 def execute_toolpacks(
     toolpack_ids: list[ToolPackId], output_dir: Path, project_id: str | None = None,
     focus_text: str = "", registry_root: Path | None = None,
@@ -363,6 +411,8 @@ def execute_toolpacks(
                             source_name = f"project-source/{relative}"
                         elif run.toolpack_id == ToolPackId.EXCHANGE_DEVELOPMENT:
                             source_name = f"exchange-source/{relative}"
+                        elif run.toolpack_id == ToolPackId.GREENFIELD_WEB_DEVELOPMENT:
+                            source_name = f"greenfield-source/{relative}"
                     sources.append(InternalSource(
                         name=source_name, priority=SourcePriority.MANDATORY,
                         requirement_keys=[f"{run.toolpack_id.value}_toolpack"], content=content,
@@ -383,6 +433,8 @@ def execute_toolpacks(
             run, generated = _execute_project_development(
                 project_id, output_dir, focus_text, registry_root
             )
+        elif toolpack_id == ToolPackId.GREENFIELD_WEB_DEVELOPMENT:
+            run, generated = _execute_greenfield_web_development(output_dir)
         else:
             raise ValueError(f"unsupported ToolPack: {toolpack_id}")
         runs.append(run)

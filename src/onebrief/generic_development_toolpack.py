@@ -113,6 +113,8 @@ class ProposedProjectFileChange(BaseModel):
     # impossible even though the promoted result still satisfies the total cap.
     search: str | None = Field(default=None, min_length=1, max_length=MAX_CHANGE_BYTES)
     replace: str | None = Field(default=None, max_length=MAX_CHANGE_BYTES)
+    start_anchor: str | None = Field(default=None, min_length=1, max_length=4000)
+    end_anchor: str | None = Field(default=None, min_length=1, max_length=4000)
     reason: str = Field(min_length=3, max_length=500)
 
     @field_validator("path")
@@ -124,9 +126,15 @@ class ProposedProjectFileChange(BaseModel):
     def validate_edit_mode(self) -> "ProposedProjectFileChange":
         full_file = self.content is not None
         exact_edit = self.search is not None and self.replace is not None
-        if full_file == exact_edit:
+        anchored_edit = (
+            self.start_anchor is not None
+            and self.end_anchor is not None
+            and self.replace is not None
+            and self.search is None
+        )
+        if sum((full_file, exact_edit, anchored_edit)) != 1:
             raise ValueError(
-                "provide either complete content or one exact search/replace edit"
+                "provide complete content, exact search/replace, or anchored range replacement"
             )
         return self
 

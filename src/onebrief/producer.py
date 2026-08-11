@@ -123,7 +123,11 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
         )
     development = any(
         item in intake.toolpack_ids
-        for item in (ToolPackId.EXCHANGE_DEVELOPMENT, ToolPackId.PROJECT_DEVELOPMENT)
+        for item in (
+            ToolPackId.EXCHANGE_DEVELOPMENT,
+            ToolPackId.PROJECT_DEVELOPMENT,
+            ToolPackId.GREENFIELD_WEB_DEVELOPMENT,
+        )
     )
     draft_output_cap = DEVELOPER_OUTPUT_CAP if development else WRITER_OUTPUT_CAP
     stages.extend([
@@ -164,8 +168,19 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
     raw_minimum = sum(stage.minimum_cost_usd for stage in stages)
     raw_recommended = sum(stage.recommended_cost_usd for stage in stages)
     raw_maximum = sum(stage.maximum_cost_usd for stage in stages)
+    # Preserve enough approval headroom for the last same-maker repair and the
+    # independent verifier. Earlier calls may be cheaper than their caps, but a
+    # late structured software response often carries the largest input context.
+    # This reserve is approval headroom rather than a fictitious provider call.
+    finalization_reserve = 0.0
+    if development:
+        by_name = {stage.stage: stage for stage in stages}
+        finalization_reserve = (
+            by_name["revision"].recommended_cost_usd
+            + by_name["independent_verification"].minimum_cost_usd
+        )
     minimum = round(raw_minimum * 1.10, 4)
-    recommended = round(raw_recommended * 1.20, 4)
+    recommended = round(raw_recommended * 1.20 + finalization_reserve, 4)
     maximum = round(raw_maximum * 1.25, 4)
     approval = max(0.01, recommended)
 
@@ -203,6 +218,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
             "The Project Owner team-planning and final-approval calls are included.",
             "Optional role nodes are conservatively reserved and removed after TeamPlan selection.",
             "Each revision round includes a new independent verification call.",
+            "Development approval preserves explicit headroom for one final repair and verifier turn.",
             "Role prompts and response-schema input overhead are included conservatively.",
             "Recommended and maximum totals include 20% and 25% contingency respectively.",
             "Public research reserves one Gemini 3.5 grounded prompt with a $0.035 Google Search fee cap.",

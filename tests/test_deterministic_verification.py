@@ -99,6 +99,16 @@ def test_changed_csv_value_forces_revise_even_when_model_passes() -> None:
     assert final.revision_instructions
 
 
+def test_reference_csv_does_not_force_a_full_table_when_contract_does_not_require_it() -> None:
+    result = validate_draft_grounding(
+        [_csv()],
+        _draft("# Playbook\n\nUse the examples as guidance without reproducing every record."),
+        require_full_csv_preservation=False,
+    )
+    assert result.checked_rows == 0
+    assert result.issues == []
+
+
 def test_missing_csv_row_forces_revise() -> None:
     draft = _draft(
         "# Result\n\n"

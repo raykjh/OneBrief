@@ -17,6 +17,7 @@ class ToolPackId(StrEnum):
     EXCHANGE = "exchange"
     EXCHANGE_DEVELOPMENT = "exchange_development"
     PROJECT_DEVELOPMENT = "project_development"
+    GREENFIELD_WEB_DEVELOPMENT = "greenfield_web_development"
 
 
 class OutputTarget(StrEnum):

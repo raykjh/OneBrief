@@ -46,6 +46,7 @@ from onebrief.generic_development_toolpack import (
     ProjectCodeChangeSet,
     ProposedProjectCodeChangeSet,
 )
+from onebrief.greenfield_web_toolpack import GreenfieldWebDevelopmentToolPack
 from onebrief.dynamic_role_agents import DynamicRoleAgent, GovernanceAgent, GovernanceDecision, RoleHandoff
 from onebrief.execution_agents import (
     AnalystAgent,
@@ -64,6 +65,12 @@ from onebrief.execution_schemas import (
     Verdict,
 )
 from onebrief.completion_ledger import refresh_completion_ledger, settle_consistent_verification
+from onebrief.execution_profile import (
+    compact_work_contract,
+    effective_revision_rounds,
+    is_small_document_task,
+    requires_full_csv_preservation,
+)
 from onebrief.guarded_gemini import BudgetedGeminiClient
 from onebrief.grounded_search import run_grounded_research
 from onebrief.recovery_policy import RecoveryAction, RecoveryDecision, RecoveryPolicy
@@ -119,10 +126,14 @@ class ExecutionPipeline:
     def _is_development(intake: IntakeRequest) -> bool:
         return any(
             item in intake.toolpack_ids
-            for item in (ToolPackId.EXCHANGE_DEVELOPMENT, ToolPackId.PROJECT_DEVELOPMENT)
+            for item in (
+                ToolPackId.EXCHANGE_DEVELOPMENT,
+                ToolPackId.PROJECT_DEVELOPMENT,
+                ToolPackId.GREENFIELD_WEB_DEVELOPMENT,
+            )
         )
 
-    def _development_components(self, intake: IntakeRequest):
+    def _development_components(self, intake: IntakeRequest, output_dir: Path | None = None):
         if ToolPackId.PROJECT_DEVELOPMENT in intake.toolpack_ids:
             if not intake.existing_project_id:
                 raise ValueError("project development requires a selected imported project")
@@ -135,6 +146,21 @@ class ExecutionPipeline:
                 self.stage_skills.get("long_form_draft"),
                 change_set_schema=ProjectCodeChangeSet,
                 source_prefix="project-source/",
+                path_approver=pack.approved_edit_path,
+            )
+            return ProjectCodeChangeSet, pack, developer
+        if ToolPackId.GREENFIELD_WEB_DEVELOPMENT in intake.toolpack_ids:
+            if output_dir is None:
+                raise ValueError("greenfield web development requires an output directory")
+            pack = GreenfieldWebDevelopmentToolPack(
+                output_dir / "toolpacks" / ToolPackId.GREENFIELD_WEB_DEVELOPMENT.value / "scaffold"
+            )
+            developer = DeveloperAgent(
+                self.gateway,
+                self.stage_models.get("long_form_draft", "gemini-3.5-flash"),
+                self.stage_skills.get("long_form_draft"),
+                change_set_schema=ProjectCodeChangeSet,
+                source_prefix="greenfield-source/",
                 path_approver=pack.approved_edit_path,
             )
             return ProjectCodeChangeSet, pack, developer
@@ -209,7 +235,10 @@ class ExecutionPipeline:
         development_dir: Path,
         contract: dict[str, object],
     ) -> DevelopmentRun:
-        if ToolPackId.PROJECT_DEVELOPMENT in intake.toolpack_ids:
+        if any(item in intake.toolpack_ids for item in (
+            ToolPackId.PROJECT_DEVELOPMENT,
+            ToolPackId.GREENFIELD_WEB_DEVELOPMENT,
+        )):
             return development_pack.apply_and_verify(
                 change_set,
                 development_dir,
@@ -349,7 +378,10 @@ class ExecutionPipeline:
                 model_report.model_dump_json(indent=2),
             )
             draft = DraftArtifact.model_validate(_ctx.session.state[MAKER_STATE_KEY])
-            grounding = validate_draft_grounding(sources, draft)
+            grounding = validate_draft_grounding(
+                sources, draft,
+                require_full_csv_preservation=requires_full_csv_preservation(requirements),
+            )
             self._write(
                 output_dir / f"deterministic_verification_r{round_number}.json",
                 grounding.model_dump_json(indent=2),
@@ -419,7 +451,9 @@ class ExecutionPipeline:
                 "independent_verification", "gemini-3.5-flash"
             ),
             maker_schema=DraftArtifact,
-            max_revision_rounds=0 if reverify_only else intake.max_revision_rounds,
+            max_revision_rounds=(
+                0 if reverify_only else effective_revision_rounds(intake, requirements)
+            ),
             maker_instruction=maker_instruction,
             verifier_instruction=verifier_instruction,
             maker_output_tokens=WRITER_OUTPUT_CAP,
@@ -428,7 +462,9 @@ class ExecutionPipeline:
             verification_gate=verification_gate,
         )
         state, trace = asyncio.run(run_convergence_agent(agent, {
-            "work_contract": contract,
+            "work_contract": compact_work_contract(
+                contract, enabled=is_small_document_task(intake, requirements)
+            ),
             "analysis_package": analysis.model_dump(mode="json"),
             "authoritative_sources": source_payload,
         }, initial_state=initial_state))
@@ -463,7 +499,7 @@ class ExecutionPipeline:
     ) -> tuple[DraftArtifact, VerificationReport, int]:
         """Run code creation, isolated verification, review, and same-maker repair in ADK."""
 
-        change_schema, development_pack, developer = self._development_components(intake)
+        change_schema, development_pack, developer = self._development_components(intake, output_dir)
         prepared_sources: list[dict[str, object]] = []
         for source in source_payload:
             prepared = dict(source)
@@ -1114,7 +1150,7 @@ class ExecutionPipeline:
             if draft is None:
                 self._checkpoint(output_dir, PipelineStatus.RUNNING, "long_form_draft", completed, 0)
                 if self._is_development(intake):
-                    change_schema, development_pack, developer = self._development_components(intake)
+                    change_schema, development_pack, developer = self._development_components(intake, output_dir)
                     change_set_path = output_dir / "code_change_set.json"
                     change_set = self._load(change_set_path, change_schema)
                     if change_set is None:
@@ -1302,7 +1338,10 @@ class ExecutionPipeline:
                     self._write(
                         model_verification_path, model_report.model_dump_json(indent=2)
                     )
-                grounding = validate_draft_grounding(sources, draft)
+                grounding = validate_draft_grounding(
+                    sources, draft,
+                    require_full_csv_preservation=requires_full_csv_preservation(requirements),
+                )
                 self._write(grounding_path, grounding.model_dump_json(indent=2))
                 completion_evidence = validate_completion_evidence(
                     intake, requirements, self._development_evidence(output_dir)
@@ -1326,7 +1365,7 @@ class ExecutionPipeline:
             while report.verdict == Verdict.REVISE and revision_round < intake.max_revision_rounds:
                 revision_round += 1
                 if self._is_development(intake):
-                    change_schema, development_pack, developer = self._development_components(intake)
+                    change_schema, development_pack, developer = self._development_components(intake, output_dir)
                     revision_stage = f"development_revision_r{revision_round}"
                     self._checkpoint(
                         output_dir,
@@ -1418,7 +1457,10 @@ class ExecutionPipeline:
                         output_dir / f"model_verification_r{revision_round}.json",
                         model_report.model_dump_json(indent=2),
                     )
-                    grounding = validate_draft_grounding(sources, draft)
+                    grounding = validate_draft_grounding(
+                        sources, draft,
+                        require_full_csv_preservation=requires_full_csv_preservation(requirements),
+                    )
                     self._write(
                         output_dir / f"deterministic_verification_r{revision_round}.json",
                         grounding.model_dump_json(indent=2),
@@ -1502,7 +1544,10 @@ class ExecutionPipeline:
                         self._write(
                             model_verification_path, model_report.model_dump_json(indent=2)
                         )
-                    grounding = validate_draft_grounding(sources, draft)
+                    grounding = validate_draft_grounding(
+                        sources, draft,
+                        require_full_csv_preservation=requires_full_csv_preservation(requirements),
+                    )
                     self._write(grounding_path, grounding.model_dump_json(indent=2))
                     completion_evidence = validate_completion_evidence(
                         intake, requirements, self._development_evidence(output_dir)

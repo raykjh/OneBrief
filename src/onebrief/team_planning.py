@@ -148,7 +148,11 @@ def normalize_team_plan(raw: TeamPlanDraft | TeamPlan, *, project_id: str) -> Te
         ]
         if any(
             item in raw.toolpack_ids
-            for item in (ToolPackId.EXCHANGE_DEVELOPMENT, ToolPackId.PROJECT_DEVELOPMENT)
+            for item in (
+                ToolPackId.EXCHANGE_DEVELOPMENT,
+                ToolPackId.PROJECT_DEVELOPMENT,
+                ToolPackId.GREENFIELD_WEB_DEVELOPMENT,
+            )
         ):
             if member.agent_type in {AgentType.ARCHITECT, AgentType.MAKER}:
                 skills.append("existing-project-development")
@@ -366,6 +370,8 @@ class ProjectOwnerAgent:
                 "responsibility for bounded source changes in an isolated clone and strongly prefer a "
                 "guardian for software-safety and financial-claim boundaries. Neither ToolPack may "
                 "trade, access accounts, push, or deploy. "
+                "When greenfield_web_development is available, select it for a requested new web app; "
+                "it owns a disposable scaffold, fixed HTTP checks, and browser observation. "
                 "Select toolpack_ids only from available_toolpack_candidates and only when execution is "
                 "necessary to achieve the goal. The user does not choose tools. An empty selection is valid "
                 "when no candidate is needed. Choosing a ToolPack activates tool_execution and its evidence. "

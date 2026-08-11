@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from onebrief.schemas import BudgetEnvelope, IntakeRequest, RequirementsAnalysis
+from onebrief.schemas import BudgetEnvelope, IntakeRequest, RequirementsAnalysis, ToolPackId
 from onebrief.toolpack_lifecycle import ToolPackLifecycleState
 from onebrief.governance import AuthorizationEnvelope, RiskClass, canonical_digest
 
@@ -52,8 +52,24 @@ def _manifest(intake: IntakeRequest, state: ToolPackLifecycleState | None) -> Ca
         ]
         if intake.public_research_allowed:
             capabilities.append("perform bounded Google Search research and preserve source URLs")
+        greenfield = ToolPackId.GREENFIELD_WEB_DEVELOPMENT in intake.toolpack_ids
+        if greenfield:
+            capabilities.extend([
+                "create bounded product files in a disposable web scaffold",
+                "run fixed tests, build, local HTTP probe, and headless browser observation",
+            ])
         return CapabilityPermissionManifest(
             capabilities=capabilities,
+            allowed_read_prefixes=(
+                ["greenfield scaffold", "approved inputs"] if greenfield else []
+            ),
+            allowed_write_prefixes=(
+                ["public/", "tests/product*.test.mjs", "README.md"] if greenfield else []
+            ),
+            validation_adapters=(
+                ["node test", "production build", "HTTP probe", "headless browser observation"]
+                if greenfield else []
+            ),
             blocked_boundaries=[
                 "credentials, accounts, payments, and personal data",
                 "unapproved external side effects",

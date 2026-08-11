@@ -195,16 +195,17 @@ class DeveloperAgent:
                     pending_baseline = str(pending.get("content", "")) if pending else ""
                     baseline = ""
                     match: tuple[int, int] | None = None
-                    for candidate in (
-                        pending_baseline,
-                        previous_baseline,
-                        approved_baseline,
-                    ):
-                        if candidate.count(needle) == 1:
-                            start = candidate.index(needle)
-                            baseline = candidate
-                            match = (start, start + len(needle))
-                            break
+                    if needle:
+                        for candidate in (
+                            pending_baseline,
+                            previous_baseline,
+                            approved_baseline,
+                        ):
+                            if candidate.count(needle) == 1:
+                                start = candidate.index(needle)
+                                baseline = candidate
+                                match = (start, start + len(needle))
+                                break
                     if match is None:
                         # Preserve the exact non-whitespace token sequence while
                         # tolerating a model's formatting-only JSX reflow. The
@@ -223,9 +224,24 @@ class DeveloperAgent:
                                     baseline = candidate
                                     match = matches[0].span()
                                     break
+                    if match is None and change.get("start_anchor") and change.get("end_anchor"):
+                        start_anchor = str(change["start_anchor"])
+                        end_anchor = str(change["end_anchor"])
+                        for candidate in (
+                            pending_baseline,
+                            previous_baseline,
+                            approved_baseline,
+                        ):
+                            starts = [m.start() for m in re.finditer(re.escape(start_anchor), candidate)]
+                            ends = [m.end() for m in re.finditer(re.escape(end_anchor), candidate)]
+                            spans = [(start, end) for start in starts for end in ends if end >= start]
+                            if len(spans) == 1:
+                                baseline = candidate
+                                match = spans[0]
+                                break
                     if match is None:
                         raise ValueError(
-                            f"exact search text must occur once in approved source: {path}"
+                            f"edit anchors could not rediscover one approved source range: {path}"
                         )
                     start, end = match
                     change["content"] = (
@@ -239,6 +255,8 @@ class DeveloperAgent:
                         change["base_sha256"] = pending["base_sha256"]
                 change.pop("search", None)
                 change.pop("replace", None)
+                change.pop("start_anchor", None)
+                change.pop("end_anchor", None)
                 changes_by_path[path.casefold()] = change
             proposal = proposed.model_dump(mode="json")
             proposal["changes"] = list(changes_by_path.values())
@@ -422,7 +440,9 @@ class DeveloperAgent:
                     " The previous response failed structured-output or repository-path validation. Retry from "
                     "scratch with at most three changed files. Every existing-file path must exactly equal the "
                     f"repository_path field and must not include {self.source_prefix}. For every existing file, "
-                    "use a minimal exact search/replace edit copied verbatim from the approved source; do not return "
+                    "use a minimal exact search/replace edit copied verbatim from the approved source. If the exact "
+                    "text is no longer uniquely discoverable, use start_anchor and end_anchor copied verbatim from "
+                    "the current approved file and replace only that inclusive structural range. Do not return "
                     "full-file content on this compact retry. Full content is allowed only for a necessary new file "
                     "smaller than 8000 characters. Prefer the smallest existing source files, remove comments and "
                     "repetition, and keep the complete JSON response below 12000 characters while preserving a "

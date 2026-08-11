@@ -7,7 +7,7 @@ from onebrief.agent_registry import AgentType
 from onebrief.execution_graph import compile_execution_graph
 from onebrief.web_service import InMemoryWebSessionStore, app, get_session_store
 from team_plan_support import minimal_team_plan
-from onebrief.schemas import IntakeRequest, RequirementsAnalysis, ToolPackId
+from onebrief.schemas import IntakeRequest, RequirementsAnalysis, ToolPackId, OutputTarget
 from onebrief.toolpacks import (
     EXCHANGE_EVIDENCE,
     ExchangeToolPack,
@@ -104,6 +104,16 @@ def test_exchange_toolpack_is_routed_as_an_internal_candidate() -> None:
         goal="Improve the existing Exchange web application.", output_target="existing_project"
     ))
     assert development.toolpack_ids == [ToolPackId.EXCHANGE_DEVELOPMENT]
+
+
+def test_new_web_app_routes_to_bounded_greenfield_development() -> None:
+    intake = route_toolpack_candidates(IntakeRequest(
+        goal="Build a small responsive service dashboard.",
+        output_target=OutputTarget.WEB_APP,
+    ))
+    assert intake.toolpack_ids == [ToolPackId.GREENFIELD_WEB_DEVELOPMENT]
+    described = attach_toolpack_descriptors(intake)
+    assert "headless-browser observation" in described.internal_sources[0].content
 
 
 def test_inspect_persists_selected_toolpack_and_descriptor(monkeypatch) -> None:

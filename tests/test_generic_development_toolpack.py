@@ -18,6 +18,7 @@ from onebrief.project_import import ExternalProjectImporter, MANIFEST_NAME
 from onebrief.schemas import ToolPackId
 from onebrief.toolpack_lifecycle import AdapterId, ProjectToolPackLifecycle
 from onebrief.toolpacks import execute_toolpacks
+from onebrief.execution_agents import DeveloperAgent
 
 
 def _git(root: Path, *args: str) -> str:
@@ -55,6 +56,33 @@ def test_proposed_exact_edit_supports_mature_single_file_components() -> None:
     })
 
     assert len(proposal.changes[0].replace or "") == 40_000
+
+
+def test_structural_anchors_rediscover_a_changed_existing_region() -> None:
+    developer = DeveloperAgent(
+        SimpleNamespace(),
+        change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/",
+        path_approver=lambda path: path if path == "web/app/page.tsx" else None,
+    )
+    source = "function Page() {\n  const value = 1;\n  return <main>Old</main>;\n}\n"
+    proposed = ProposedProjectCodeChangeSet.model_validate({
+        "summary": "Replace one component body by structural boundaries.",
+        "changes": [{
+            "path": "web/app/page.tsx",
+            "base_sha256": hashlib.sha256(source.encode()).hexdigest(),
+            "start_anchor": "function Page() {",
+            "end_anchor": "}",
+            "replace": "function Page() {\n  return <main>New</main>;\n}",
+            "reason": "The prior exact snippet was reformatted; rediscover its component boundary.",
+        }],
+    })
+    promoted = developer.promote_candidate(proposed, [{
+        "repository_path": "web/app/page.tsx",
+        "content": source,
+        "sha256": hashlib.sha256(source.encode()).hexdigest(),
+    }])
+    assert promoted.changes[0].content.endswith("<main>New</main>;\n}\n")
 
 
 def _approved_node_project(tmp_path: Path) -> tuple[Path, Path]:

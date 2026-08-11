@@ -305,13 +305,17 @@ def _unsupported_rule_issues(
 
 
 def validate_draft_grounding(
-    sources: list[InternalSource], draft: DraftArtifact
+    sources: list[InternalSource], draft: DraftArtifact, *,
+    require_full_csv_preservation: bool = True,
 ) -> DeterministicVerification:
     checked_sources: list[str] = []
     checked_rows = 0
     issues: list[GroundingIssue] = []
     for source in sources:
-        if source.name.casefold().endswith(".csv") or source.media_type.casefold() == "text/csv":
+        if (
+            require_full_csv_preservation
+            and (source.name.casefold().endswith(".csv") or source.media_type.casefold() == "text/csv")
+        ):
             rows, csv_issues = _csv_issues(source, draft.body_markdown)
             if rows:
                 checked_sources.append(source.name)

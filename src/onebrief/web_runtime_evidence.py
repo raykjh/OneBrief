@@ -305,8 +305,15 @@ def _capture(chrome: Path, url: str, screenshot: Path, width: int, height: int) 
         errors="replace",
         timeout=45,
     )
-    if completed.returncode != 0 or not screenshot.is_file() or screenshot.stat().st_size < 5_000:
-        raise RuntimeError("headless browser did not produce a usable rendered screenshot")
+    # A valid sparse status page can compress below 5 KiB. DOM extraction below
+    # remains authoritative for visible content; this threshold only rejects a
+    # missing or effectively empty PNG.
+    if completed.returncode != 0 or not screenshot.is_file() or screenshot.stat().st_size < 1_000:
+        raise RuntimeError(
+            "headless browser did not produce a usable rendered screenshot; "
+            f"exit={completed.returncode}; stderr={completed.stderr.strip()[:1000] or 'empty'}; "
+            f"stdout={completed.stdout.strip()[:1000] or 'empty'}"
+        )
     try:
         return _extract(completed.stdout)
     except RuntimeError as exc:
@@ -323,6 +330,7 @@ def observe_web_application(
     evidence_dir: Path,
     *,
     application_subdir: str = ".",
+    require_language_switch: bool = True,
 ) -> tuple[DevelopmentCommandResult, ObservationReceipt]:
     """Exercise one approved start script and issue pipeline-owned observation evidence."""
 
@@ -361,10 +369,10 @@ def observe_web_application(
         base = f"http://127.0.0.1:{port}"
         _wait(base + "/", server)
         desktop_path = evidence_dir / "desktop-ko.png"
-        mobile_path = evidence_dir / "mobile-en.png"
+        mobile_path = evidence_dir / ("mobile-en.png" if require_language_switch else "mobile.png")
         with _observer_proxy(base, {
             "/__onebrief_desktop.html": _wrapper(toggle=False, viewport_width=1200),
-            "/__onebrief_mobile.html": _wrapper(toggle=True, viewport_width=375),
+            "/__onebrief_mobile.html": _wrapper(toggle=require_language_switch, viewport_width=375),
         }) as observer:
             desktop = _capture(
                 chrome, observer + "/__onebrief_desktop.html", desktop_path, 1200, 900
@@ -380,14 +388,17 @@ def observe_web_application(
     language_states = mobile.get("states", [])
     desktop_after = desktop.get("after", {})
     issues: list[str] = []
-    if not mobile.get("clicked"):
-        issues.append("No language control could be activated in the rendered page.")
-    if str(before.get("text", "")) == str(after.get("text", "")):
-        issues.append("Visible text did not change after the language control was activated.")
-    if before.get("lang") == after.get("lang"):
-        issues.append("The rendered document language did not change after activation.")
-    issues.extend(_language_state_issues(language_states))
+    if require_language_switch:
+        if not mobile.get("clicked"):
+            issues.append("No language control could be activated in the rendered page.")
+        if str(before.get("text", "")) == str(after.get("text", "")):
+            issues.append("Visible text did not change after the language control was activated.")
+        if before.get("lang") == after.get("lang"):
+            issues.append("The rendered document language did not change after activation.")
+        issues.extend(_language_state_issues(language_states))
     for label, state in (("desktop", desktop_after), ("mobile", after)):
+        if not str(state.get("text", "")).strip():
+            issues.append(f"The {label} rendered page has no visible text.")
         if state.get("horizontalOverflow"):
             issues.append(f"The {label} rendered page has horizontal overflow.")
         if state.get("clipped"):
@@ -422,11 +433,12 @@ def observe_web_application(
         status=ObservationStatus.FAILED if issues else ObservationStatus.OBSERVED,
         independent_from_maker=True,
         artifact_paths=[desktop_path.as_posix(), mobile_path.as_posix()],
-        findings=(issues or [
+        findings=(issues or ([
             "Desktop and mobile pages rendered without horizontal overflow or missing images.",
-            "Every advertised language option was activated and produced matching, distinct semantic content.",
-            "Rendered content contained no Unicode replacement characters or obvious cross-language script leakage.",
-        ]),
+            "Rendered content contained no Unicode replacement characters.",
+        ] + ([
+            "Every advertised language option was activated and produced matching, distinct semantic content."
+        ] if require_language_switch else []))),
         limitations=[],
     )
     if issues:
@@ -436,6 +448,9 @@ def observe_web_application(
         argv=["npm", "run", "start", "+", "headless Chrome observer"],
         exit_code=0,
         duration_seconds=round(time.perf_counter() - started, 3),
-        output_tail="Rendered desktop and mobile pages, exercised every advertised language state, and verified visible text, script consistency, images, locale, and overflow.",
+        output_tail=(
+            "Rendered desktop and mobile pages and verified visible text, images, and overflow."
+            + (" Exercised every advertised language state." if require_language_switch else "")
+        ),
     )
     return command, receipt
