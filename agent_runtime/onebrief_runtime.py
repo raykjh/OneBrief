@@ -15,6 +15,7 @@ from typing import Any
 
 from google.adk.agents import LlmAgent
 from google.cloud import run_v2
+from google.genai import types
 
 
 _JOB_URI = re.compile(
@@ -112,10 +113,20 @@ def build_agent_engine_app():
             "You are the OneBrief project owner on Gemini Enterprise Agent Platform. "
             "Accept only an exact approved gs:// job URI. For an execution request, "
             "call start_approved_onebrief_job exactly once and report the receipt. "
-            "For an inspection request, call inspect_onebrief_job. Never invent a URI, "
-            "change a budget, select an executor, or retry a work order."
+            "Never invent a URI, change a budget, select an executor, or retry a work order."
         ),
-        tools=[start_approved_onebrief_job, inspect_onebrief_job],
+        # This managed agent receives execution requests only. Routing an
+        # already-approved immutable work order is deterministic infrastructure,
+        # so do not let a conversational model silently omit the required tool.
+        tools=[start_approved_onebrief_job],
+        generate_content_config=types.GenerateContentConfig(
+            tool_config=types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(
+                    mode="ANY",
+                    allowed_function_names=["start_approved_onebrief_job"],
+                )
+            )
+        ),
     )
     # This dispatcher is deliberately one-shot and stores no conversation data.
     # A custom ephemeral session also avoids granting the runtime permission to
