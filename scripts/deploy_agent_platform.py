@@ -62,11 +62,11 @@ def _config() -> dict[str, object]:
             "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY": "true",
         },
         "service_account": SERVICE_ACCOUNT,
-        # Campaign lanes dispatch concurrently. Keep one warm router and permit
-        # one isolated runtime per active lane so cold starts do not serialize
-        # or time out otherwise independent work orders.
+        # OneBrief's product flow completes one approved project at a time.
+        # Parallel campaigns are an internal regression tool, not a reason to
+        # expand the production project-owner runtime concurrently.
         "min_instances": 1,
-        "max_instances": 3,
+        "max_instances": 1,
         "resource_limits": {"cpu": "1", "memory": "1Gi"},
         "labels": {"app": "onebrief", "component": "project-owner"},
         "python_version": "3.12",
