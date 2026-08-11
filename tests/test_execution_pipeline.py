@@ -6,7 +6,7 @@ from google.genai import types
 
 from onebrief.development_toolpack import CodeChangeSet, DevelopmentCommandResult, DevelopmentRun
 from onebrief.generic_development_toolpack import (
-    ProjectCodeChangeSet, ProposedProjectCodeChangeSet,
+    CompactProposedProjectCodeChangeSet, ProjectCodeChangeSet, ProposedProjectCodeChangeSet,
 )
 from onebrief.budget_guard import BudgetExceeded, BudgetStore, RunStatus
 from onebrief.execution_pipeline import ExecutionPipeline
@@ -831,6 +831,63 @@ def test_developer_supplies_exact_small_anchors_for_language_repair() -> None:
         previous, "English locale contains an unexpected CJK fragment."
     )
     assert direct == payload["exact_edit_anchors"]
+
+
+def test_project_developer_compact_retry_forbids_full_file_content() -> None:
+    previous = ProjectCodeChangeSet(
+        summary="Existing candidate.",
+        changes=[{
+            "path": "web/app/page.tsx", "base_sha256": "a" * 64,
+            "content": "export const label = '한국어';\n",
+            "reason": "Current candidate.",
+        }],
+    )
+    compact = CompactProposedProjectCodeChangeSet.model_validate({
+        "summary": "Translate the remaining label.",
+        "changes": [{
+            "path": "web/app/page.tsx", "base_sha256": "a" * 64,
+            "search": "'한국어'", "replace": "'English'",
+            "reason": "Remove the remaining CJK label.",
+        }],
+    })
+    try:
+        ProposedProjectCodeChangeSet.model_validate_json(
+            '{"summary":"truncated","changes":[{"path":"web/app/page.tsx","search":"'
+        )
+    except Exception as exc:
+        truncated = exc
+
+    class CompactGateway:
+        schemas: list[type] = []
+        calls = 0
+
+        def generate_json(self, *, schema: type, **_: object):
+            self.schemas.append(schema)
+            self.calls += 1
+            if self.calls == 1:
+                raise truncated
+            return compact
+
+    gateway = CompactGateway()
+    developer = DeveloperAgent(
+        gateway,
+        change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/",
+        path_approver=lambda path: path,
+    )
+    result = developer.run(
+        {}, _analysis(), [{
+            "name": "project-source/web/app/page.tsx",
+            "repository_path": "web/app/page.tsx",
+            "sha256": "a" * 64,
+            "content": previous.changes[0].content,
+        }],
+        verification_feedback="English locale contains an unexpected CJK fragment.",
+        previous_change_set=previous,
+    )
+
+    assert gateway.schemas == [ProposedProjectCodeChangeSet, CompactProposedProjectCodeChangeSet]
+    assert result.changes[0].content == "export const label = 'English';\n"
 
 
 def test_developer_rejects_blind_existing_file_replacement_and_uses_sidecar() -> None:

@@ -145,6 +145,41 @@ class ProposedProjectCodeChangeSet(BaseModel):
     changes: list[ProposedProjectFileChange] = Field(min_length=1, max_length=MAX_CHANGE_FILES)
 
 
+class CompactProposedProjectFileChange(BaseModel):
+    """Bounded repair delta used after a full-file structured response fails."""
+
+    path: str
+    base_sha256: str | None = None
+    search: str | None = Field(default=None, min_length=1, max_length=6000)
+    replace: str = Field(max_length=12000)
+    start_anchor: str | None = Field(default=None, min_length=1, max_length=2000)
+    end_anchor: str | None = Field(default=None, min_length=1, max_length=2000)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        return generic_safe_relative(value).as_posix()
+
+    @model_validator(mode="after")
+    def validate_edit_mode(self) -> "CompactProposedProjectFileChange":
+        exact_edit = self.search is not None and self.start_anchor is None and self.end_anchor is None
+        anchored_edit = (
+            self.search is None
+            and self.start_anchor is not None
+            and self.end_anchor is not None
+        )
+        if exact_edit == anchored_edit:
+            raise ValueError("provide one bounded exact edit or one bounded anchored edit")
+        return self
+
+
+class CompactProposedProjectCodeChangeSet(BaseModel):
+    schema_version: str = "onebrief-project-code-change-set-v1"
+    summary: str = Field(min_length=3, max_length=1000)
+    changes: list[CompactProposedProjectFileChange] = Field(min_length=1, max_length=3)
+
+
 class ApprovedProjectDevelopmentToolPack:
     """Runs only an approved generated profile against an isolated local clone."""
 

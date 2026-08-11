@@ -9,6 +9,7 @@ from typing import Any, Callable, Protocol, TypeVar
 from pydantic import BaseModel, ValidationError
 from onebrief.development_toolpack import CodeChangeSet, approved_edit_path
 from onebrief.generic_development_toolpack import (
+    CompactProposedProjectCodeChangeSet,
     ProjectCodeChangeSet,
     ProposedProjectCodeChangeSet,
 )
@@ -165,7 +166,9 @@ class DeveloperAgent:
     ) -> BaseModel:
         """Promote an untrusted proposal through the exact approved path boundary."""
         if self.change_set_schema is ProjectCodeChangeSet:
-            proposed = ProposedProjectCodeChangeSet.model_validate(raw)
+            proposed = ProposedProjectCodeChangeSet.model_validate(
+                raw.model_dump(mode="json") if isinstance(raw, BaseModel) else raw
+            )
             source_map = {
                 str(item.get("repository_path")): item
                 for item in (approved_sources or [])
@@ -452,7 +455,11 @@ class DeveloperAgent:
                     instruction += " Exact validation failure: " + last_contract_error
             try:
                 provider_schema = (
-                    ProposedProjectCodeChangeSet
+                    (
+                        CompactProposedProjectCodeChangeSet
+                        if attempt
+                        else ProposedProjectCodeChangeSet
+                    )
                     if self.change_set_schema is ProjectCodeChangeSet
                     else self.change_set_schema
                 )
