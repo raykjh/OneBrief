@@ -250,6 +250,43 @@ def test_explicit_reauthorization_uses_only_new_approval(
     assert manifest["source_unused_usd_abandoned"] == 0.1
 
 
+def test_research_reentry_request_is_bound_to_the_new_continuation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("onebrief.jobs.create_project_snapshot", lambda *_args: None)
+    source = InternalSource(
+        name="rules", priority=SourcePriority.MANDATORY, content="truth", size_bytes=5
+    )
+    source_dir = create_job(
+        jobs_dir=tmp_path / "source-jobs",
+        intake=_intake(source),
+        requirements=_requirements(),
+        sources=[source],
+        estimate=_estimate(),
+        approved_usd=0.10,
+    )
+    JobStore(source_dir).finish(JobStatus.PARTIAL, stage="verification", message="evidence gap")
+
+    child, _actual, _approved, _reused = create_budget_preserving_continuation(
+        source_job_dir=source_dir,
+        source_job_uri="gs://bucket/jobs/source",
+        jobs_dir=tmp_path / "children",
+        reusable_source=ReuseSource(),
+        explicit_child_approval_usd=0.15,
+        research_reentry=True,
+        research_blocking_issues=["Three comparison rows lack direct URLs."],
+    )
+
+    request = json.loads(
+        (child / "work" / "research_reentry_request.json").read_text("utf-8")
+    )
+    manifest = json.loads((child / "work" / "continuation_manifest.json").read_text("utf-8"))
+    assert request["max_refinement_calls"] == 2
+    assert request["blocking_issues"] == ["Three comparison rows lack direct URLs."]
+    assert manifest["research_reentry"] is True
+
+
 def test_targeted_repair_estimate_charges_only_remaining_work() -> None:
     base = _estimate()
     template = base.stages[0]

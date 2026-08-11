@@ -252,6 +252,39 @@ def validate_evidence_sufficiency(
     )
 
 
+_RESEARCH_REENTRY_KINDS = frozenset({
+    EvidenceSufficiencyIssueKind.MISSING_DIRECT_SOURCE,
+    EvidenceSufficiencyIssueKind.QUANTIFIED_EVIDENCE_SHORTFALL,
+    EvidenceSufficiencyIssueKind.UNBOUNDED_ABSENCE_CLAIM,
+    EvidenceSufficiencyIssueKind.UNSUPPORTED_SAFETY_ABSOLUTE,
+})
+
+
+def research_reentry_issues(
+    intake: IntakeRequest,
+    requirements: RequirementsAnalysis,
+    research_markdown: str,
+) -> list[EvidenceSufficiencyIssue]:
+    """Return evidence defects that require new research rather than maker prose repair."""
+
+    source = InternalSource(
+        name="public_research.md",
+        priority="mandatory",
+        requirement_keys=["public_research"],
+        content=research_markdown,
+    )
+    probe = DraftArtifact(
+        title="Public research evidence probe",
+        body_markdown=research_markdown,
+        cited_finding_ids=["F00"],
+        drafting_decisions=["Synthetic probe used only for deterministic evidence routing."],
+    )
+    result = validate_evidence_sufficiency(
+        intake, requirements, [source], probe
+    )
+    return [item for item in result.issues if item.kind in _RESEARCH_REENTRY_KINDS]
+
+
 def apply_evidence_sufficiency_override(
     report: VerificationReport,
     evidence: EvidenceSufficiencyVerification,

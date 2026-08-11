@@ -52,7 +52,8 @@ class ModelExecutionPolicy(BaseModel):
     def model_for(self, stage: str) -> str:
         base_stage = stage
         retry_suffix = re.compile(
-            r"(?:_revision_r\d+|_repair_r\d+|_r\d+|_compact_retry|_verification_retry)$"
+            r"(?:_revision_r\d+|_repair_r\d+|_refinement_r\d+|_r\d+|"
+            r"_compact_retry|_verification_retry)$"
         )
         while retry_suffix.search(base_stage):
             base_stage = retry_suffix.sub("", base_stage)

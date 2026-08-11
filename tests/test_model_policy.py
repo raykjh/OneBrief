@@ -148,6 +148,25 @@ def test_gateway_maps_revision_and_retry_stages_to_the_approved_base_model(stage
     assert raw.calls == [(stage, "gemini-3.5-flash-lite")]
 
 
+def test_gateway_maps_research_refinement_to_approved_investigator_model() -> None:
+    raw = RecordingGateway()
+    policy = _policy().model_copy(update={
+        "stage_models": {
+            **_policy().stage_models,
+            "public_research": ApprovedModel.GEMINI_3_5_FLASH,
+        }
+    })
+    gateway = ModelPolicyGateway(raw, policy)
+
+    gateway.generate_json(
+        stage="public_research_refinement_r2",
+        model="gemini-3.5-flash",
+        schema=dict,
+    )
+
+    assert raw.calls == [("public_research_refinement_r2", "gemini-3.5-flash")]
+
+
 def test_model_approval_records_are_immutable(tmp_path: Path) -> None:
     estimate = _estimate()
     decision, policy = evaluate_model_budget(

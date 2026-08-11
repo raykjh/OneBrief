@@ -1,5 +1,6 @@
 from onebrief.evidence_sufficiency import (
     apply_evidence_sufficiency_override,
+    research_reentry_issues,
     validate_evidence_sufficiency,
 )
 from onebrief.execution_schemas import DraftArtifact, VerificationReport
@@ -253,3 +254,27 @@ def test_reference_list_urls_do_not_satisfy_a_comparison_table_contract() -> Non
     )
 
     assert any(item.kind.value == "quantified_evidence_shortfall" for item in result.issues)
+
+
+def test_research_reentry_only_clears_after_item_rows_carry_direct_evidence() -> None:
+    unsupported = """| 제품 | 기능성 |
+|---|---|
+| Alpha | 피로 개선 |
+| Beta | 항산화 |
+| Gamma | 눈 건강 |
+
+참고: https://example.com/sources/catalog
+"""
+    supported = """| 제품 | 기능성 | 직접 출처 |
+|---|---|---|
+| Alpha | 피로 개선 | https://example.com/products/a |
+| Beta | 항산화 | https://example.com/products/b |
+| Gamma | 눈 건강 | https://example.com/products/c |
+"""
+    intake = IntakeRequest(goal="후보를 조사해줘.", public_research_allowed=True)
+
+    assert any(
+        item.kind.value == "quantified_evidence_shortfall"
+        for item in research_reentry_issues(intake, _requirements(), unsupported)
+    )
+    assert research_reentry_issues(intake, _requirements(), supported) == []

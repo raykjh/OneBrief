@@ -117,6 +117,8 @@ def create_budget_preserving_continuation(
     targeted_repair: bool = False,
     low_cost_targeted_repair: bool = False,
     reverify_existing_candidate: bool = False,
+    research_reentry: bool = False,
+    research_blocking_issues: list[str] | None = None,
 ) -> tuple[Path, float, float, tuple[str, ...]]:
     """Create a child whose spend cannot exceed its parent's unused approval.
 
@@ -221,6 +223,16 @@ def create_budget_preserving_continuation(
             json.dumps({"enabled": True}, indent=2) + "\n",
             encoding="utf-8",
         )
+    if research_reentry:
+        (child_dir / "work" / "research_reentry_request.json").write_text(
+            json.dumps({
+                "schema_version": "onebrief-research-reentry-request-v1",
+                "reason": "verification found evidence that only the investigator can replace",
+                "blocking_issues": research_blocking_issues or [],
+                "max_refinement_calls": 2,
+            }, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
     from onebrief.lineage import ancestor_lineage_payload
 
     manifest = {
@@ -246,6 +258,7 @@ def create_budget_preserving_continuation(
         "targeted_repair": targeted_repair,
         "low_cost_targeted_repair": low_cost_targeted_repair,
         "reverify_existing_candidate": reverify_existing_candidate,
+        "research_reentry": research_reentry,
         "reused_artifacts": list(reused),
         "ancestor_lineage": ancestor_lineage_payload(source_job_dir),
         "policy": (
@@ -298,6 +311,8 @@ def continue_cloud_job_via_agent_platform(
     targeted_repair: bool = False,
     low_cost_targeted_repair: bool = False,
     reverify_existing_candidate: bool = False,
+    research_reentry: bool = False,
+    research_blocking_issues: list[str] | None = None,
 ) -> CloudContinuationReceipt:
     source_store = GCSJobStore(source_job_uri, client=storage_client)
     with tempfile.TemporaryDirectory(prefix="onebrief_cloud_resume_") as temp:
@@ -346,6 +361,8 @@ def continue_cloud_job_via_agent_platform(
             targeted_repair=targeted_repair,
             low_cost_targeted_repair=low_cost_targeted_repair,
             reverify_existing_candidate=reverify_existing_candidate,
+            research_reentry=research_reentry,
+            research_blocking_issues=research_blocking_issues,
         )
     child_uri = upload_cloud_job(child_dir, bucket=bucket, client=storage_client)
     dispatch = dispatch_approved_job_via_agent_platform(

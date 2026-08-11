@@ -18,10 +18,13 @@ def run_grounded_research(
     goal: str,
     desired_output: str | None,
     completion_contract: dict[str, object] | None = None,
+    stage: str = "public_research",
+    prior_research: str | None = None,
+    blocking_issues: list[str] | None = None,
 ) -> PublicResearchResult:
-    """Run exactly one grounded prompt under a fixed worst-case fee reservation."""
+    """Run one grounded research or evidence-repair prompt under a fixed reservation."""
     model = (
-        gateway.model_for("public_research")
+        gateway.model_for(stage)
         if hasattr(gateway, "model_for")
         else "gemini-3.5-flash"
     )
@@ -46,6 +49,15 @@ def run_grounded_research(
                 "Research enough current candidates to answer the goal. Apply every numeric and "
                 "geographic condition exactly. Preserve direct source links in the report."
             ),
+            "prior_research": prior_research,
+            "blocking_evidence_issues": blocking_issues or [],
+            "repair_instructions": (
+                "When prior research and blocking issues are supplied, replace unsupported evidence "
+                "rather than merely rewriting its wording. Put every required named comparison item "
+                "and its directly inspectable URL on the same Markdown table row. Do not count a "
+                "bibliography, provider homepage, category, or market segment as item-level evidence."
+                if prior_research else None
+            ),
         },
         ensure_ascii=False,
     )
@@ -67,7 +79,7 @@ def run_grounded_research(
     observed = int(count.total_tokens or 0)
     input_cap = ceil((observed + approximate_tokens(system_instruction)) * 1.15) + 256
     reservation = gateway.store.reserve_call(
-        stage="public_research",
+        stage=stage,
         model=model,
         input_token_cap=input_cap,
         output_token_cap=PUBLIC_RESEARCH_OUTPUT_CAP,

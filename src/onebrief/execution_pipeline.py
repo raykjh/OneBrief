@@ -38,6 +38,7 @@ from onebrief.deterministic_verification import (
 )
 from onebrief.evidence_sufficiency import (
     apply_evidence_sufficiency_override,
+    research_reentry_issues,
     validate_evidence_sufficiency,
 )
 from onebrief.development_toolpack import (
@@ -1176,6 +1177,8 @@ class ExecutionPipeline:
 
             public_research: PublicResearchResult | None = None
             tool_sources: list[InternalSource] = []
+            research_reentry_path = output_dir / "research_reentry_request.json"
+            research_reentry_requested = research_reentry_path.is_file()
             parallel_work: dict[str, object] = {}
             with ThreadPoolExecutor(max_workers=2, thread_name_prefix="onebrief-context") as executor:
                 if intake.toolpack_ids:
@@ -1204,18 +1207,65 @@ class ExecutionPipeline:
 
                     def load_or_research() -> PublicResearchResult | None:
                         existing = self._load(research_path, PublicResearchResult)
-                        if existing is not None:
+                        if existing is not None and not research_reentry_requested:
                             return existing
                         try:
-                            result = run_grounded_research(
-                                self.gateway,
-                                goal=intake.goal,
-                                desired_output=intake.desired_output,
-                                completion_contract=(
-                                    requirements.completion_contract.model_dump(mode="json")
-                                    if requirements.completion_contract else None
-                                ),
+                            request = (
+                                json.loads(research_reentry_path.read_text(encoding="utf-8"))
+                                if research_reentry_requested else {}
                             )
+                            max_calls = int(request.get("max_refinement_calls", 1))
+                            max_calls = max(1, min(max_calls, 3))
+                            prior = existing
+                            blockers = [str(item) for item in request.get("blocking_issues", [])]
+                            result = None
+                            remaining_issues = []
+                            for attempt in range(1, max_calls + 1):
+                                stage = (
+                                    f"public_research_refinement_r{attempt}"
+                                    if research_reentry_requested else "public_research"
+                                )
+                                result = run_grounded_research(
+                                    self.gateway,
+                                    goal=intake.goal,
+                                    desired_output=intake.desired_output,
+                                    completion_contract=(
+                                        requirements.completion_contract.model_dump(mode="json")
+                                        if requirements.completion_contract else None
+                                    ),
+                                    stage=stage,
+                                    prior_research=(prior.answer_markdown if prior else None),
+                                    blocking_issues=blockers,
+                                )
+                                if research_reentry_requested:
+                                    self._write(
+                                        output_dir / f"public_research_refinement_r{attempt}.json",
+                                        result.model_dump_json(indent=2),
+                                    )
+                                    self._write(
+                                        output_dir / f"public_research_refinement_r{attempt}.md",
+                                        result.answer_markdown,
+                                    )
+                                    remaining_issues = research_reentry_issues(
+                                        intake, requirements, result.answer_markdown
+                                    )
+                                    if not remaining_issues:
+                                        break
+                                    blockers = [item.message for item in remaining_issues]
+                                    prior = result
+                            if result is None:
+                                raise RuntimeError("research re-entry produced no result")
+                            if research_reentry_requested:
+                                self._write(
+                                    output_dir / "research_reentry_status.json",
+                                    json.dumps({
+                                        "schema_version": "onebrief-research-reentry-status-v1",
+                                        "resolved": not remaining_issues,
+                                        "remaining_issues": [
+                                            item.model_dump(mode="json") for item in remaining_issues
+                                        ],
+                                    }, ensure_ascii=False, indent=2),
+                                )
                         except ValueError as exc:
                             if (
                                 "no grounded source urls" not in str(exc).casefold()
@@ -1297,7 +1347,10 @@ class ExecutionPipeline:
             ]
             analysis_path = output_dir / "analysis.json"
             graph_begin("evidence_analysis")
-            analysis = self._load(analysis_path, AnalysisPackage)
+            analysis = (
+                None if research_reentry_requested
+                else self._load(analysis_path, AnalysisPackage)
+            )
             if analysis is None:
                 self._checkpoint(output_dir, PipelineStatus.RUNNING, "evidence_analysis", completed, 0)
                 analysis = self.analyst.run(contract, source_payload)
