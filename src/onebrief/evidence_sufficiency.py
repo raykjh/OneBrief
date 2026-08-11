@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from enum import StrEnum
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +18,7 @@ class EvidenceSufficiencyIssueKind(StrEnum):
     UNBOUNDED_ABSENCE_CLAIM = "unbounded_absence_claim"
     UNSUPPORTED_SAFETY_ABSOLUTE = "unsupported_safety_absolute"
     OUT_OF_SCOPE_FOLLOWUP = "out_of_scope_followup"
+    UNCITED_MATERIAL_CLAIM = "uncited_material_claim"
 
 
 class EvidenceSufficiencyIssue(BaseModel):
@@ -64,6 +66,19 @@ _FOLLOWUP_HEADING = re.compile(
     r"next\s+steps?|follow[- ]?up|implementation\s+guide|production\s+stage)",
     re.IGNORECASE | re.MULTILINE,
 )
+_SCOPE_LEAKAGE = re.compile(
+    r"견적\s*요청용|품목제조신고|즉시\s*(?:활용|생산|판매|출시)|"
+    r"(?:production|deployment|sale|launch)[ -]?ready|ready\s+for\s+(?:production|deployment|sale|launch)",
+    re.IGNORECASE,
+)
+_MATERIAL_CLAIM = re.compile(
+    r"등록|인정|기능성|효능|개선|감소|증가|증진|억제|완화|도움|안전|위험|"
+    r"부작용|효과|입증|확인|점유|가격|비율|"
+    r"\b(?:registered|approved|improves?|reduces?|increases?|prevents?|causes?|"
+    r"safe|risk|side\s+effects?|effective|proven|confirmed|market\s+share|price)\b",
+    re.IGNORECASE,
+)
+_FINDING_CITATION = re.compile(r"\[F\d{2,}\]", re.IGNORECASE)
 
 
 def _research_text(requirements: RequirementsAnalysis) -> str:
@@ -77,13 +92,43 @@ def _research_text(requirements: RequirementsAnalysis) -> str:
     )
 
 
-def _linked_rows(markdown: str) -> int:
-    rows = set()
+def _direct_urls(markdown: str) -> set[str]:
+    direct: set[str] = set()
+    for match in _URL.finditer(markdown):
+        url = match.group(0).rstrip(".,;]")
+        parsed = urlparse(url)
+        if (parsed.path and parsed.path != "/") or parsed.query:
+            direct.add(url.casefold())
+    return direct
+
+
+def _unbounded_negative_segments(markdown: str) -> list[str]:
+    segments = [
+        item.strip()
+        for item in re.split(r"\n\s*\n|(?<=[.!?。])\s+", markdown)
+        if item.strip()
+    ]
+    return [
+        item for item in segments
+        if _NEGATIVE_ABSOLUTE.search(item) and not _BOUNDED_UNCERTAINTY.search(item)
+    ]
+
+
+def _uncited_material_claims(markdown: str) -> list[str]:
+    claims: list[str] = []
     for raw in markdown.splitlines():
         line = raw.strip()
-        if _URL.search(line) and (line.startswith("|") or re.match(r"^[-*]\s+", line)):
-            rows.add(re.sub(r"\s+", " ", line).casefold())
-    return len(rows)
+        if (
+            not line
+            or line.startswith("#")
+            or re.fullmatch(r"[-|: ]+", line)
+            or not _MATERIAL_CLAIM.search(line)
+            or _URL.search(line)
+            or _FINDING_CITATION.search(line)
+        ):
+            continue
+        claims.append(re.sub(r"\s+", " ", line)[:240])
+    return claims
 
 
 def validate_evidence_sufficiency(
@@ -115,24 +160,25 @@ def validate_evidence_sufficiency(
     ]
     if has_public_research and required_counts:
         required = max(required_counts)
-        observed = _linked_rows(body)
+        observed = len(_direct_urls(body))
         if observed < required:
             issues.append(EvidenceSufficiencyIssue(
                 kind=EvidenceSufficiencyIssueKind.QUANTIFIED_EVIDENCE_SHORTFALL,
                 message=(
                     f"The completion contract requires at least {required} individually inspectable "
-                    f"research items, but only {observed} source-linked table or list rows were found. "
-                    "Categories or market segments do not count as named items."
+                    f"research items, but only {observed} distinct item-level source URLs were found. "
+                    "Homepage links, categories, or market segments do not count as named items."
                 ),
             ))
 
-    if has_public_research and _NEGATIVE_ABSOLUTE.search(body) and not _BOUNDED_UNCERTAINTY.search(body):
+    negative_segments = _unbounded_negative_segments(body) if has_public_research else []
+    if negative_segments:
         issues.append(EvidenceSufficiencyIssue(
             kind=EvidenceSufficiencyIssueKind.UNBOUNDED_ABSENCE_CLAIM,
             message=(
                 "The artifact makes an absolute absence, uniqueness, or exclusivity claim. Replace it "
                 "with a bounded search-scope conclusion, list the compared named candidates and sources, "
-                "and preserve uncertainty; novelty alone does not prove that no equivalent exists."
+                "and preserve uncertainty in the same claim; novelty alone does not prove that no equivalent exists."
             ),
         ))
 
@@ -146,12 +192,25 @@ def validate_evidence_sufficiency(
         ))
 
     scope_text = "\n".join(filter(None, [intake.goal, intake.desired_output or ""]))
-    if _SCOPE_LIMIT.search(scope_text) and _FOLLOWUP_HEADING.search(body):
+    if _SCOPE_LIMIT.search(scope_text) and (
+        _FOLLOWUP_HEADING.search(body) or _SCOPE_LEAKAGE.search(body)
+    ):
         issues.append(EvidenceSufficiencyIssue(
             kind=EvidenceSufficiencyIssueKind.OUT_OF_SCOPE_FOLLOWUP,
             message=(
                 "The user set an explicit scope ceiling, but the artifact adds a follow-up, implementation, "
                 "production, or next-step section. Remove work outside the approved deliverable."
+            ),
+        ))
+
+    uncited = _uncited_material_claims(body) if has_public_research else []
+    if uncited:
+        examples = " | ".join(uncited[:3])
+        issues.append(EvidenceSufficiencyIssue(
+            kind=EvidenceSufficiencyIssueKind.UNCITED_MATERIAL_CLAIM,
+            message=(
+                "Research-backed material claims must carry an F-prefixed finding citation or a source URL "
+                f"on the same row or paragraph. Uncited examples: {examples}"
             ),
         ))
 

@@ -73,11 +73,11 @@ def test_accepts_three_named_source_linked_rows_with_bounded_wording() -> None:
 
 | 제품 | 출처 |
 |---|---|
-| Alpha | https://example.com/a |
-| Beta | https://example.com/b |
-| Gamma | https://example.com/c |
+| Alpha | https://example.com/products/a |
+| Beta | https://example.com/products/b |
+| Gamma | https://example.com/products/c |
 
-이 검색 범위에서 동등한 조합은 확인되지 않았으며 추가 확인이 필요합니다.
+이 검색 범위에서 동등한 조합은 확인되지 않았으며 추가 확인이 필요합니다. [F01]
 """
     result = validate_evidence_sufficiency(
         IntakeRequest(goal="후보를 조사해줘.", public_research_allowed=True),
@@ -111,3 +111,47 @@ def test_scope_and_safety_absolutes_override_model_pass() -> None:
     assert report.verdict == "REVISE"
     assert any("scope ceiling" in item for item in report.revision_instructions)
     assert any("absolute safety" in item for item in report.revision_instructions)
+
+
+def test_homepages_and_unrelated_uncertainty_do_not_prove_item_level_comparison() -> None:
+    body = """# 결과
+
+| 항목 | 제품 A | 제품 B | 제품 C |
+|---|---|---|---|
+| 출처 | https://shop.example.com | https://compare.example.com/ | https://news.example.com |
+
+다른 수치는 확인 필요입니다.
+
+이 후보는 기존 시장에 유사 제품이 없는 독점적 제안입니다. [F01]
+"""
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="유사 제품을 조사하고 콘셉트까지만 정해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft(body),
+    )
+
+    kinds = {item.kind.value for item in result.issues}
+    assert "quantified_evidence_shortfall" in kinds
+    assert "unbounded_absence_claim" in kinds
+
+
+def test_uncited_material_claim_is_rejected_at_row_or_paragraph_level() -> None:
+    body = """# 결과
+
+| 제품 | 출처 |
+|---|---|
+| Alpha | https://example.com/products/a |
+| Beta | https://example.com/products/b |
+| Gamma | https://example.com/products/c |
+
+이 성분은 피로를 개선하고 위험을 감소시킵니다.
+"""
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="후보를 조사해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft(body),
+    )
+
+    assert any(item.kind.value == "uncited_material_claim" for item in result.issues)
