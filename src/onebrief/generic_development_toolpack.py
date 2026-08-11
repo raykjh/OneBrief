@@ -113,6 +113,7 @@ class ProposedProjectFileChange(BaseModel):
     # impossible even though the promoted result still satisfies the total cap.
     search: str | None = Field(default=None, min_length=1, max_length=MAX_CHANGE_BYTES)
     replace: str | None = Field(default=None, max_length=MAX_CHANGE_BYTES)
+    anchor_id: str | None = Field(default=None, pattern=r"^A[0-9a-f]{12}$")
     start_anchor: str | None = Field(default=None, min_length=1, max_length=4000)
     end_anchor: str | None = Field(default=None, min_length=1, max_length=4000)
     reason: str = Field(min_length=3, max_length=500)
@@ -125,16 +126,29 @@ class ProposedProjectFileChange(BaseModel):
     @model_validator(mode="after")
     def validate_edit_mode(self) -> "ProposedProjectFileChange":
         full_file = self.content is not None
-        exact_edit = self.search is not None and self.replace is not None
+        catalog_edit = (
+            self.content is None
+            and self.anchor_id is not None
+            and self.search is None
+            and self.replace is not None
+            and self.start_anchor is None
+            and self.end_anchor is None
+        )
+        exact_edit = (
+            self.anchor_id is None
+            and self.search is not None
+            and self.replace is not None
+        )
         anchored_edit = (
-            self.start_anchor is not None
+            self.anchor_id is None
+            and self.start_anchor is not None
             and self.end_anchor is not None
             and self.replace is not None
             and self.search is None
         )
-        if sum((full_file, exact_edit, anchored_edit)) != 1:
+        if sum((full_file, catalog_edit, exact_edit, anchored_edit)) != 1:
             raise ValueError(
-                "provide complete content, exact search/replace, or anchored range replacement"
+                "provide complete content, catalog anchor, exact search/replace, or anchored range replacement"
             )
         return self
 
@@ -152,6 +166,7 @@ class CompactProposedProjectFileChange(BaseModel):
     base_sha256: str | None = None
     search: str | None = Field(default=None, min_length=1, max_length=6000)
     replace: str = Field(max_length=12000)
+    anchor_id: str | None = Field(default=None, pattern=r"^A[0-9a-f]{12}$")
     start_anchor: str | None = Field(default=None, min_length=1, max_length=2000)
     end_anchor: str | None = Field(default=None, min_length=1, max_length=2000)
     reason: str = Field(min_length=3, max_length=500)
@@ -163,14 +178,28 @@ class CompactProposedProjectFileChange(BaseModel):
 
     @model_validator(mode="after")
     def validate_edit_mode(self) -> "CompactProposedProjectFileChange":
-        exact_edit = self.search is not None and self.start_anchor is None and self.end_anchor is None
+        catalog_edit = (
+            self.anchor_id is not None
+            and self.search is None
+            and self.start_anchor is None
+            and self.end_anchor is None
+        )
+        exact_edit = (
+            self.anchor_id is None
+            and self.search is not None
+            and self.start_anchor is None
+            and self.end_anchor is None
+        )
         anchored_edit = (
-            self.search is None
+            self.anchor_id is None
+            and self.search is None
             and self.start_anchor is not None
             and self.end_anchor is not None
         )
-        if exact_edit == anchored_edit:
-            raise ValueError("provide one bounded exact edit or one bounded anchored edit")
+        if sum((catalog_edit, exact_edit, anchored_edit)) != 1:
+            raise ValueError(
+                "provide one catalog anchor, bounded exact edit, or bounded anchored edit"
+            )
         return self
 
 

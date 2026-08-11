@@ -588,10 +588,12 @@ class ExecutionPipeline:
         exact_edit_anchors = developer.exact_edit_anchors(
             previous_change_set, repair_feedback
         )
+        current_exact_edit_anchors = exact_edit_anchors
 
         def after_maker(raw: object, _ctx, round_number: int) -> dict[str, object]:
             nonlocal previous_change_set, latest_run
             nonlocal best_failed_candidate, best_failure_message, best_failure_quality
+            nonlocal current_exact_edit_anchors
             reverify_existing = (
                 round_number == 0
                 and bool(_ctx.session.state.get(REVERIFY_EXISTING_STATE_KEY))
@@ -601,7 +603,12 @@ class ExecutionPipeline:
                 delta = (
                     previous_change_set
                     if reverify_existing
-                    else developer.promote_candidate(raw, prepared_sources, previous_change_set)
+                    else developer.promote_candidate(
+                        raw,
+                        prepared_sources,
+                        previous_change_set,
+                        current_exact_edit_anchors,
+                    )
                 )
             except (ValidationError, ValueError) as exc:
                 if previous_change_set is None:
@@ -639,9 +646,7 @@ class ExecutionPipeline:
                 return {
                     MAKER_STATE_KEY: previous_change_set.model_dump(mode="json"),
                     VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
-                    EXACT_EDIT_ANCHORS_STATE_KEY: developer.exact_edit_anchors(
-                        previous_change_set, feedback
-                    ),
+                    EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
                     SKIP_VERIFIER_STATE_KEY: True,
                 }
             self._write(
@@ -731,12 +736,13 @@ class ExecutionPipeline:
                     output_dir / f"verification_r{round_number}.json",
                     report.model_dump_json(indent=2),
                 )
+                current_exact_edit_anchors = developer.exact_edit_anchors(
+                    previous_change_set, feedback
+                )
                 return {
                     MAKER_STATE_KEY: previous_change_set.model_dump(mode="json"),
                     VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
-                    EXACT_EDIT_ANCHORS_STATE_KEY: developer.exact_edit_anchors(
-                        previous_change_set, feedback
-                    ),
+                    EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
                     SKIP_VERIFIER_STATE_KEY: True,
                 }
             evidence = self._development_evidence(output_dir)
@@ -802,8 +808,9 @@ class ExecutionPipeline:
             "Git metadata, deployment, accounts, financial transactions, or paths outside the approved project. "
             "For every existing-file change, use one exact search/replace edit and never return the entire file; "
             "the search text must occur exactly once in the approved source. On revision, repair every build, test, "
-            "When exact_edit_anchors are supplied, copy search text only from those verbatim windows and keep each "
-            "edit to the smallest anchor that uniquely identifies the intended region. "
+            "When exact_edit_anchors are supplied, prefer its anchor_id and return the complete replacement for "
+            "that displayed source window; OneBrief resolves the ID deterministically. Otherwise copy search text "
+            "only from those verbatim windows and keep each edit to the smallest unique anchor. "
             "runtime, or independent-review failure while preserving all "
             "previously passing behavior. New files may use complete content; existing files must use exact edits. "
             "Prefer small incremental changes that can be verified and extended in later rounds. Return only the schema."

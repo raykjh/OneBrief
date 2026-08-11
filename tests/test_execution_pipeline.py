@@ -362,9 +362,12 @@ def test_adk_software_continuation_restores_previous_change_set(
     def capture_previous(
         self: DeveloperAgent, raw: object, sources: list[dict[str, object]],
         previous_change_set: CodeChangeSet | None = None,
+        approved_anchor_catalog: list[dict[str, object]] | None = None,
     ) -> CodeChangeSet:
         observed_previous.append(previous_change_set)
-        return original_promote(self, raw, sources, previous_change_set)
+        return original_promote(
+            self, raw, sources, previous_change_set, approved_anchor_catalog
+        )
 
     def fake_apply(
         _self: ExecutionPipeline, _intake: IntakeRequest, _pack: object,
@@ -997,6 +1000,54 @@ def test_project_developer_compact_retry_forbids_full_file_content() -> None:
 
     assert gateway.schemas == [ProposedProjectCodeChangeSet, CompactProposedProjectCodeChangeSet]
     assert result.changes[0].content == "export const label = 'English';\n"
+
+
+def test_project_developer_resolves_verified_anchor_id_without_retyping_source() -> None:
+    previous = ProjectCodeChangeSet(
+        summary="Existing candidate.",
+        changes=[{
+            "path": "web/app/page.tsx", "base_sha256": "a" * 64,
+            "content": (
+                "export default function Page() {\n"
+                "  return <h2>Historical Model Performance</h2>;\n"
+                "}\n"
+            ),
+            "reason": "Current candidate.",
+        }],
+    )
+    anchors = DeveloperAgent.exact_edit_anchors(
+        previous, "Expected 과거 시점별 모델 성능 instead of Historical Model Performance."
+    )
+    anchor = anchors[0]["anchors"][0]
+    proposal = CompactProposedProjectCodeChangeSet.model_validate({
+        "summary": "Restore the Korean heading.",
+        "changes": [{
+            "path": "web/app/page.tsx", "base_sha256": "a" * 64,
+            "anchor_id": anchor["anchor_id"],
+            "replace": (
+                "export default function Page() {\n"
+                "  return <h2>과거 시점별 모델 성능</h2>;\n"
+                "}"
+            ),
+            "reason": "Replace the verified source window by ID.",
+        }],
+    })
+    developer = DeveloperAgent(
+        object(), change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/", path_approver=lambda path: path,
+    )
+    result = developer.promote_candidate(
+        proposal,
+        [{
+            "repository_path": "web/app/page.tsx", "sha256": "a" * 64,
+            "content": previous.changes[0].content,
+        }],
+        previous,
+        anchors,
+    )
+
+    assert "과거 시점별 모델 성능" in result.changes[0].content
+    assert "Historical Model Performance" not in result.changes[0].content
 
 
 def test_developer_rejects_blind_existing_file_replacement_and_uses_sidecar() -> None:

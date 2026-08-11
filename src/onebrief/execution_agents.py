@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from typing import Any, Callable, Protocol, TypeVar
 
@@ -163,6 +164,7 @@ class DeveloperAgent:
         raw: object,
         approved_sources: list[dict[str, Any]] | None = None,
         previous_change_set: BaseModel | None = None,
+        approved_anchor_catalog: list[dict[str, object]] | None = None,
     ) -> BaseModel:
         """Promote an untrusted proposal through the exact approved path boundary."""
         if self.change_set_schema is ProjectCodeChangeSet:
@@ -177,6 +179,14 @@ class DeveloperAgent:
             previous_map = {
                 str(getattr(item, "path", "")): str(getattr(item, "content", ""))
                 for item in getattr(previous_change_set, "changes", [])
+            }
+            catalog = {
+                (str(group.get("path", "")), str(anchor.get("anchor_id", ""))): str(
+                    anchor.get("text", "")
+                )
+                for group in (approved_anchor_catalog or [])
+                for anchor in group.get("anchors", [])
+                if isinstance(anchor, dict) and anchor.get("anchor_id")
             }
             # Compose several bounded edits for one file into one final change.
             # The trusted schema still receives exactly one row per path.
@@ -198,6 +208,13 @@ class DeveloperAgent:
                     pending_baseline = str(pending.get("content", "")) if pending else ""
                     baseline = ""
                     match: tuple[int, int] | None = None
+                    anchor_id = str(change.get("anchor_id") or "")
+                    if anchor_id:
+                        needle = catalog.get((path, anchor_id), "")
+                        if not needle:
+                            raise ValueError(
+                                f"catalog anchor is not approved for path: {path}#{anchor_id}"
+                            )
                     if needle:
                         for candidate in (
                             pending_baseline,
@@ -260,6 +277,7 @@ class DeveloperAgent:
                 change.pop("replace", None)
                 change.pop("start_anchor", None)
                 change.pop("end_anchor", None)
+                change.pop("anchor_id", None)
                 changes_by_path[path.casefold()] = change
             proposal = proposed.model_dump(mode="json")
             proposal["changes"] = list(changes_by_path.values())
@@ -306,6 +324,9 @@ class DeveloperAgent:
                     continue
                 used.add(span)
                 anchors.append({
+                    "anchor_id": "A" + hashlib.sha256(
+                        (str(getattr(change, "path", "")) + "\0" + "\n".join(lines[start:end])).encode("utf-8")
+                    ).hexdigest()[:12],
                     "start_line": start + 1,
                     "end_line": end,
                     "text": "\n".join(lines[start:end]),
@@ -372,6 +393,8 @@ class DeveloperAgent:
             "preserve every behavior, marker, control, and data contract they assert. Prefer additive, localized "
             "changes over redesigning or replacing a mature implementation. If verification_feedback is present, "
             "correct every reported failure while retaining all previously passing behavior. Do not return a report "
+            "When exact_edit_anchors contains a matching verified source window, prefer its anchor_id and return "
+            "the complete replacement for that displayed window; never invent or retype the anchor text. "
             "in place of runnable source code. Keep existing correct behavior, make no unsupported financial claim, "
             "and stay within the acceptance criteria. For Unity visual or localization work, include a real PlayMode "
             "test whose full name begins with OneBrief.Visual. The test must perform the requested runtime interaction, "
@@ -473,7 +496,7 @@ class DeveloperAgent:
                     temperature=0.1,
                 )
                 candidate = self.promote_candidate(
-                    candidate, developer_sources, previous_change_set
+                    candidate, developer_sources, previous_change_set, exact_edit_anchors
                 )
                 normalized_changes = []
                 for change in getattr(candidate, "changes", []):
