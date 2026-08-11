@@ -43,6 +43,14 @@ from onebrief.project_bootstrap import (
     register_project_folder,
 )
 from onebrief.preparation import PreparationPlan, build_preparation_plan
+from onebrief.governance import (
+    AuthorizationReceipt,
+    DecisionRequest,
+    build_decision_request,
+    canonical_digest,
+    external_apply_decision,
+    parse_time,
+)
 from onebrief.jobs import JobStore, create_job, run_job
 from onebrief.producer import estimate_budget
 from onebrief.project_catalog import ProjectCatalog, RegisteredProject
@@ -119,12 +127,62 @@ class ExecutionLink(BaseModel):
     created_at: str
     agent_engine_resource: str | None = None
     agent_engine_session: str | None = None
+    authorization_receipt: AuthorizationReceipt | None = None
 
 
 class RunApproval(BaseModel):
     approved_usd: float = Field(gt=0)
     authorization_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     toolpack_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    actor_id: str = Field(default="local_user", min_length=1, max_length=120)
+
+
+class ApplyApproval(BaseModel):
+    decision_request_id: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+def _apply_decision_request(session: WebSession, record) -> DecisionRequest | None:
+    preparation = session.preparation
+    if (
+        preparation is None
+        or not record.result_manifest_sha256
+        or not preparation.authorization_envelope.base_source_revision
+    ):
+        return None
+    action_digest = canonical_digest({
+        "run_authorization_sha256": preparation.authorization_sha256,
+        "result_manifest_sha256": record.result_manifest_sha256,
+        "base_source_revision": preparation.authorization_envelope.base_source_revision,
+        "project_id": session.intake.existing_project_id,
+    })
+    return external_apply_decision(
+        authorization_sha256=action_digest,
+        base_source_revision=preparation.authorization_envelope.base_source_revision,
+        project_id=str(session.intake.existing_project_id),
+    )
+
+
+def _authorization_receipt(
+    session: WebSession, approval: RunApproval, *, consumed_at: str,
+) -> AuthorizationReceipt | None:
+    if session.preparation is None or approval.authorization_sha256 is None:
+        return None
+    envelope = session.preparation.authorization_envelope
+    payload = {
+        "session_id": session.session_id,
+        "action_digest": approval.authorization_sha256,
+        "actor_id": approval.actor_id,
+        "base_source_revision": envelope.base_source_revision,
+        "affected_scope": [
+            *envelope.allowed_read_prefixes,
+            *envelope.allowed_write_prefixes,
+        ] or ["result_package"],
+    }
+    return AuthorizationReceipt(
+        receipt_id=canonical_digest(payload),
+        consumed_at=consumed_at,
+        **payload,
+    )
 
 
 class WebSessionStore(Protocol):
@@ -1017,6 +1075,13 @@ async def run_session(
                 )
             if approval.authorization_sha256 != session.preparation.authorization_sha256:
                 raise ValueError("The completion, permission, or budget plan changed before approval.")
+            envelope = session.preparation.authorization_envelope
+            if approval.actor_id != envelope.actor_id:
+                raise ValueError("The approval actor does not match the prepared authorization.")
+            if datetime.now(UTC) >= parse_time(envelope.expires_at):
+                raise ValueError("The prepared authorization expired; inspect and approve a fresh plan.")
+            if approval.approved_usd - 1e-9 > envelope.maximum_budget_usd:
+                raise ValueError("The approval exceeds the budget bound into the authorization digest.")
         validate_approval(session, approval.approved_usd)
         selected_project = None
         if session.intake.existing_project_id:
@@ -1027,6 +1092,12 @@ async def run_session(
                     raise ValueError("The exact generated ToolPack permissions were not approved.")
                 lifecycle = ProjectToolPackLifecycle(selected_project.project_id)
                 state = lifecycle.state()
+                expected_revision = session.preparation.authorization_envelope.base_source_revision
+                if (
+                    expected_revision
+                    and (state.generated is None or state.generated.repository_head_sha != expected_revision)
+                ):
+                    raise ValueError("The project source revision changed after authorization was prepared.")
                 if state.status == "validated":
                     lifecycle.approve(expected_toolpack)
                 elif (
@@ -1048,6 +1119,7 @@ async def run_session(
         raise HTTPException(409, str(exc)) from exc
 
     try:
+        authorization_receipt = _authorization_receipt(session, approval, consumed_at=_now())
         development_job = any(
             item in session.intake.toolpack_ids
             for item in (ToolPackId.EXCHANGE_DEVELOPMENT, ToolPackId.PROJECT_DEVELOPMENT)
@@ -1078,6 +1150,7 @@ async def run_session(
                 job_uri=str(job_dir),
                 operation_name="local",
                 created_at=_now(),
+                authorization_receipt=authorization_receipt,
             )
             store.save_execution(link)
             task = asyncio.create_task(asyncio.to_thread(run_job, job_dir))
@@ -1152,6 +1225,7 @@ async def run_session(
             agent_engine_session=(
                 dispatch.agent_engine_session if dispatch is not None else None
             ),
+            authorization_receipt=authorization_receipt,
         )
         store.save_execution(link)
         return {
@@ -1186,6 +1260,10 @@ async def session_status(
             "cloud_run_operation": link.operation_name,
             "agent_engine_resource": link.agent_engine_resource,
             "agent_dispatch_id": link.agent_engine_session,
+            "authorization_receipt": (
+                link.authorization_receipt.model_dump(mode="json")
+                if link.authorization_receipt else None
+            ),
         }
         try:
             payload["evaluation"] = await asyncio.to_thread(
@@ -1193,6 +1271,18 @@ async def session_status(
             )
         except FileNotFoundError:
             payload["evaluation"] = None
+        try:
+            payload["lineage"] = await asyncio.to_thread(
+                repository.read_json, "work/lineage_summary.json"
+            )
+        except FileNotFoundError:
+            payload["lineage"] = None
+        try:
+            payload["resume_capsule"] = await asyncio.to_thread(
+                repository.read_json, "work/resume_capsule_l0.json"
+            )
+        except FileNotFoundError:
+            payload["resume_capsule"] = None
         try:
             session = store.read(session_id)
             try:
@@ -1210,7 +1300,28 @@ async def session_status(
                 and record.result_package
                 and completion_proven
             )
+            apply_decision = (
+                _apply_decision_request(session, record) if payload["can_apply"] else None
+            )
+            payload["apply_decision_request"] = (
+                apply_decision.model_dump(mode="json") if apply_decision else None
+            )
             payload["project_id"] = session.intake.existing_project_id
+            preparation = session.preparation
+            decision = build_decision_request(
+                status=record.status.value,
+                stage=record.current_stage,
+                message=record.message,
+                authorization_sha256=(preparation.authorization_sha256 if preparation else None),
+                base_source_revision=(
+                    preparation.authorization_envelope.base_source_revision
+                    if preparation else None
+                ),
+                expires_at=(preparation.authorization_envelope.expires_at if preparation else None),
+            )
+            payload["decision_request"] = (
+                decision.model_dump(mode="json") if decision else None
+            )
             if (
                 record.status.value in {"failed", "partial"}
                 and session.budget is not None
@@ -1595,6 +1706,7 @@ async def session_result(
 @app.post("/api/sessions/{session_id}/apply")
 async def apply_session_result(
     session_id: str,
+    approval: ApplyApproval | None = None,
     store: WebSessionStore = Depends(get_session_store),
 ) -> dict[str, object]:
     """Apply one verified Cloud/local result to its unchanged local project."""
@@ -1606,6 +1718,20 @@ async def apply_session_result(
         if session.intake.output_target != OutputTarget.EXISTING_PROJECT or not project_id:
             raise RuntimeError("이 작업은 기존 프로젝트 개선 결과가 아닙니다.")
         link = store.read_execution(session_id)
+        expected_apply = None
+        if session.preparation is not None:
+            repository = (
+                LocalJobRepository(Path(link.job_uri))
+                if link.operation_name == "local" else GCSJobStore(link.job_uri)
+            )
+            record_for_approval = await asyncio.to_thread(repository.read_job)
+            expected_apply = _apply_decision_request(session, record_for_approval)
+        if expected_apply is not None and (
+            approval is None or approval.decision_request_id != expected_apply.request_id
+        ):
+            raise RuntimeError(
+                "The external apply approval is missing, stale, or bound to a different result."
+            )
         with tempfile.TemporaryDirectory(prefix="onebrief_apply_result_") as temp_name:
             if link.operation_name == "local":
                 job_dir = Path(link.job_uri).resolve()

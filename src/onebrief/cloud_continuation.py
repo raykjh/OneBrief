@@ -220,6 +220,8 @@ def create_budget_preserving_continuation(
             json.dumps({"enabled": True}, indent=2) + "\n",
             encoding="utf-8",
         )
+    from onebrief.lineage import ancestor_lineage_payload
+
     manifest = {
         "schema_version": "onebrief-cloud-continuation-v1",
         "source_job_uri": source_job_uri,
@@ -244,6 +246,7 @@ def create_budget_preserving_continuation(
         "low_cost_targeted_repair": low_cost_targeted_repair,
         "reverify_existing_candidate": reverify_existing_candidate,
         "reused_artifacts": list(reused),
+        "ancestor_lineage": ancestor_lineage_payload(source_job_dir),
         "policy": (
             "actual parent spend plus child approval cannot exceed the original approval"
             if explicit_child_approval_usd is None

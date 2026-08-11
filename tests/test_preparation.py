@@ -38,6 +38,9 @@ def test_stage_one_binds_completion_permissions_and_budget_to_one_approval() -> 
     )
     assert plan.minimum_cost_usd <= plan.recommended_cost_usd <= plan.maximum_cost_usd
     assert len(plan.authorization_sha256) == 64
+    assert plan.authorization_envelope.actor_id == "local_user"
+    assert plan.authorization_envelope.executor_id == "onebrief_worker"
+    assert plan.authorization_envelope.maximum_budget_usd == budget.maximum_cost_usd
 
 
 def test_changed_completion_contract_requires_a_new_authorization_hash() -> None:

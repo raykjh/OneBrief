@@ -424,6 +424,44 @@ def test_final_approval_replaces_the_preflight_budget_hint(monkeypatch) -> None:
         validate_approval(session, 0.1001)
 
 
+@pytest.mark.parametrize(
+    ("issued_at", "actor_id", "expected"),
+    [
+        ("2020-01-01T00:00:00+00:00", "local_user", "expired"),
+        (None, "another_actor", "actor"),
+    ],
+)
+def test_run_rejects_expired_or_wrong_actor_authorization(
+    issued_at, actor_id, expected,
+) -> None:
+    store = InMemoryWebSessionStore()
+    intake = IntakeRequest(goal="Create a grounded summary.", public_research_allowed=True)
+    analysis = requirements(True)
+    budget = estimate_budget(intake, analysis)
+    preparation = build_preparation_plan(
+        intake, analysis, budget, issued_at=issued_at
+    )
+    assert preparation is not None
+    store.create(WebSession(
+        session_id=f"rejected-{expected}", created_at="2026-08-11T00:00:00+00:00",
+        intake=intake, requirements=analysis, budget=budget, preparation=preparation,
+    ))
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).post(
+            f"/api/sessions/rejected-{expected}/run",
+            json={
+                "approved_usd": budget.recommended_approval_usd,
+                "authorization_sha256": preparation.authorization_sha256,
+                "actor_id": actor_id,
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 409
+    assert expected in response.text.casefold()
+
+
 def test_exchange_development_is_queued_as_a_local_job(monkeypatch, tmp_path) -> None:
     store = InMemoryWebSessionStore()
     intake = IntakeRequest(
@@ -607,7 +645,11 @@ def test_status_exposes_safe_apply_only_for_completed_local_project_session(monk
             return record
 
         def read_json(self, relative):
-            if relative == "work/evaluation_metrics.json":
+            if relative in {
+                "work/evaluation_metrics.json",
+                "work/lineage_summary.json",
+                "work/resume_capsule_l0.json",
+            }:
                 raise FileNotFoundError(relative)
             assert relative == "work/completion_ledger.json"
             return {"complete": True}

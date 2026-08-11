@@ -11,6 +11,7 @@ from onebrief.cloud_continuation import (
     create_budget_preserving_continuation,
 )
 from onebrief.jobs import JobStatus, JobStore, create_job
+from onebrief.lineage import build_run_lineage
 from onebrief.team_planning import TeamPlan
 from onebrief.schemas import (
     BudgetEnvelope,
@@ -134,6 +135,7 @@ def test_continuation_inherits_only_remaining_approval(
     manifest = json.loads((child / "work" / "continuation_manifest.json").read_text("utf-8"))
     assert manifest["source_job_id"] == record.job_id
     assert manifest["aggregate_approval_ceiling_usd"] == approved
+    assert manifest["ancestor_lineage"]["job_ids"] == [record.job_id]
     child_id = JobStore(child).read().job_id
     plan_path = (
         child / "work" / "workspace" / "projects" / child_id
@@ -146,6 +148,10 @@ def test_continuation_inherits_only_remaining_approval(
         indent=2,
         sort_keys=True,
     ) + "\n"
+    child_lineage = build_run_lineage(child)
+    assert child_lineage.root_job_id == record.job_id
+    assert child_lineage.job_ids == [record.job_id, child_id]
+    assert child_lineage.depth == 1
 
 
 def test_continuation_rejects_nonterminal_source(

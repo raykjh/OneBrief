@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from onebrief.schemas import BudgetEnvelope, IntakeRequest, RequirementsAnalysis
 from onebrief.toolpack_lifecycle import ToolPackLifecycleState
+from onebrief.governance import AuthorizationEnvelope, RiskClass, canonical_digest
 
 
 class CapabilityPermissionManifest(BaseModel):
@@ -38,6 +40,7 @@ class PreparationPlan(BaseModel):
     maximum_cost_usd: float = Field(ge=0)
     ready_for_authorization: bool
     blockers: list[str] = Field(default_factory=list)
+    authorization_envelope: AuthorizationEnvelope
     authorization_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
@@ -78,6 +81,11 @@ def build_preparation_plan(
     budget: BudgetEnvelope | None,
     toolpack_state: ToolPackLifecycleState | None = None,
     amendment_reason: str | None = None,
+    *,
+    actor_id: str = "local_user",
+    executor_id: str = "onebrief_worker",
+    issued_at: str | None = None,
+    authorization_ttl_seconds: int = 3600,
 ) -> PreparationPlan | None:
     if not requirements.ready_for_estimate or budget is None:
         return None
@@ -91,12 +99,34 @@ def build_preparation_plan(
             if "approval" not in item.casefold()
         )
     contract = requirements.completion_contract.model_dump(mode="json")
+    issue_time = (
+        datetime.fromisoformat(issued_at.replace("Z", "+00:00"))
+        if issued_at else datetime.now(UTC)
+    )
+    if issue_time.tzinfo is None:
+        issue_time = issue_time.replace(tzinfo=UTC)
+    generated = toolpack_state.generated if toolpack_state else None
+    envelope = AuthorizationEnvelope(
+        actor_id=actor_id,
+        executor_id=executor_id,
+        completion_contract_sha256=canonical_digest(contract),
+        toolpack_sha256=manifest.toolpack_sha256,
+        base_source_revision=(generated.repository_head_sha if generated else None),
+        allowed_read_prefixes=manifest.allowed_read_prefixes,
+        allowed_write_prefixes=manifest.allowed_write_prefixes,
+        prohibited_actions=manifest.blocked_boundaries,
+        risk_ceiling=(RiskClass.HIGH if manifest.allowed_write_prefixes else RiskClass.MEDIUM),
+        maximum_budget_usd=budget.maximum_cost_usd,
+        issued_at=issue_time.isoformat(),
+        expires_at=(issue_time + timedelta(seconds=authorization_ttl_seconds)).isoformat(),
+    )
     approval_payload = {
         "canonical_goal": intake.goal,
         "output_target": intake.output_target.value,
         "amendment_reason": amendment_reason,
         "completion_contract": contract,
         "permission_manifest": manifest.model_dump(mode="json"),
+        "authorization_envelope": envelope.model_dump(mode="json"),
         "budget": {
             "minimum_cost_usd": budget.minimum_cost_usd,
             "recommended_cost_usd": budget.recommended_cost_usd,
@@ -117,5 +147,6 @@ def build_preparation_plan(
         maximum_cost_usd=budget.maximum_cost_usd,
         ready_for_authorization=not blockers,
         blockers=list(dict.fromkeys(blockers)),
+        authorization_envelope=envelope,
         authorization_sha256=digest,
     )

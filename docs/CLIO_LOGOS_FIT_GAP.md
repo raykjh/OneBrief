@@ -37,10 +37,9 @@ design evidence, not implementation dependencies or a new product scope.
 | Candidate to approved playbook | **Already present** | `ProjectClosureManager` creates hashed `ReuseCandidate` objects; privacy, provenance, and independent reviews are required; promotion requires two successful project uses; model output is not auto-promoted. | No change. Add real cases and tests instead of a new registry. |
 | CLIO/LOGOS core, memory repository, device credentials, encrypted storage, Mem0 | **Not needed** | These solve cross-device canonical memory and institutional trust, not OneBrief's completion-and-evidence loop. | Explicitly out of scope. Importing them would be hackathon overdesign and enlarge the security surface. |
 
-## Minimal proposal
+## Implemented minimal layer
 
-The next justified common abstraction is one read-only `DecisionRequest` record
-generated from existing blockers. It should contain:
+One read-only `DecisionRequest` record is now generated from existing blockers. It contains:
 
 - a stable reason code (`missing_information`, `additional_budget_required`,
   `authority_expansion_required`, `stale_revision`, `conflict_detected`,
@@ -51,14 +50,21 @@ generated from existing blockers. It should contain:
 - safe alternatives such as reduce scope, refresh inspection, or stop;
 - a machine-readable indication that no autonomous retry is allowed.
 
-This record should be a projection over `PreparationPlan`, `RecoveryDecision`, job
+This record is a projection over `PreparationPlan`, `RecoveryDecision`, job
 status, and safe-apply preconditions. It must not own state, create approvals, or
 replace the existing budget, ToolPack, continuation, and safe-apply stores.
 
-After the projection is proven useful, approval hardening may add an
-`AuthorizationReceipt` bound to the exact authorization digest, actor, base source
-revision, affected scope, issued/expiry timestamps, and single-use action. This is
-separate follow-up work because it changes the approval API and UI.
+The execution authorization now binds actor, executor, completion-contract digest,
+ToolPack hash, source revision, read/write scope, prohibited actions, risk ceiling,
+budget, and expiry. The consumed action is retained as an `AuthorizationReceipt`.
+External safe apply uses a separate `DecisionRequest` bound to the run authorization,
+result manifest, base source revision, and project.
+
+Continuation manifests now carry an ancestor aggregate and each terminal job emits a
+deduplicated lineage summary for cost, calls, tokens, revisions, and elapsed time. Each
+valid terminal job also emits a deterministic L0 Resume Capsule projected from its
+goal, completion criteria, checkpoint position, prohibitions, source commit, and budget.
+Projection failure is advisory and cannot mask the authoritative job outcome.
 
 ## Risks
 

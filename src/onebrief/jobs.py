@@ -349,6 +349,20 @@ def _record_project_continuity(job_dir: Path, intake: IntakeRequest | None) -> N
         # Project state is advisory memory and must never corrupt a completed work package.
         return
 
+
+def _persist_governance_projections(
+    job_dir: Path, *, status: str, stage: str, message: str,
+) -> None:
+    """Advisory projections must never replace or mask the authoritative outcome."""
+    try:
+        from onebrief.lineage import persist_run_lineage
+        from onebrief.resume_capsule import persist_resume_capsule
+
+        persist_run_lineage(job_dir)
+        persist_resume_capsule(job_dir, status=status, stage=stage, message=message)
+    except Exception:
+        return
+
 def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
     """Claim and execute one job. The persisted checkpoint makes model work resumable."""
     job_dir = job_dir.resolve()
@@ -424,6 +438,9 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
         from onebrief.evaluation import persist_execution_evaluation
 
         persist_execution_evaluation(job_dir, status)
+        _persist_governance_projections(
+            job_dir, status=status.value, stage=checkpoint.current_stage, message=checkpoint.message
+        )
         ProjectClosureManager(workspace_root / "pack_registry").close(
             project_id=claimed.job_id,
             project_dir=project_dir,
@@ -444,6 +461,9 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
         from onebrief.evaluation import persist_execution_evaluation
 
         persist_execution_evaluation(job_dir, JobStatus.NEEDS_BUDGET)
+        _persist_governance_projections(
+            job_dir, status=JobStatus.NEEDS_BUDGET.value, stage="budget_gate", message=str(exc)
+        )
         package, digest = build_result_package(
             job_dir,
             status=JobStatus.NEEDS_BUDGET,
@@ -462,6 +482,10 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
         from onebrief.evaluation import persist_execution_evaluation
 
         persist_execution_evaluation(job_dir, JobStatus.NEEDS_AUTHORIZATION)
+        _persist_governance_projections(
+            job_dir, status=JobStatus.NEEDS_AUTHORIZATION.value,
+            stage="authorization_gate", message=str(exc)
+        )
         package, digest = build_result_package(
             job_dir,
             status=JobStatus.NEEDS_AUTHORIZATION,
@@ -483,6 +507,10 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
         from onebrief.evaluation import persist_execution_evaluation
 
         persist_execution_evaluation(job_dir, JobStatus.FAILED)
+        _persist_governance_projections(
+            job_dir, status=JobStatus.FAILED.value, stage="failed",
+            message=f"{type(exc).__name__}: {exc}",
+        )
         package, digest = build_result_package(
             job_dir,
             status=JobStatus.FAILED,
