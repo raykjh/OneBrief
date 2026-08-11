@@ -8,8 +8,6 @@ import os
 import sys
 from pathlib import Path
 
-import agentplatform
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -21,6 +19,8 @@ os.environ["ONEBRIEF_PROJECT"] = "onebrief-agent-20260805"
 os.environ["ONEBRIEF_MODEL_LOCATION"] = "global"
 os.environ["GOOGLE_CLOUD_PROJECT"] = "onebrief-agent-20260805"
 os.environ["GOOGLE_CLOUD_LOCATION"] = "global"
+
+import agentplatform
 
 from agent_runtime.onebrief_runtime import build_agent_engine_app
 
