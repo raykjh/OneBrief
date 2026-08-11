@@ -113,6 +113,20 @@ def test_spreadsheet_dashboard_does_not_require_browser_runtime() -> None:
     assert result.verdict_override is None
 
 
+def test_web_artifact_without_development_runtime_is_unverifiable_not_retried() -> None:
+    goal = "웹 화면에서 공공 데이터를 조회한다."
+    result = validate_completion_evidence(
+        IntakeRequest(goal=goal, output_target=OutputTarget.WEB_APP),
+        requirements(goal),
+        None,
+    )
+
+    assert result.verdict_override == Verdict.UNVERIFIABLE
+    overridden = apply_completion_evidence_override(passing_report(), result)
+    assert overridden.verdict == Verdict.UNVERIFIABLE
+    assert overridden.revision_instructions == []
+
+
 def test_missing_user_information_still_outranks_missing_runtime_proof() -> None:
     goal = "Implement a Unity multilingual user interface."
     completion = validate_completion_evidence(

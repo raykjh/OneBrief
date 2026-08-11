@@ -142,6 +142,40 @@ def build_completion_ledger(
     )
 
 
+def settle_consistent_verification(
+    contract: CompletionContract, report: VerificationReport
+) -> VerificationReport:
+    """Resolve a verifier's contradictory REVISE only when every check passes.
+
+    Deterministic and observation gates append their own failed checks, so an
+    all-pass report is the one safe case where free-form blocker text cannot
+    justify another costly maker round.
+    """
+    required_ids = {
+        criterion.criterion_id
+        for criterion in contract.quality_criteria
+        if criterion.required
+    }
+    passed_ids = {
+        check.criterion_id
+        for check in report.criterion_checks
+        if check.passed and check.criterion_id
+    }
+    if (
+        required_ids
+        and required_ids.issubset(passed_ids)
+        and report.criterion_checks
+        and all(check.passed for check in report.criterion_checks)
+        and not report.missing_information
+    ):
+        return report.model_copy(update={
+            "verdict": Verdict.PASS,
+            "blocking_issues": [],
+            "revision_instructions": [],
+        })
+    return report
+
+
 def refresh_completion_ledger(contract: CompletionContract, output_dir: Path) -> CompletionLedger:
     reports: list[tuple[int, VerificationReport]] = []
     for path in sorted(output_dir.glob("verification_r*.json"), key=_round_number):

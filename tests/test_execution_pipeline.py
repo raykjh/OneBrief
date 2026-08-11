@@ -699,6 +699,62 @@ def test_developer_preserves_new_file_provenance_during_verification_retry() -> 
     assert [stage for stage, _ in gateway.calls] == ["long_form_draft_verification_retry"]
 
 
+def test_developer_supplies_exact_small_anchors_for_language_repair() -> None:
+    previous = ProjectCodeChangeSet(
+        summary="Existing localized candidate.",
+        changes=[{
+            "path": "web/app/page.tsx",
+            "base_sha256": "a" * 64,
+            "content": (
+                "export default function Page() {\n"
+                "  return <main><h1>환율 분석</h1><p>시장 요약</p></main>;\n"
+                "}\n"
+            ),
+            "reason": "Current candidate.",
+        }],
+    )
+    repaired = ProposedProjectCodeChangeSet.model_validate({
+        "summary": "Translate one exact visible fragment.",
+        "changes": [{
+            "path": "web/app/page.tsx",
+            "base_sha256": "a" * 64,
+            "search": "  return <main><h1>환율 분석</h1><p>시장 요약</p></main>;",
+            "replace": "  return <main><h1>FX analysis</h1><p>Market summary</p></main>;",
+            "reason": "Remove the unexpected CJK fragment.",
+        }],
+    })
+
+    class AnchorGateway:
+        contents = ""
+
+        def generate_json(self, *, contents: str, **_: object):
+            self.contents = contents
+            return repaired
+
+    gateway = AnchorGateway()
+    developer = DeveloperAgent(
+        gateway,
+        change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/",
+        path_approver=lambda path: path,
+    )
+    result = developer.run(
+        {}, _analysis(), [{
+            "name": "project-source/web/app/page.tsx",
+            "repository_path": "web/app/page.tsx",
+            "sha256": "a" * 64,
+            "content": previous.changes[0].content,
+        }],
+        verification_feedback="English locale contains an unexpected CJK fragment.",
+        previous_change_set=previous,
+    )
+
+    payload = json.loads(gateway.contents)
+    assert payload["exact_edit_anchors"][0]["path"] == "web/app/page.tsx"
+    assert "환율 분석" in payload["exact_edit_anchors"][0]["anchors"][0]["text"]
+    assert result.changes[0].content is not None
+
+
 def test_developer_rejects_blind_existing_file_replacement_and_uses_sidecar() -> None:
     blind = CodeChangeSet(
         summary="Blind replacement.",

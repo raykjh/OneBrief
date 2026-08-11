@@ -148,7 +148,11 @@ def validate_completion_evidence(
         required=required,
         observed_command_ids=commands,
         issues=issues,
-        verdict_override=Verdict.REVISE if issues else None,
+        verdict_override=(
+            Verdict.UNVERIFIABLE
+            if issues and development_evidence is None
+            else Verdict.REVISE if issues else None
+        ),
     )
 
 
@@ -168,6 +172,17 @@ def apply_completion_evidence_override(
             )
         )
     messages = [item.message for item in evidence.issues]
+    if evidence.verdict_override == Verdict.UNVERIFIABLE:
+        return VerificationReport(
+            verdict=Verdict.UNVERIFIABLE,
+            criterion_checks=checks,
+            blocking_issues=list(
+                dict.fromkeys([*model_report.blocking_issues, *messages])
+            ),
+            revision_instructions=[],
+            missing_information=model_report.missing_information,
+            temperament_decisions=model_report.temperament_decisions,
+        )
     if model_report.verdict == Verdict.NEEDS_INFORMATION:
         return VerificationReport(
             verdict=Verdict.NEEDS_INFORMATION,

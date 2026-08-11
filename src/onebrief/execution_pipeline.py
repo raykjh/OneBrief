@@ -62,7 +62,7 @@ from onebrief.execution_schemas import (
     VerificationReport,
     Verdict,
 )
-from onebrief.completion_ledger import refresh_completion_ledger
+from onebrief.completion_ledger import refresh_completion_ledger, settle_consistent_verification
 from onebrief.guarded_gemini import BudgetedGeminiClient
 from onebrief.grounded_search import run_grounded_research
 from onebrief.recovery_policy import RecoveryAction, RecoveryDecision, RecoveryPolicy
@@ -366,6 +366,10 @@ class ExecutionPipeline:
                 reality.model_dump_json(indent=2),
             )
             report = apply_reality_check_override(report, reality)
+            if requirements.completion_contract is not None:
+                report = settle_consistent_verification(
+                    requirements.completion_contract, report
+                )
             self._write(
                 output_dir / f"verification_r{round_number}.json",
                 report.model_dump_json(indent=2),
@@ -390,6 +394,23 @@ class ExecutionPipeline:
             "never edit the artifact. Return only the structured object. "
             + VERIFIER_PROFILE.instruction()
         )
+        reusable_drafts = sorted(
+            output_dir.glob("draft_r*.json"),
+            key=lambda path: int(path.stem.rsplit("r", 1)[-1]),
+        )
+        reverify_only = (
+            (output_dir / "reverify_existing_candidate.json").is_file()
+            and bool(reusable_drafts)
+        )
+        initial_state = None
+        if reverify_only:
+            previous_draft = DraftArtifact.model_validate_json(
+                reusable_drafts[-1].read_text(encoding="utf-8")
+            )
+            initial_state = {
+                MAKER_STATE_KEY: previous_draft.model_dump(mode="json"),
+                REVERIFY_EXISTING_STATE_KEY: True,
+            }
         agent = build_text_convergence_agent(
             gateway=self.gateway,
             maker_model=self.stage_models.get("long_form_draft", "gemini-3.5-flash"),
@@ -397,7 +418,7 @@ class ExecutionPipeline:
                 "independent_verification", "gemini-3.5-flash"
             ),
             maker_schema=DraftArtifact,
-            max_revision_rounds=intake.max_revision_rounds,
+            max_revision_rounds=0 if reverify_only else intake.max_revision_rounds,
             maker_instruction=maker_instruction,
             verifier_instruction=verifier_instruction,
             maker_output_tokens=WRITER_OUTPUT_CAP,
@@ -409,7 +430,7 @@ class ExecutionPipeline:
             "work_contract": contract,
             "analysis_package": analysis.model_dump(mode="json"),
             "authoritative_sources": source_payload,
-        }))
+        }, initial_state=initial_state))
         self._write(
             output_dir / "adk_convergence_trace.json",
             json.dumps({
@@ -630,6 +651,10 @@ class ExecutionPipeline:
                 reality.model_dump_json(indent=2),
             )
             report = apply_reality_check_override(report, reality)
+            if requirements.completion_contract is not None:
+                report = settle_consistent_verification(
+                    requirements.completion_contract, report
+                )
             self._write(
                 output_dir / f"verification_r{round_number}.json",
                 report.model_dump_json(indent=2),

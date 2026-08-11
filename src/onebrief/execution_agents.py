@@ -269,6 +269,50 @@ class DeveloperAgent:
             else:
                 prepared["source_role"] = "read_only_context"
             developer_sources.append(prepared)
+        exact_edit_anchors: list[dict[str, object]] = []
+        if verification_feedback and previous_change_set is not None:
+            feedback_terms = {
+                term.casefold()
+                for term in re.findall(r"[A-Za-z가-힣]{4,}", verification_feedback)
+            }
+            language_failure = bool(
+                re.search(
+                    r"cjk|language|locale|translation|한글|한국어|영어|번역|언어",
+                    verification_feedback,
+                    re.IGNORECASE,
+                )
+            )
+            for change in getattr(previous_change_set, "changes", []):
+                content = str(getattr(change, "content", ""))
+                lines = content.splitlines()
+                selected: list[int] = []
+                for index, line in enumerate(lines):
+                    folded = line.casefold()
+                    if any(term in folded for term in feedback_terms) or (
+                        language_failure and re.search(r"[가-힣一-龥ぁ-んァ-ン]", line)
+                    ):
+                        selected.append(index)
+                anchors = []
+                used: set[tuple[int, int]] = set()
+                for index in selected:
+                    start = max(0, index - 1)
+                    end = min(len(lines), index + 2)
+                    span = (start, end)
+                    if span in used:
+                        continue
+                    used.add(span)
+                    anchors.append({
+                        "start_line": start + 1,
+                        "end_line": end,
+                        "text": "\n".join(lines[start:end]),
+                    })
+                    if len(anchors) >= 24:
+                        break
+                if anchors:
+                    exact_edit_anchors.append({
+                        "path": str(getattr(change, "path", "")),
+                        "anchors": anchors,
+                    })
         contents = _json({
             "work_contract": contract,
             "analysis_package": analysis.model_dump(mode="json"),
@@ -277,6 +321,7 @@ class DeveloperAgent:
                 previous_change_set.model_dump(mode="json") if previous_change_set else None
             ),
             "verification_feedback": verification_feedback,
+            "exact_edit_anchors": exact_edit_anchors,
         })
         base_instruction = (
             "You are OneBrief's software maker. Return the smallest complete source changes that "

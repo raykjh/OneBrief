@@ -1,4 +1,8 @@
-from onebrief.completion_ledger import CompletionStatus, build_completion_ledger
+from onebrief.completion_ledger import (
+    CompletionStatus,
+    build_completion_ledger,
+    settle_consistent_verification,
+)
 from onebrief.execution_schemas import CriterionCheck, VerificationReport, Verdict
 from onebrief.schemas import CompletionContract, EvaluationMode, QualityCriterion
 
@@ -77,3 +81,53 @@ def test_model_pass_cannot_complete_an_unmatched_required_criterion() -> None:
     assert ledger.complete is False
     assert ledger.required_passed == 0
     assert all(item.status == CompletionStatus.PENDING for item in ledger.criteria)
+
+
+def test_all_passing_checks_settle_a_contradictory_revise() -> None:
+    report = VerificationReport(
+        verdict=Verdict.REVISE,
+        criterion_checks=[
+            CriterionCheck(
+                criterion_id="Q01", criterion="Startup", passed=True,
+                evidence="HTTP health check passed.",
+            ),
+            CriterionCheck(
+                criterion_id="Q02", criterion="Workflow", passed=True,
+                evidence="The complete workflow passed.",
+            ),
+        ],
+        blocking_issues=["Revise wording anyway."],
+        revision_instructions=["Revise wording anyway."],
+        missing_information=[],
+    )
+
+    settled = settle_consistent_verification(contract(), report)
+
+    assert settled.verdict == Verdict.PASS
+    assert settled.blocking_issues == []
+    assert settled.revision_instructions == []
+
+
+def test_failed_system_check_prevents_settlement() -> None:
+    report = VerificationReport(
+        verdict=Verdict.REVISE,
+        criterion_checks=[
+            CriterionCheck(
+                criterion_id="Q01", criterion="Startup", passed=True,
+                evidence="Build passed.",
+            ),
+            CriterionCheck(
+                criterion_id="Q02", criterion="Workflow", passed=True,
+                evidence="Code review passed.",
+            ),
+            CriterionCheck(
+                criterion="Runtime interaction", passed=False,
+                evidence="No HTTP evidence exists.",
+            ),
+        ],
+        blocking_issues=["No HTTP evidence exists."],
+        revision_instructions=["Run the application."],
+        missing_information=[],
+    )
+
+    assert settle_consistent_verification(contract(), report).verdict == Verdict.REVISE
