@@ -237,11 +237,17 @@ def _extract_verified(archive: Path, destination: Path, manifest: ProjectSnapsho
             target = (destination / Path(*pure.parts)).resolve()
             if not target.is_relative_to(destination):
                 raise RuntimeError(f"project snapshot path escaped its destination: {recorded.path}")
-            payload = bundle.read(info)
-            if hashlib.sha256(payload).hexdigest() != recorded.sha256:
-                raise RuntimeError(f"project snapshot file hash changed: {recorded.path}")
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(payload)
+            digest = hashlib.sha256()
+            written = 0
+            with bundle.open(info, "r") as source, target.open("xb") as output:
+                while chunk := source.read(1024 * 1024):
+                    digest.update(chunk)
+                    output.write(chunk)
+                    written += len(chunk)
+            if written != recorded.size_bytes or digest.hexdigest() != recorded.sha256:
+                target.unlink(missing_ok=True)
+                raise RuntimeError(f"project snapshot file hash changed: {recorded.path}")
 
 
 def restore_project_snapshot(job_dir: Path, project_id: str) -> Path | None:

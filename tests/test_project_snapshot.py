@@ -151,6 +151,24 @@ def test_snapshot_tampering_is_rejected_before_restore(tmp_path: Path, monkeypat
         restore_project_snapshot(tmp_path / "job", "snapshot-python")
 
 
+def test_snapshot_restore_streams_entries_without_whole_file_reads(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _approved_python_project(tmp_path, monkeypatch)
+    inputs = tmp_path / "job" / "inputs"
+    create_project_snapshot("snapshot-python", inputs)
+
+    def reject_whole_entry_read(*_args, **_kwargs):
+        raise AssertionError("snapshot restore must stream zip entries")
+
+    monkeypatch.setattr(zipfile.ZipFile, "read", reject_whole_entry_read)
+
+    restored = restore_project_snapshot(tmp_path / "job", "snapshot-python")
+
+    assert restored is not None
+    assert (restored / "src" / "sample" / "__init__.py").is_file()
+
+
 def test_snapshot_manifest_is_a_standalone_immutable_job_input(tmp_path: Path, monkeypatch) -> None:
     _approved_python_project(tmp_path, monkeypatch)
     inputs = tmp_path / "job" / "inputs"

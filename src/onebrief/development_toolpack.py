@@ -258,6 +258,21 @@ def _default_runner(
         }
     }
     environment.update({"CI": "1", "NO_COLOR": "1"})
+    # Existing web projects can have large dependency graphs. Keep npm's
+    # network concurrency and V8 heap bounded so the worker fails as a normal
+    # command with evidence instead of being killed by the container OOM
+    # handler. Cloud workers receive enough headroom for the bounded heap.
+    environment.update({
+        "NODE_OPTIONS": "--max-old-space-size=2560",
+        "NPM_CONFIG_MAXSOCKETS": "4",
+        "NPM_CONFIG_AUDIT": "false",
+        "NPM_CONFIG_FUND": "false",
+        "NPM_CONFIG_UPDATE_NOTIFIER": "false",
+    })
+    print(
+        f"ONEBRIEF_COMMAND_START id={command_id} timeout={timeout_seconds}s",
+        flush=True,
+    )
     completed = subprocess.run(
         argv, cwd=cwd, env=environment, capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=timeout_seconds,
@@ -291,6 +306,11 @@ def _default_runner(
         exit_code=completed.returncode,
         duration_seconds=round(time.monotonic() - started, 3),
         output_tail=output[-20_000:],
+    )
+    print(
+        f"ONEBRIEF_COMMAND_END id={command_id} exit={completed.returncode} "
+        f"duration={result.duration_seconds}s",
+        flush=True,
     )
     if result.exit_code != 0:
         detail = result.output_tail[-4_000:].strip()

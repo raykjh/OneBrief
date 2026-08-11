@@ -4,7 +4,9 @@ param(
     [string]$Bucket = "onebrief-agent-20260805-jobs",
     [string]$Repository = "onebrief",
     [string]$JobName = "onebrief-worker",
-    [string]$ImageTag = "cloud-v2"
+    [string]$ImageTag = "cloud-v2",
+    [string]$Cpu = "2",
+    [string]$Memory = "4Gi"
 )
 
 $ErrorActionPreference = "Stop"
@@ -83,8 +85,8 @@ gcloud.cmd run jobs deploy $JobName `
     --parallelism=1 `
     --max-retries=0 `
     --task-timeout=3600s `
-    --cpu=1 `
-    --memory=1Gi `
+    --cpu=$Cpu `
+    --memory=$Memory `
     --set-env-vars="GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_PROJECT=$ProjectId,GOOGLE_CLOUD_LOCATION=global" `
     --quiet
 if ($LASTEXITCODE -ne 0) { throw "Cloud Run Job deployment failed" }

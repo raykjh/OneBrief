@@ -29,6 +29,25 @@ def test_default_runner_reports_process_exit_code(tmp_path: Path) -> None:
         )
 
 
+def test_default_runner_bounds_node_and_npm_resources(tmp_path: Path) -> None:
+    result = _default_runner(
+        "environment_fixture",
+        [
+            sys.executable,
+            "-c",
+            (
+                "import os; print(os.environ['NODE_OPTIONS']); "
+                "print(os.environ['NPM_CONFIG_MAXSOCKETS'])"
+            ),
+        ],
+        tmp_path,
+        30,
+    )
+
+    assert "--max-old-space-size=2560" in result.output_tail
+    assert result.output_tail.rstrip().endswith("4")
+
+
 def test_unity_verification_signals_prioritize_compiler_errors() -> None:
     log = "\n".join([
         "[ScriptCompilation] Requested script compilation because Assembly Definition File changed",
