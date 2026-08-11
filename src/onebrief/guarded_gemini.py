@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from math import ceil
 from pathlib import Path
 from typing import Any, TypeVar
@@ -27,6 +28,25 @@ class BudgetedGeminiClient:
             project=os.getenv("GOOGLE_CLOUD_PROJECT", "onebrief-agent-20260805"),
             location=os.getenv("GOOGLE_CLOUD_LOCATION", "global"),
         )
+
+    @staticmethod
+    def _transient_provider_error(exc: Exception) -> bool:
+        text = f"{type(exc).__name__}: {exc}".casefold()
+        return any(marker in text for marker in (
+            "429", "resource_exhausted", "resource exhausted",
+            "503", "service_unavailable", "temporarily unavailable",
+        ))
+
+    def _invoke_with_transient_retry(self, operation):
+        """Retry only capacity failures under the existing hard cost reservation."""
+        delays = (5, 15, 30)
+        for attempt in range(len(delays) + 1):
+            try:
+                return operation()
+            except Exception as exc:
+                if attempt == len(delays) or not self._transient_provider_error(exc):
+                    raise
+                time.sleep(delays[attempt])
 
     def _generate(
         self,
@@ -78,7 +98,7 @@ class BudgetedGeminiClient:
             output_token_cap=max_output_tokens,
         )
         try:
-            response = self.client.models.generate_content(
+            response = self._invoke_with_transient_retry(lambda: self.client.models.generate_content(
                 model=model,
                 contents=contents,
                 config=types.GenerateContentConfig(
@@ -89,7 +109,7 @@ class BudgetedGeminiClient:
                     response_schema=provider_schema,
                     thinking_config=thinking,
                 ),
-            )
+            ))
         except Exception as exc:
             self.store.release_call(reservation.call_id, f"provider call failed: {type(exc).__name__}")
             raise
@@ -205,11 +225,11 @@ class BudgetedGeminiClient:
             output_token_cap=max_output_tokens,
         )
         try:
-            response = self.client.models.generate_content(
+            response = self._invoke_with_transient_retry(lambda: self.client.models.generate_content(
                 model=model,
                 contents=contents,
                 config=generation,
-            )
+            ))
         except Exception as exc:
             self.store.release_call(
                 reservation.call_id, f"provider call failed: {type(exc).__name__}"
