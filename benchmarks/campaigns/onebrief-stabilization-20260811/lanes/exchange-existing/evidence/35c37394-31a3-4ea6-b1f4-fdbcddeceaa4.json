@@ -1,0 +1,36 @@
+{
+  "actual_cost_usd": 0.340244,
+  "baseline_commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+  "campaign_id": "onebrief-stabilization-20260811",
+  "case_sha256": "19c51442398c1fedebad18b02c8ca18be0935218fbd3fe3a78e1e8bb92e51c7c",
+  "common_fix_candidates": [],
+  "denied_calls": 0,
+  "elapsed_seconds": 1408.323,
+  "evidence_id": "35c37394-31a3-4ea6-b1f4-fdbcddeceaa4",
+  "failures": [
+    {
+      "automatically_recovered": false,
+      "error_class": "failed",
+      "fingerprint": "70c2ec515c939930b64ab93e8baf167017b6c57d5953e42cbdac1e933485c05a",
+      "stage": "failed",
+      "summary": "ValueError: exact search text must occur once in approved source: web/app/page.tsx"
+    }
+  ],
+  "job_uri": "gs://onebrief-agent-20260805-jobs/jobs/48218835-dfac-4799-a67e-923aeb7670fc",
+  "lane_id": "exchange-existing",
+  "model_calls": 5,
+  "observed_source_commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+  "project_specific_findings": [],
+  "recorded_at": "2026-08-11T06:54:47.769346+00:00",
+  "recovery_attempts": 0,
+  "recovery_successes": 0,
+  "repeated_user_requests": 0,
+  "result_manifest_sha256": "768bb6867c5f0c37610404d59df231ed865b6e1112ffa9d783817042e7eb1171",
+  "safe_apply_outcome": "not_applicable",
+  "schema_version": "onebrief-parallel-lane-evidence-v1",
+  "status": "failed",
+  "tracked_source_mutation_detected": false,
+  "user_approvals": 0,
+  "user_questions": 0,
+  "verified_complete": false
+}

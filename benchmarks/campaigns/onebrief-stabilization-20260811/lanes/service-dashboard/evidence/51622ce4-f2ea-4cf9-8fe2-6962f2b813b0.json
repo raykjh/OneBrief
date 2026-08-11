@@ -1,0 +1,36 @@
+{
+  "actual_cost_usd": 0.759174,
+  "baseline_commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+  "campaign_id": "onebrief-stabilization-20260811",
+  "case_sha256": "fba0a230317c4060a9b2c907d34e37094b37f6b90acf7a5ad21a380bbe6de05f",
+  "common_fix_candidates": [],
+  "denied_calls": 1,
+  "elapsed_seconds": 1145.685,
+  "evidence_id": "51622ce4-f2ea-4cf9-8fe2-6962f2b813b0",
+  "failures": [
+    {
+      "automatically_recovered": false,
+      "error_class": "needs_budget",
+      "fingerprint": "a16ab1763bd80e622ac97f8f243478a8e46c50e8c0ccd4048e2277ffa6479f43",
+      "stage": "budget_gate",
+      "summary": "call blocked before provider invocation: needs $0.137821, remaining $0.051226"
+    }
+  ],
+  "job_uri": "gs://onebrief-agent-20260805-jobs/jobs/0927dee5-e2d5-4d90-ba84-45014c2407d4",
+  "lane_id": "service-dashboard",
+  "model_calls": 16,
+  "observed_source_commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+  "project_specific_findings": [],
+  "recorded_at": "2026-08-11T06:53:52.751700+00:00",
+  "recovery_attempts": 0,
+  "recovery_successes": 0,
+  "repeated_user_requests": 0,
+  "result_manifest_sha256": "305ec216c45c570d9acb0d48391ed6b383c559d111651f5c791572979f902cad",
+  "safe_apply_outcome": "not_applicable",
+  "schema_version": "onebrief-parallel-lane-evidence-v1",
+  "status": "failed",
+  "tracked_source_mutation_detected": false,
+  "user_approvals": 0,
+  "user_questions": 0,
+  "verified_complete": false
+}

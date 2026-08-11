@@ -1,0 +1,22 @@
+{
+  "allows_common_code_changes": false,
+  "allows_safe_apply": false,
+  "baseline": {
+    "commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+    "frozen_at": "2026-08-11T06:29:14.747516+00:00",
+    "image_digest": "sha256:87c307cb079b52cadb754778d1a25457f48b65fa548a92903f162b5b088f8f6b",
+    "source_ref": "onebrief-stabilization-20260811",
+    "tree_sha": "2604d938c80a5b6c1db320d8d3cf236124a1a241"
+  },
+  "campaign_id": "onebrief-stabilization-20260811",
+  "case_path": "benchmark_cases/small_incident_playbook.json",
+  "case_sha256": "d276fb3eda32d70f919b216563c4282df1a9c4bc8f7e4220ba7446f203014b92",
+  "contract_sha256": "750d811be4bbb99b5453612cb6825da1136c3c9752a2f66619aa526ed0d1463d",
+  "goal_sha256": "14fb5a98a9abb8098dd1e1d97c01655381123671194b9f7f7b23db799c806c74",
+  "kind": "structured_artifact",
+  "lane_id": "incident-playbook",
+  "max_budget_usd": 1.5,
+  "output_root": "runs/incident-playbook",
+  "project_id": null,
+  "schema_version": "onebrief-parallel-lane-spec-v1"
+}

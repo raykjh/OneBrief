@@ -1,0 +1,36 @@
+{
+  "actual_cost_usd": 0.282104,
+  "baseline_commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+  "campaign_id": "onebrief-stabilization-20260811",
+  "case_sha256": "6a22b7ae6a9771e90da187b4eda57f2f0ae45934427279fb1dceccb61d036687",
+  "common_fix_candidates": [],
+  "denied_calls": 0,
+  "elapsed_seconds": 1410.338,
+  "evidence_id": "78d56d30-2e63-447f-93ff-7eb90e195aec",
+  "failures": [
+    {
+      "automatically_recovered": false,
+      "error_class": "partial",
+      "fingerprint": "741f1c6381d322a8c45647dc26bc1ef1e9f74d21768cbcdb48ce904e8bfa7928",
+      "stage": "finished",
+      "summary": "A required independent observation capability was unavailable; the result was not accepted as complete."
+    }
+  ],
+  "job_uri": "gs://onebrief-agent-20260805-jobs/jobs/c20f6768-0959-417a-bee6-bc8d643dc2c1",
+  "lane_id": "public-data-greenfield",
+  "model_calls": 8,
+  "observed_source_commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+  "project_specific_findings": [],
+  "recorded_at": "2026-08-11T06:54:22.741944+00:00",
+  "recovery_attempts": 0,
+  "recovery_successes": 0,
+  "repeated_user_requests": 0,
+  "result_manifest_sha256": "2fe52a8cd8619ac54e1e7f163b9fac276d7f13f77903784efb46682e873fdb4b",
+  "safe_apply_outcome": "not_applicable",
+  "schema_version": "onebrief-parallel-lane-evidence-v1",
+  "status": "failed",
+  "tracked_source_mutation_detected": false,
+  "user_approvals": 0,
+  "user_questions": 1,
+  "verified_complete": false
+}

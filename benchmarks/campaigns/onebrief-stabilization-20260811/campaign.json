@@ -1,0 +1,153 @@
+{
+  "baseline": {
+    "commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+    "frozen_at": "2026-08-11T06:29:14.747516+00:00",
+    "image_digest": "sha256:87c307cb079b52cadb754778d1a25457f48b65fa548a92903f162b5b088f8f6b",
+    "source_ref": "onebrief-stabilization-20260811",
+    "tree_sha": "2604d938c80a5b6c1db320d8d3cf236124a1a241"
+  },
+  "campaign_id": "onebrief-stabilization-20260811",
+  "created_at": "2026-08-11T06:29:14.749517+00:00",
+  "integration_lane": {
+    "allows_common_code_changes": true,
+    "allows_safe_apply": true,
+    "baseline": {
+      "commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+      "frozen_at": "2026-08-11T06:29:14.747516+00:00",
+      "image_digest": "sha256:87c307cb079b52cadb754778d1a25457f48b65fa548a92903f162b5b088f8f6b",
+      "source_ref": "onebrief-stabilization-20260811",
+      "tree_sha": "2604d938c80a5b6c1db320d8d3cf236124a1a241"
+    },
+    "campaign_id": "onebrief-stabilization-20260811",
+    "lane_id": "integration",
+    "required_lane_ids": [
+      "incident-playbook",
+      "operations-workbook",
+      "service-dashboard",
+      "public-data-greenfield",
+      "exchange-existing"
+    ],
+    "rules": [
+      "Test lanes are evidence-only and must not modify shared source code.",
+      "Only failures observed in at least two lanes are automatically eligible for a common fix.",
+      "Project-specific behavior belongs in a ToolPack or project knowledge pack.",
+      "A new baseline requires all three lanes to pass revalidation.",
+      "Safe apply to the same source project is serialized and owned by integration."
+    ],
+    "schema_version": "onebrief-integration-lane-spec-v1"
+  },
+  "lanes": [
+    {
+      "allows_common_code_changes": false,
+      "allows_safe_apply": false,
+      "baseline": {
+        "commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+        "frozen_at": "2026-08-11T06:29:14.747516+00:00",
+        "image_digest": "sha256:87c307cb079b52cadb754778d1a25457f48b65fa548a92903f162b5b088f8f6b",
+        "source_ref": "onebrief-stabilization-20260811",
+        "tree_sha": "2604d938c80a5b6c1db320d8d3cf236124a1a241"
+      },
+      "campaign_id": "onebrief-stabilization-20260811",
+      "case_path": "benchmark_cases/small_incident_playbook.json",
+      "case_sha256": "d276fb3eda32d70f919b216563c4282df1a9c4bc8f7e4220ba7446f203014b92",
+      "contract_sha256": "750d811be4bbb99b5453612cb6825da1136c3c9752a2f66619aa526ed0d1463d",
+      "goal_sha256": "14fb5a98a9abb8098dd1e1d97c01655381123671194b9f7f7b23db799c806c74",
+      "kind": "structured_artifact",
+      "lane_id": "incident-playbook",
+      "max_budget_usd": 1.5,
+      "output_root": "runs/incident-playbook",
+      "project_id": null,
+      "schema_version": "onebrief-parallel-lane-spec-v1"
+    },
+    {
+      "allows_common_code_changes": false,
+      "allows_safe_apply": false,
+      "baseline": {
+        "commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+        "frozen_at": "2026-08-11T06:29:14.747516+00:00",
+        "image_digest": "sha256:87c307cb079b52cadb754778d1a25457f48b65fa548a92903f162b5b088f8f6b",
+        "source_ref": "onebrief-stabilization-20260811",
+        "tree_sha": "2604d938c80a5b6c1db320d8d3cf236124a1a241"
+      },
+      "campaign_id": "onebrief-stabilization-20260811",
+      "case_path": "benchmark_cases/structured_operations_workbook.json",
+      "case_sha256": "d9d8af27fd66911c15411644c0d4e2889aadb3a6eeddd835f52c75f6715fb6af",
+      "contract_sha256": "e5f7f045b6879ef9dea12d8b301e2cd1c330fb5a2d9dd16d10242333d2a0ec28",
+      "goal_sha256": "7093f9e7df0897210765045aeac6be997cfe2a7221682f0ba0cb6e529702ea85",
+      "kind": "structured_artifact",
+      "lane_id": "operations-workbook",
+      "max_budget_usd": 2.5,
+      "output_root": "runs/operations-workbook",
+      "project_id": null,
+      "schema_version": "onebrief-parallel-lane-spec-v1"
+    },
+    {
+      "allows_common_code_changes": false,
+      "allows_safe_apply": false,
+      "baseline": {
+        "commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+        "frozen_at": "2026-08-11T06:29:14.747516+00:00",
+        "image_digest": "sha256:87c307cb079b52cadb754778d1a25457f48b65fa548a92903f162b5b088f8f6b",
+        "source_ref": "onebrief-stabilization-20260811",
+        "tree_sha": "2604d938c80a5b6c1db320d8d3cf236124a1a241"
+      },
+      "campaign_id": "onebrief-stabilization-20260811",
+      "case_path": "benchmark_cases/small_service_dashboard.json",
+      "case_sha256": "fba0a230317c4060a9b2c907d34e37094b37f6b90acf7a5ad21a380bbe6de05f",
+      "contract_sha256": "a51c47977704f850cfa6c2cf2ef9a6769b5381085a89cc48467f1f7f89b8255b",
+      "goal_sha256": "597e2b471e178705de088e79292f07df39ea2de4ffa773b4fe2d08298cc01403",
+      "kind": "greenfield_software",
+      "lane_id": "service-dashboard",
+      "max_budget_usd": 3.0,
+      "output_root": "runs/service-dashboard",
+      "project_id": null,
+      "schema_version": "onebrief-parallel-lane-spec-v1"
+    },
+    {
+      "allows_common_code_changes": false,
+      "allows_safe_apply": false,
+      "baseline": {
+        "commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+        "frozen_at": "2026-08-11T06:29:14.747516+00:00",
+        "image_digest": "sha256:87c307cb079b52cadb754778d1a25457f48b65fa548a92903f162b5b088f8f6b",
+        "source_ref": "onebrief-stabilization-20260811",
+        "tree_sha": "2604d938c80a5b6c1db320d8d3cf236124a1a241"
+      },
+      "campaign_id": "onebrief-stabilization-20260811",
+      "case_path": "benchmark_cases/public_data_briefing_app.json",
+      "case_sha256": "6a22b7ae6a9771e90da187b4eda57f2f0ae45934427279fb1dceccb61d036687",
+      "contract_sha256": "f8d123eb97197123a1f4249153d8fa4881b486817d8aaa528089f2e2d43306c3",
+      "goal_sha256": "45ba4cdc80618cf0681a5940791e58e84371bfb41bcd1b2e8e4aaa8c661ffd0a",
+      "kind": "greenfield_software",
+      "lane_id": "public-data-greenfield",
+      "max_budget_usd": 4.5,
+      "output_root": "runs/public-data-greenfield",
+      "project_id": null,
+      "schema_version": "onebrief-parallel-lane-spec-v1"
+    },
+    {
+      "allows_common_code_changes": false,
+      "allows_safe_apply": false,
+      "baseline": {
+        "commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+        "frozen_at": "2026-08-11T06:29:14.747516+00:00",
+        "image_digest": "sha256:87c307cb079b52cadb754778d1a25457f48b65fa548a92903f162b5b088f8f6b",
+        "source_ref": "onebrief-stabilization-20260811",
+        "tree_sha": "2604d938c80a5b6c1db320d8d3cf236124a1a241"
+      },
+      "campaign_id": "onebrief-stabilization-20260811",
+      "case_path": "benchmark_cases/exchange_release_candidate.json",
+      "case_sha256": "19c51442398c1fedebad18b02c8ca18be0935218fbd3fe3a78e1e8bb92e51c7c",
+      "contract_sha256": "8eb4c1a9eec96e7463f2b62e48432aa3d5e13b23951fbc56cc4cb1d684306762",
+      "goal_sha256": "fcf499c675060d8aa4db42d95dc170cb565d65f8ea8221e57f04d73b44c845d4",
+      "kind": "existing_software",
+      "lane_id": "exchange-existing",
+      "max_budget_usd": 6.5,
+      "output_root": "runs/exchange-existing",
+      "project_id": "exchange",
+      "schema_version": "onebrief-parallel-lane-spec-v1"
+    }
+  ],
+  "schema_version": "onebrief-parallel-campaign-v1",
+  "total_budget_usd": 18.0
+}

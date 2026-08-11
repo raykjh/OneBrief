@@ -317,7 +317,7 @@ class ParallelCampaignStore:
                 "Test lanes are evidence-only and must not modify shared source code.",
                 "Only failures observed in at least two lanes are automatically eligible for a common fix.",
                 "Project-specific behavior belongs in a ToolPack or project knowledge pack.",
-                "A new baseline requires all three lanes to pass revalidation.",
+                "A new baseline requires every campaign lane to pass revalidation.",
                 "Safe apply to the same source project is serialized and owned by integration.",
             ],
         )
