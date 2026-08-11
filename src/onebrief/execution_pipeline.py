@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TypeVar
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from onebrief.budget_guard import BudgetExceeded, BudgetStore
 from onebrief.adk_convergence import (
@@ -597,11 +597,53 @@ class ExecutionPipeline:
                 and bool(_ctx.session.state.get(REVERIFY_EXISTING_STATE_KEY))
                 and previous_change_set is not None
             )
-            delta = (
-                previous_change_set
-                if reverify_existing
-                else developer.promote_candidate(raw, prepared_sources, previous_change_set)
-            )
+            try:
+                delta = (
+                    previous_change_set
+                    if reverify_existing
+                    else developer.promote_candidate(raw, prepared_sources, previous_change_set)
+                )
+            except (ValidationError, ValueError) as exc:
+                if previous_change_set is None:
+                    raise
+                decision = self.recovery_policy.decide(
+                    exc,
+                    context="development_candidate_promotion",
+                    attempt_number=round_number + 1,
+                )
+                self._append_recovery(decision)
+                self._persist_recoveries(output_dir)
+                if (
+                    decision.action != RecoveryAction.RETURN_TO_AGENT
+                    or not decision.retry_allowed
+                ):
+                    raise
+                feedback = " ".join(str(exc).split())[:12_000]
+                self._write(
+                    output_dir / f"development_candidate_promotion_failure_r{round_number}.txt",
+                    feedback,
+                )
+                report = VerificationReport(
+                    verdict=Verdict.REVISE,
+                    criterion_checks=[{
+                        "criterion": "Safe structural edit promotion",
+                        "passed": False,
+                        "evidence": feedback,
+                    }],
+                    blocking_issues=[feedback],
+                    revision_instructions=[
+                        "Keep previous_artifact unchanged and copy a small exact search or both anchors verbatim from it."
+                    ],
+                    missing_information=[],
+                )
+                return {
+                    MAKER_STATE_KEY: previous_change_set.model_dump(mode="json"),
+                    VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
+                    EXACT_EDIT_ANCHORS_STATE_KEY: developer.exact_edit_anchors(
+                        previous_change_set, feedback
+                    ),
+                    SKIP_VERIFIER_STATE_KEY: True,
+                }
             self._write(
                 output_dir / f"code_change_set_delta_r{round_number}.json",
                 delta.model_dump_json(indent=2),
@@ -692,6 +734,9 @@ class ExecutionPipeline:
                 return {
                     MAKER_STATE_KEY: previous_change_set.model_dump(mode="json"),
                     VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
+                    EXACT_EDIT_ANCHORS_STATE_KEY: developer.exact_edit_anchors(
+                        previous_change_set, feedback
+                    ),
                     SKIP_VERIFIER_STATE_KEY: True,
                 }
             evidence = self._development_evidence(output_dir)

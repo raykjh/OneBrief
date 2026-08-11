@@ -145,6 +145,18 @@ class RecoveryPolicy:
             responsible = "maker"
             limit = 2
             rationale = "The maker may correct its artifact within two bounded retries; the same deterministic checks must pass."
+        elif context == "development_candidate_promotion" and (
+            "edit anchors could not rediscover" in message
+            or "duplicate full-file proposals" in message
+        ):
+            error_class = ErrorClass.ARTIFACT_VALIDATION
+            action = RecoveryAction.RETURN_TO_AGENT
+            responsible = "maker"
+            limit = 2
+            rationale = (
+                "The proposed delta did not bind to the preserved candidate; the same maker may retry "
+                "with verbatim bounded anchors without changing the accepted artifact."
+            )
         elif context == "developer_structured_output" and any(
             marker in message for marker in structured_markers
         ):

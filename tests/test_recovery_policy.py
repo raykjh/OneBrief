@@ -96,6 +96,21 @@ def test_patch_hygiene_failure_returns_to_maker_once() -> None:
     assert decision.retry_allowed is True
 
 
+def test_unmatched_structural_edit_returns_to_maker_without_discarding_candidate() -> None:
+    decision = RecoveryPolicy().decide(
+        ValueError(
+            "edit anchors could not rediscover one approved source range: web/app/page.tsx"
+        ),
+        context="development_candidate_promotion",
+        attempt_number=2,
+    )
+
+    assert decision.error_class == ErrorClass.ARTIFACT_VALIDATION
+    assert decision.action == RecoveryAction.RETURN_TO_AGENT
+    assert decision.responsible_party == "maker"
+    assert decision.retry_allowed is True
+
+
 def test_missing_unity_runtime_screenshot_returns_to_maker() -> None:
     decision = RecoveryPolicy().decide(
         RuntimeError("Unity visual scenario locale_ko screenshot is unavailable"),

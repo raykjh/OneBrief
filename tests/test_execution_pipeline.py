@@ -487,6 +487,110 @@ def test_adk_software_failure_keeps_most_progressed_candidate(
     )
 
 
+def test_adk_software_continuation_returns_bad_edit_anchor_to_same_maker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    previous = ProjectCodeChangeSet(
+        summary="Prior candidate",
+        changes=[{
+            "path": "web/app/page.tsx", "base_sha256": "a" * 64,
+            "content": "export const label = 'almost-ready';\n",
+            "reason": "Preserve prior progress.",
+        }],
+    )
+    bad = CompactProposedProjectCodeChangeSet.model_validate({
+        "summary": "Bad anchor",
+        "changes": [{
+            "path": "web/app/page.tsx", "base_sha256": "a" * 64,
+            "search": "text that is not present", "replace": "ready",
+            "reason": "First repair attempt.",
+        }],
+    })
+    good = CompactProposedProjectCodeChangeSet.model_validate({
+        "summary": "Exact repair",
+        "changes": [{
+            "path": "web/app/page.tsx", "base_sha256": "a" * 64,
+            "search": "'almost-ready'", "replace": "'ready'",
+            "reason": "Use exact prior text.",
+        }],
+    })
+
+    class AnchorRetryGateway(BudgetedGeminiClient):
+        def __init__(self) -> None:
+            self.outputs = [
+                bad.model_dump(mode="json"), good.model_dump(mode="json"),
+                _verification("PASS").model_dump(mode="json"),
+            ]
+
+        def generate_adk_response(self, **_kwargs: object) -> types.GenerateContentResponse:
+            payload = self.outputs.pop(0)
+            return types.GenerateContentResponse(candidates=[types.Candidate(
+                content=types.Content(
+                    role="model", parts=[types.Part(text=json.dumps(payload))]
+                ),
+                finish_reason=types.FinishReason.STOP,
+            )])
+
+    def fake_apply(
+        _self: ExecutionPipeline, _intake: IntakeRequest, _pack: object,
+        supplied: ProjectCodeChangeSet, _development_dir: Path,
+        _contract: dict[str, object],
+    ) -> DevelopmentRun:
+        assert supplied.changes[0].content == "export const label = 'ready';\n"
+        return DevelopmentRun(
+            status="verified", repository_name="project", base_head_sha="a" * 40,
+            summary=supplied.summary, changed_paths=["web/app/page.tsx"],
+            commands=[], patch_path="development/changes.patch",
+            safety_boundary=["isolated clone only"],
+        )
+
+    monkeypatch.setattr(ExecutionPipeline, "_apply_development_change_set", fake_apply)
+    monkeypatch.setattr(
+        ExecutionPipeline,
+        "_bind_project_change_set",
+        lambda _self, _intake, _pack, change_set, _output: change_set,
+    )
+    intake = IntakeRequest(
+        goal="Finish the existing project.", output_target=OutputTarget.EXISTING_PROJECT,
+        toolpack_ids=[ToolPackId.PROJECT_DEVELOPMENT], existing_project_id="project",
+    )
+    output_dir = tmp_path / "anchor-retry"
+    output_dir.mkdir()
+    (output_dir / "code_change_set.json").write_text(
+        previous.model_dump_json(indent=2), encoding="utf-8"
+    )
+    (output_dir / "development_verification_failure.txt").write_text(
+        "One exact source edit remains.", encoding="utf-8"
+    )
+
+    pipeline = ExecutionPipeline(tmp_path / "run", gateway=AnchorRetryGateway())
+    monkeypatch.setattr(
+        pipeline,
+        "_development_components",
+        lambda _intake, _output=None: (
+            ProjectCodeChangeSet,
+            object(),
+            DeveloperAgent(
+                pipeline.gateway, change_set_schema=ProjectCodeChangeSet,
+                source_prefix="project-source/", path_approver=lambda path: path,
+            ),
+        ),
+    )
+    _, report, _ = pipeline._run_adk_development_convergence(
+        intake=intake, requirements=_requirements(), sources=[_source()],
+        source_payload=[{
+            "name": "project-source/web/app/page.tsx", "priority": "mandatory",
+            "requirement_keys": ["repair"], "content": previous.changes[0].content,
+            "sha256": "a" * 64,
+        }],
+        contract={"goal": intake.goal, "acceptance_criteria": ["Tests pass."]},
+        analysis=_analysis(), output_dir=output_dir,
+    )
+
+    assert report.verdict == Verdict.PASS
+    assert (output_dir / "development_candidate_promotion_failure_r0.txt").is_file()
+
+
 def test_budget_block_writes_resumable_checkpoint(tmp_path: Path) -> None:
     intake = IntakeRequest(goal="Create a guide.")
     source = _source()
