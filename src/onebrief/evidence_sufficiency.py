@@ -67,7 +67,9 @@ _FOLLOWUP_HEADING = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 _SCOPE_LEAKAGE = re.compile(
-    r"견적\s*요청용|품목제조신고|즉시\s*(?:활용|생산|판매|출시)|"
+    r"견적\s*요청용|"
+    r"품목제조신고(?:를|의)?\s*(?:신청|진행|준비|제출|절차|단계|착수)|"
+    r"즉시\s*(?:활용|생산|판매|출시)|"
     r"(?:production|deployment|sale|launch)[ -]?ready|ready\s+for\s+(?:production|deployment|sale|launch)",
     re.IGNORECASE,
 )
@@ -119,11 +121,18 @@ def _unbounded_negative_segments(markdown: str) -> list[str]:
 
 def _uncited_material_claims(markdown: str) -> list[str]:
     claims: list[str] = []
-    for raw in markdown.splitlines():
+    lines = markdown.splitlines()
+    for index, raw in enumerate(lines):
         line = raw.strip()
+        next_line = lines[index + 1].strip() if index + 1 < len(lines) else ""
+        is_table_header = (
+            "|" in line
+            and bool(re.fullmatch(r"\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?", next_line))
+        )
         if (
             not line
             or line.startswith("#")
+            or is_table_header
             or re.fullmatch(r"[-|: ]+", line)
             or not _MATERIAL_CLAIM.search(line)
             or _URL.search(line)

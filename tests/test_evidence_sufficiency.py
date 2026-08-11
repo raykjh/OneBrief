@@ -176,3 +176,56 @@ def test_grouped_finding_citations_count_as_same_paragraph_evidence() -> None:
     )
 
     assert not any(item.kind.value == "uncited_material_claim" for item in result.issues)
+
+
+def test_markdown_table_header_is_not_treated_as_an_uncited_material_claim() -> None:
+    body = """# 결과
+
+| 성분 구분 | 원료명 | 식약처 공시 기능성 내용 |
+|---|---|---|
+| 주성분 | Alpha | 피로 개선에 도움 [F01] |
+
+| 제품 | 출처 |
+|---|---|
+| Alpha | https://example.com/products/a |
+| Beta | https://example.com/products/b |
+| Gamma | https://example.com/products/c |
+"""
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="후보를 조사해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft(body),
+    )
+
+    assert not any(item.kind.value == "uncited_material_claim" for item in result.issues)
+
+
+def test_scope_gate_allows_filing_classification_but_rejects_filing_action() -> None:
+    allowed = validate_evidence_sufficiency(
+        IntakeRequest(goal="제품 콘셉트까지만 정해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft(
+            "# 콘셉트\n\n제품 분류: 건강기능식품(식약처 품목제조신고 대상) [F01]\n\n"
+            "| 제품 | 출처 |\n|---|---|\n"
+            "| Alpha | https://example.com/products/a |\n"
+            "| Beta | https://example.com/products/b |\n"
+            "| Gamma | https://example.com/products/c |"
+        ),
+    )
+    rejected = validate_evidence_sufficiency(
+        IntakeRequest(goal="제품 콘셉트까지만 정해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft(
+            "# 콘셉트\n\n품목제조신고를 진행합니다. [F01]\n\n"
+            "| 제품 | 출처 |\n|---|---|\n"
+            "| Alpha | https://example.com/products/a |\n"
+            "| Beta | https://example.com/products/b |\n"
+            "| Gamma | https://example.com/products/c |"
+        ),
+    )
+
+    assert not any(item.kind.value == "out_of_scope_followup" for item in allowed.issues)
+    assert any(item.kind.value == "out_of_scope_followup" for item in rejected.issues)
