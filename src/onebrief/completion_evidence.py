@@ -97,7 +97,13 @@ def validate_completion_evidence(
         or bool(_UNITY.search(text))
         or _has_command(commands, "unity_")
     )
-    is_ui = bool(_USER_INTERFACE.search(text))
+    software_targets = {
+        OutputTarget.AUTO,
+        OutputTarget.EXISTING_PROJECT,
+        OutputTarget.WEB_APP,
+        OutputTarget.UNITY_APP,
+    }
+    is_ui = intake.output_target in software_targets and bool(_USER_INTERFACE.search(text))
     is_localization = bool(_LOCALIZATION.search(text))
 
     required: list[CompletionEvidenceKind] = []

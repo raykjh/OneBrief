@@ -8,7 +8,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from onebrief.execution_schemas import CriterionCheck, VerificationReport, Verdict
-from onebrief.schemas import IntakeRequest, RequirementsAnalysis
+from onebrief.schemas import IntakeRequest, OutputTarget, RequirementsAnalysis
 
 
 class RealityCapability(StrEnum):
@@ -117,7 +117,15 @@ def evaluate_reality_check(
         return RealityCheckResult()
     text = _contract_text(intake, requirements)
     commands = _command_ids(development_evidence)
-    is_interactive = bool(_INTERACTIVE.search(text))
+    software_targets = {
+        OutputTarget.AUTO,
+        OutputTarget.EXISTING_PROJECT,
+        OutputTarget.WEB_APP,
+        OutputTarget.UNITY_APP,
+    }
+    is_interactive = (
+        intake.output_target in software_targets and bool(_INTERACTIVE.search(text))
+    )
     needs_semantic_visual = is_interactive and bool(_SEMANTIC_VISUAL.search(text))
     requirements_list = [
         ObservationRequirement(

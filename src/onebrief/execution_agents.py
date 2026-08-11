@@ -364,9 +364,12 @@ class DeveloperAgent:
                 instruction += (
                     " The previous response failed structured-output or repository-path validation. Retry from "
                     "scratch with at most three changed files. Every existing-file path must exactly equal the "
-                    f"repository_path field and must not include {self.source_prefix}. Prefer the smallest existing "
-                    "source files, remove comments and repetition, and keep all "
-                    "replacement content below 55000 characters while preserving a runnable implementation."
+                    f"repository_path field and must not include {self.source_prefix}. For every existing file, "
+                    "use a minimal exact search/replace edit copied verbatim from the approved source; do not return "
+                    "full-file content on this compact retry. Full content is allowed only for a necessary new file "
+                    "smaller than 8000 characters. Prefer the smallest existing source files, remove comments and "
+                    "repetition, and keep the complete JSON response below 12000 characters while preserving a "
+                    "runnable implementation."
                 )
                 if last_contract_error:
                     instruction += " Exact validation failure: " + last_contract_error

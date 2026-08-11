@@ -1,5 +1,6 @@
 from onebrief.deterministic_verification import (
     GroundingIssueKind,
+    append_authoritative_csv_tables,
     apply_deterministic_override,
     validate_draft_grounding,
 )
@@ -116,6 +117,19 @@ def test_missing_csv_row_forces_revise() -> None:
         issue.kind == GroundingIssueKind.CSV_ROW_MISSING and issue.record_id == "A2"
         for issue in result.issues
     )
+
+
+def test_spreadsheet_csv_appendix_is_idempotent_and_preserves_all_rows() -> None:
+    first = append_authoritative_csv_tables(
+        [_csv()], _draft("# Workbook\n\nA verified operational workbook result.")
+    )
+    second = append_authoritative_csv_tables([_csv()], first)
+
+    assert first.body_markdown == second.body_markdown
+    assert first.body_markdown.count("<!-- onebrief-authoritative-csv-appendix -->") == 1
+    result = validate_draft_grounding([_csv()], second)
+    assert result.checked_rows == 2
+    assert result.issues == []
 
 
 def test_unsupported_scoring_conversion_forces_needs_information() -> None:

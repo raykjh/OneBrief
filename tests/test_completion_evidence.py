@@ -101,6 +101,18 @@ def test_web_ui_runtime_smoke_is_enough_when_visual_localization_is_not_promised
     assert result.verdict_override is None
 
 
+def test_spreadsheet_dashboard_does_not_require_browser_runtime() -> None:
+    goal = "운영 현황을 표시하는 대시보드 화면이 포함된 Excel 파일을 만든다."
+    result = validate_completion_evidence(
+        IntakeRequest(goal=goal, output_target=OutputTarget.SPREADSHEET),
+        requirements(goal),
+        evidence("spreadsheet_verification"),
+    )
+
+    assert result.required == [CompletionEvidenceKind.AUTOMATED_TEST]
+    assert result.verdict_override is None
+
+
 def test_missing_user_information_still_outranks_missing_runtime_proof() -> None:
     goal = "Implement a Unity multilingual user interface."
     completion = validate_completion_evidence(

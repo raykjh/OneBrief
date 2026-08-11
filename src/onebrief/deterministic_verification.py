@@ -75,9 +75,60 @@ _LABEL_STOPWORDS = {
     "criteria",
 }
 
+_SOURCE_APPENDIX_MARKER = "<!-- onebrief-authoritative-csv-appendix -->"
+
 
 def _clean(value: str) -> str:
     return _MARKDOWN_DECORATION.sub("", value).strip()
+
+
+def append_authoritative_csv_tables(
+    sources: list[InternalSource], draft: DraftArtifact
+) -> DraftArtifact:
+    """Attach immutable CSV rows to spreadsheet artifacts for export and verification.
+
+    The model may describe a workbook without reproducing its source rows. A real
+    spreadsheet deliverable must retain those rows, so the pipeline appends them
+    deterministically rather than asking the model to copy data token by token.
+    """
+    body = draft.body_markdown.split(_SOURCE_APPENDIX_MARKER, 1)[0].rstrip()
+    sections: list[str] = []
+    for source in sources:
+        if not (
+            source.name.casefold().endswith(".csv")
+            or source.media_type.casefold() == "text/csv"
+        ):
+            continue
+        reader = csv.DictReader(io.StringIO(source.content))
+        fields = list(reader.fieldnames or [])
+        records = list(reader)
+        if not fields or not records:
+            continue
+
+        def cell(value: object) -> str:
+            return str(value or "").replace("|", "\\|").replace("\n", " ").strip()
+
+        lines = [
+            f"### 원자료 · {source.name}",
+            "| " + " | ".join(cell(field) for field in fields) + " |",
+            "| " + " | ".join("---" for _ in fields) + " |",
+        ]
+        lines.extend(
+            "| " + " | ".join(cell(record.get(field)) for field in fields) + " |"
+            for record in records
+        )
+        sections.append("\n".join(lines))
+    if not sections:
+        return draft
+    return draft.model_copy(update={
+        "body_markdown": (
+            body
+            + "\n\n"
+            + _SOURCE_APPENDIX_MARKER
+            + "\n\n## 검증용 원자료\n\n"
+            + "\n\n".join(sections)
+        )
+    })
 
 
 def _markdown_rows(markdown: str) -> list[list[str]]:

@@ -29,6 +29,7 @@ from onebrief.completion_evidence import (
     validate_completion_evidence,
 )
 from onebrief.deterministic_verification import (
+    append_authoritative_csv_tables,
     DeterministicVerification,
     apply_deterministic_override,
     validate_draft_grounding,
@@ -330,6 +331,8 @@ class ExecutionPipeline:
             draft = enforce_temperament_audit(
                 DraftArtifact.model_validate(raw), WRITER_PROFILE
             )
+            if intake.output_target == OutputTarget.SPREADSHEET:
+                draft = append_authoritative_csv_tables(sources, draft)
             self._write(
                 output_dir / f"draft_r{round_number}.json",
                 draft.model_dump_json(indent=2),
@@ -1211,6 +1214,8 @@ class ExecutionPipeline:
                     )
                 else:
                     draft = self.writer.run(contract, analysis, source_payload)
+                    if intake.output_target == OutputTarget.SPREADSHEET:
+                        draft = append_authoritative_csv_tables(sources, draft)
                 self._write(draft_path, draft.model_dump_json(indent=2))
             graph_complete("long_form_draft", "draft_r0.json")
             completed.append("long_form_draft")
@@ -1415,6 +1420,8 @@ class ExecutionPipeline:
                         previous_draft=draft,
                         round_number=revision_round,
                     )
+                    if intake.output_target == OutputTarget.SPREADSHEET:
+                        revised_draft = append_authoritative_csv_tables(sources, revised_draft)
                     self._write(revision_path, revised_draft.model_dump_json(indent=2))
                 draft = revised_draft
                 completed.append(revision_stage)

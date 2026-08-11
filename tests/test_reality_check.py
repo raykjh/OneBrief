@@ -146,3 +146,17 @@ def test_non_visual_backend_change_does_not_require_semantic_observer() -> None:
     assert [item.capability for item in result.requirements] == [
         RealityCapability.AUTOMATED_EXECUTION
     ]
+
+
+def test_spreadsheet_dashboard_is_not_misclassified_as_web_ui() -> None:
+    goal = "Excel 대시보드 화면에 요청 현황과 우선순위를 표시한다."
+    result = evaluate_reality_check(
+        IntakeRequest(goal=goal, output_target=OutputTarget.SPREADSHEET),
+        _requirements(goal),
+        _evidence("spreadsheet_verification"),
+    )
+
+    assert result.verdict_override is None
+    assert [item.capability for item in result.requirements] == [
+        RealityCapability.AUTOMATED_EXECUTION
+    ]
