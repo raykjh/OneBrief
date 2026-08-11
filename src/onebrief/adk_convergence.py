@@ -26,6 +26,7 @@ ROUND_STATE_KEY = "onebrief_convergence_round"
 VERIFIER_CONTEXT_STATE_KEY = "onebrief_verifier_context"
 SKIP_VERIFIER_STATE_KEY = "onebrief_skip_verifier"
 REVERIFY_EXISTING_STATE_KEY = "onebrief_reverify_existing_candidate"
+EXACT_EDIT_ANCHORS_STATE_KEY = "onebrief_exact_edit_anchors"
 
 
 class BudgetedAdkLlm(BaseLlm):
@@ -199,7 +200,11 @@ def build_text_convergence_agent(
         previous = ctx.state.get(MAKER_STATE_KEY)
         verification = ctx.state.get(VERIFICATION_STATE_KEY)
         return maker_instruction + "\n\nCURRENT REVISION CONTEXT:\n" + json.dumps(
-            {"previous_artifact": previous, "verification_feedback": verification},
+            {
+                "previous_artifact": previous,
+                "verification_feedback": verification,
+                "exact_edit_anchors": ctx.state.get(EXACT_EDIT_ANCHORS_STATE_KEY, []),
+            },
             ensure_ascii=False,
         )
 

@@ -14,6 +14,7 @@ from typing_extensions import override
 from onebrief.adk_convergence import (
     MAKER_STATE_KEY,
     REVERIFY_EXISTING_STATE_KEY,
+    EXACT_EDIT_ANCHORS_STATE_KEY,
     VERIFICATION_STATE_KEY,
     AdkConvergenceAgent,
     BudgetedAdkLlm,
@@ -158,6 +159,30 @@ def test_adk_llm_retries_max_token_response_as_compact_increment() -> None:
     assert "under 12000 characters" in retry_text
     assert "narrative artifact" in retry_text
     assert "under 8000 characters" in retry_text
+
+
+def test_contextual_maker_receives_current_exact_edit_anchors() -> None:
+    agent = build_text_convergence_agent(
+        gateway=object(),
+        maker_model="gemini-3.5-flash",
+        verifier_model="gemini-3.5-flash",
+        maker_schema=dict,
+        max_revision_rounds=1,
+        maker_instruction="repair",
+        verifier_instruction="verify",
+    )
+    instruction = agent.maker.instruction
+
+    class Context:
+        state = {
+            MAKER_STATE_KEY: {"changes": []},
+            VERIFICATION_STATE_KEY: {"verdict": "REVISE"},
+            EXACT_EDIT_ANCHORS_STATE_KEY: [{"path": "web/app/page.tsx"}],
+        }
+
+    rendered = instruction(Context())
+    assert "onebrief_exact_edit_anchors" not in rendered
+    assert "web/app/page.tsx" in rendered
 
 
 def test_deterministic_gate_overrules_model_pass_and_forces_original_maker_retry() -> None:

@@ -20,6 +20,7 @@ from onebrief.adk_convergence import (
     SKIP_VERIFIER_STATE_KEY,
     VERIFICATION_STATE_KEY,
     REVERIFY_EXISTING_STATE_KEY,
+    EXACT_EDIT_ANCHORS_STATE_KEY,
     VERIFIER_CONTEXT_STATE_KEY,
     build_text_convergence_agent,
     run_convergence_agent,
@@ -663,6 +664,13 @@ class ExecutionPipeline:
                 report = settle_consistent_verification(
                     requirements.completion_contract, report
                 )
+            feedback = " ".join([
+                *report.blocking_issues,
+                *report.revision_instructions,
+            ])[:12_000]
+            ctx.session.state[EXACT_EDIT_ANCHORS_STATE_KEY] = (
+                developer.exact_edit_anchors(previous_change_set, feedback)
+            )
             self._write(
                 output_dir / f"verification_r{round_number}.json",
                 report.model_dump_json(indent=2),
@@ -735,7 +743,10 @@ class ExecutionPipeline:
             "analysis_package": analysis.model_dump(mode="json"),
             "approved_repository_files": maker_sources,
             "exact_edit_anchors": exact_edit_anchors,
-        }, initial_state=initial_state))
+        }, initial_state={
+            **initial_state,
+            EXACT_EDIT_ANCHORS_STATE_KEY: exact_edit_anchors,
+        }))
         self._write(
             output_dir / "adk_convergence_trace.json",
             json.dumps({
