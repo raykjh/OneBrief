@@ -84,6 +84,23 @@ def test_external_project_import_creates_sidecar_workspace_and_catalog_entry(tmp
     assert not (root / ".onebrief").exists()
 
 
+def test_project_inventory_ignores_only_onebrief_resident_control_files(tmp_path: Path) -> None:
+    root = tmp_path / "sample"
+    payload = _unity_project(root)
+    control = root / ".onebrief" / "project_state.json"
+    control.parent.mkdir()
+    control.write_text('{"status":"incomplete"}\n', encoding="utf-8")
+
+    result = ExternalProjectImporter(tmp_path / "registry").import_bytes(payload)
+
+    assert result.record.inventory.worktree_status == "clean"
+
+    (root / "Assets" / "Scripts" / "Game.cs").write_text(
+        "public class Game { public int Value = 1; }", encoding="utf-8"
+    )
+    refreshed = ExternalProjectImporter(tmp_path / "registry-2").import_bytes(payload)
+    assert refreshed.record.inventory.worktree_status == "modified"
+
 def test_manifest_cannot_grant_commands_or_point_without_resident_proof(tmp_path: Path) -> None:
     root = tmp_path / "sample"
     root.mkdir()

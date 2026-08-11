@@ -409,6 +409,79 @@ def test_adk_software_continuation_restores_previous_change_set(
     assert observed_previous == [previous]
 
 
+def test_adk_software_failure_keeps_most_progressed_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def candidate(label: str) -> CodeChangeSet:
+        return CodeChangeSet(summary=label, changes=[{
+            "path": "web/src/status.ts", "base_sha256": None,
+            "content": f"export const status = '{label}';\n",
+            "reason": label,
+        }])
+
+    initial = candidate("initial")
+    improved = candidate("improved")
+    regressed = candidate("regressed")
+    class RegressionGateway(BudgetedGeminiClient):
+        def __init__(self) -> None:
+            self.outputs = [
+                initial.model_dump(mode="json"),
+                improved.model_dump(mode="json"),
+                regressed.model_dump(mode="json"),
+            ]
+
+        def generate_adk_response(self, **_kwargs: object) -> types.GenerateContentResponse:
+            payload = self.outputs.pop(0)
+            return types.GenerateContentResponse(candidates=[types.Candidate(
+                content=types.Content(
+                    role="model", parts=[types.Part(text=json.dumps(payload))]
+                ),
+                finish_reason=types.FinishReason.STOP,
+            )])
+
+    gateway = RegressionGateway()
+    failures = iter([
+        "web observation failed: no control | text same | lang same | one state",
+        "web observation failed: cjk leaked | labels identical",
+        "web observation failed: no control | text same | lang same | one state",
+    ])
+
+    def fake_apply(*_args: object, **_kwargs: object) -> DevelopmentRun:
+        raise RuntimeError(next(failures))
+
+    monkeypatch.setattr(ExecutionPipeline, "_apply_development_change_set", fake_apply)
+    intake = IntakeRequest(
+        goal="Add a working language control.",
+        output_target=OutputTarget.EXISTING_PROJECT,
+        toolpack_ids=[ToolPackId.EXCHANGE_DEVELOPMENT],
+    )
+    output_dir = tmp_path / "regression-output"
+    output_dir.mkdir()
+
+    with pytest.raises(RuntimeError, match="no control"):
+        ExecutionPipeline(tmp_path / "run", gateway=gateway)._run_adk_development_convergence(
+            intake=intake, requirements=_requirements(), sources=[_source()],
+            source_payload=[{
+                "name": "exchange-source/web/src/status.ts", "priority": "mandatory",
+                "requirement_keys": ["language"], "content": "export const status = 'old';",
+                "sha256": "b" * 64,
+            }],
+            contract={"goal": intake.goal, "acceptance_criteria": ["Languages switch."]},
+            analysis=_analysis(), output_dir=output_dir,
+        )
+
+    restored = CodeChangeSet.model_validate_json(
+        (output_dir / "code_change_set.json").read_text("utf-8")
+    )
+    assert restored.summary == "improved"
+    assert CodeChangeSet.model_validate_json(
+        (output_dir / "development_best_candidate.json").read_text("utf-8")
+    ).summary == "improved"
+    assert (output_dir / "development_verification_failure.txt").read_text("utf-8").strip() == (
+        "web observation failed: cjk leaked | labels identical"
+    )
+
+
 def test_budget_block_writes_resumable_checkpoint(tmp_path: Path) -> None:
     intake = IntakeRequest(goal="Create a guide.")
     source = _source()

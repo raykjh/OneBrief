@@ -16,6 +16,7 @@ from google.cloud import run_v2, storage
 from pydantic import BaseModel
 
 from onebrief.jobs import JobRecord, JobStatus, JobStore, run_job, verify_input_snapshot
+from onebrief.development_progress import development_failure_quality
 
 
 REUSABLE_WORK_ARTIFACTS = (
@@ -36,6 +37,8 @@ REUSABLE_WORK_ARTIFACTS = (
     "development_verification_failure_r1.txt",
     "development_verification_failure_r2.txt",
     "development_verification_failure.txt",
+    "development_best_candidate.json",
+    "development_best_failure.txt",
 )
 
 
@@ -234,14 +237,16 @@ class GCSJobStore:
         destination_work = destination_work.resolve()
         destination_work.mkdir(parents=True, exist_ok=True)
         copied: list[dict[str, str]] = []
+        downloaded: dict[str, bytes] = {}
         for name in REUSABLE_WORK_ARTIFACTS:
             source_name = name
             target_name = (
                 "code_change_set.json"
-                if name.startswith("code_change_set")
+                if name.startswith("code_change_set") or name == "development_best_candidate.json"
                 else (
                     "development_verification_failure.txt"
                     if name.startswith("development_verification_failure")
+                    or name == "development_best_failure.txt"
                     else name
                 )
             )
@@ -254,6 +259,7 @@ class GCSJobStore:
                 self.bucket.blob(self._name(f"work/{source_name}")).download_to_filename(
                     str(temporary)
                 )
+                downloaded[source_name] = temporary.read_bytes()
                 os.replace(temporary, target)
             except NotFound:
                 # Several versioned candidate names intentionally map to the
@@ -263,6 +269,33 @@ class GCSJobStore:
                 continue
             digest = hashlib.sha256(target.read_bytes()).hexdigest()
             copied.append({"source": source_name, "target": target_name, "sha256": digest})
+        # Older runs predate explicit best-candidate checkpoints.  Derive the
+        # most progressed paired candidate deterministically instead of blindly
+        # resuming from the final (possibly regressed) revision.
+        if "development_best_candidate.json" not in downloaded:
+            paired: list[tuple[tuple[int, int], str, str]] = []
+            for index in range(7):
+                candidate_name = f"code_change_set_r{index}.json"
+                failure_name = f"development_verification_failure_r{index}.txt"
+                if candidate_name in downloaded and failure_name in downloaded:
+                    message = downloaded[failure_name].decode("utf-8", errors="replace")
+                    paired.append((development_failure_quality(message), candidate_name, failure_name))
+            if paired:
+                _quality, candidate_name, failure_name = max(paired, key=lambda item: item[0])
+                candidate_target = destination_work / "code_change_set.json"
+                failure_target = destination_work / "development_verification_failure.txt"
+                candidate_target.write_bytes(downloaded[candidate_name])
+                failure_target.write_bytes(downloaded[failure_name])
+                for source_name, target in (
+                    (candidate_name, candidate_target), (failure_name, failure_target)
+                ):
+                    digest = hashlib.sha256(target.read_bytes()).hexdigest()
+                    copied.append({
+                        "source": source_name,
+                        "target": target.name,
+                        "sha256": digest,
+                        "selection": "derived_best_progress",
+                    })
         if copied:
             (destination_work / "reuse_manifest.json").write_text(
                 json.dumps({

@@ -359,3 +359,37 @@ def test_latest_development_failure_becomes_canonical_resume_feedback(tmp_path: 
     assert (work / "development_verification_failure.txt").read_text("utf-8") == (
         "english copy leaked"
     )
+
+
+def test_resume_derives_most_progressed_candidate_from_older_run(tmp_path: Path) -> None:
+    objects = {
+        "jobs/prior/work/code_change_set_r0.json": b'{"summary":"lint"}',
+        "jobs/prior/work/development_verification_failure_r0.txt": b"development verification failed: lint",
+        "jobs/prior/work/code_change_set_r1.json": b'{"summary":"working-language-control"}',
+        "jobs/prior/work/development_verification_failure_r1.txt": b"web observation failed: cjk leaked | labels identical",
+        "jobs/prior/work/code_change_set_r2.json": b'{"summary":"regressed"}',
+        "jobs/prior/work/development_verification_failure_r2.txt": b"web observation failed: no control | text same | lang same | one state",
+    }
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+        def download_to_filename(self, filename):
+            if self.name not in objects:
+                raise NotFound("missing")
+            Path(filename).write_bytes(objects[self.name])
+
+    class Client:
+        def bucket(self, _name):
+            return type("Bucket", (), {"blob": lambda _self, name: Blob(name)})()
+
+    work = tmp_path / "work"
+    GCSJobStore("gs://onebrief-test/jobs/prior", client=Client()).download_reusable_artifacts(work)
+
+    assert json.loads((work / "code_change_set.json").read_text("utf-8"))["summary"] == (
+        "working-language-control"
+    )
+    assert (work / "development_verification_failure.txt").read_text("utf-8") == (
+        "web observation failed: cjk leaked | labels identical"
+    )

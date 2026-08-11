@@ -164,6 +164,22 @@ def test_approved_generic_runner_edits_only_clone_and_returns_verified_patch(tmp
     assert "src/app.js" in (output / "changes.patch").read_text(encoding="utf-8")
 
 
+def test_approved_generic_runner_ignores_onebrief_control_metadata(tmp_path: Path) -> None:
+    root, registry = _approved_node_project(tmp_path)
+    control = root / ".onebrief" / "project_state.json"
+    control.parent.mkdir()
+    control.write_text('{"status":"incomplete"}\n', encoding="utf-8")
+
+    _profile, head = ApprovedProjectDevelopmentToolPack(
+        "generic-node", registry
+    )._validate_root()
+
+    assert head == subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+
+
 def test_node_dependency_bootstrap_is_lockfile_bound_and_disables_scripts(tmp_path: Path) -> None:
     project = tmp_path / "project"
     web = project / "web"

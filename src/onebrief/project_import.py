@@ -177,7 +177,10 @@ def inspect_project(manifest: ProjectManifest) -> ProjectInventory:
     head = _git(root, "rev-parse", "HEAD") if git_repository else ""
     porcelain = "\n".join(
         line for line in _git(root, "status", "--porcelain").splitlines()
-        if line[3:].replace("\\", "/") != MANIFEST_NAME
+        if (
+            (normalized := line[3:].replace("\\", "/")) != MANIFEST_NAME
+            and not normalized.startswith(".onebrief/")
+        )
     ) if git_repository else ""
     return ProjectInventory(
         project_id=manifest.project_id,
@@ -284,4 +287,3 @@ class ExternalProjectImporter:
         temporary = path.with_suffix(path.suffix + f".{uuid4().hex}.tmp")
         temporary.write_text(content, encoding="utf-8")
         os.replace(temporary, path)
-

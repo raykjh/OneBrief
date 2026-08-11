@@ -51,6 +51,15 @@ def test_folder_draft_detects_project_without_user_authored_json(tmp_path: Path)
     assert not (root / MANIFEST_NAME).exists()
 
 
+def test_folder_draft_namespaces_a_builtin_project_id(tmp_path: Path) -> None:
+    root = tmp_path / "exchange"
+    _unity_root(root)
+
+    draft = draft_project_folder(root)
+
+    assert draft.manifest.project_id == "exchange-project"
+
+
 def test_confirmation_creates_manifest_and_registers_sidecar(tmp_path: Path) -> None:
     root = tmp_path / "My_Unity_Game"
     _unity_root(root)

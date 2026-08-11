@@ -75,7 +75,10 @@ class ProjectCatalog:
         branch = _git(root, "branch", "--show-current") or None
         porcelain = "\n".join(
             line for line in _git(root, "status", "--porcelain").splitlines()
-            if not line[3:].replace("\\", "/").startswith(".onebrief/")
+            if (
+                (normalized := line[3:].replace("\\", "/")) != "ONEBRIEF_PROJECT.json"
+                and not normalized.startswith(".onebrief/")
+            )
         )
         status = "modified" if porcelain else "clean"
         history: list[ProjectHistoryEntry] = []

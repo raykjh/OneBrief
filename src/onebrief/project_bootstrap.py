@@ -43,6 +43,10 @@ def _slug(value: str) -> str:
         normalized = "project-" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
     if not normalized[0].isalpha():
         normalized = "project-" + normalized
+    # Built-in project IDs are routing keys, not names external folders may
+    # silently replace. Give a same-named imported folder its own namespace.
+    if normalized == "exchange":
+        normalized = "exchange-project"
     return normalized[:64].rstrip("-_")
 
 

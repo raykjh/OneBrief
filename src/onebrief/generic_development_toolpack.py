@@ -179,8 +179,13 @@ class ApprovedProjectDevelopmentToolPack:
         profile = self._profile()
         if self.root != Path(profile.project_root).resolve():
             raise PermissionError("approved project root changed")
-        ignored = {"ONEBRIEF_PROJECT.json"}
-        dirty = [line for line in self._git("status", "--porcelain").splitlines() if line[3:].replace("\\", "/") not in ignored]
+        dirty = [
+            line for line in self._git("status", "--porcelain").splitlines()
+            if (
+                (normalized := line[3:].replace("\\", "/")) != "ONEBRIEF_PROJECT.json"
+                and not normalized.startswith(".onebrief/")
+            )
+        ]
         if dirty:
             raise RuntimeError("development requires a clean source repository")
         head = self._git("rev-parse", "HEAD").strip()

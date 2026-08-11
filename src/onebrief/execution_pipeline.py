@@ -41,6 +41,7 @@ from onebrief.development_toolpack import (
     ExchangeDevelopmentToolPack,
     RepositoryInspection,
 )
+from onebrief.development_progress import development_failure_quality
 from onebrief.generic_development_toolpack import (
     ApprovedProjectDevelopmentToolPack,
     ProjectCodeChangeSet,
@@ -529,6 +530,15 @@ class ExecutionPipeline:
         previous_change_set: BaseModel | None = self._load(
             output_dir / "code_change_set.json", change_schema
         )
+        best_failed_candidate: BaseModel | None = self._load(
+            output_dir / "development_best_candidate.json", change_schema
+        )
+        best_failure_message: str | None = None
+        best_failure_quality: tuple[int, int] | None = None
+        best_failure_path = output_dir / "development_best_failure.txt"
+        if best_failed_candidate is not None and best_failure_path.is_file():
+            best_failure_message = best_failure_path.read_text("utf-8")
+            best_failure_quality = development_failure_quality(best_failure_message)
         latest_run: DevelopmentRun | None = None
         initial_state: dict[str, object] = {}
         maker_sources = prepared_sources
@@ -580,6 +590,7 @@ class ExecutionPipeline:
 
         def after_maker(raw: object, _ctx, round_number: int) -> dict[str, object]:
             nonlocal previous_change_set, latest_run
+            nonlocal best_failed_candidate, best_failure_message, best_failure_quality
             reverify_existing = (
                 round_number == 0
                 and bool(_ctx.session.state.get(REVERIFY_EXISTING_STATE_KEY))
@@ -626,16 +637,40 @@ class ExecutionPipeline:
                 )
                 self._append_recovery(decision)
                 self._persist_recoveries(output_dir)
-                if (
-                    decision.action != RecoveryAction.RETURN_TO_AGENT
-                    or not decision.retry_allowed
-                ):
-                    raise
                 feedback = " ".join(str(exc).split())[:12_000]
                 self._write(
                     output_dir / f"development_verification_failure_r{round_number}.txt",
                     feedback,
                 )
+                self._write(output_dir / "development_verification_failure.txt", feedback)
+                quality = development_failure_quality(feedback)
+                if best_failure_quality is None or quality > best_failure_quality:
+                    best_failed_candidate = candidate
+                    best_failure_message = feedback
+                    best_failure_quality = quality
+                    self._write(
+                        output_dir / "development_best_candidate.json",
+                        candidate.model_dump_json(indent=2),
+                    )
+                    self._write(output_dir / "development_best_failure.txt", feedback)
+                elif best_failed_candidate is not None and best_failure_message is not None:
+                    # Do not let a later repair erase already demonstrated
+                    # progress.  The next maker turn and any continuation both
+                    # resume from the best deterministic checkpoint.
+                    previous_change_set = best_failed_candidate
+                    feedback = best_failure_message
+                    self._write(
+                        output_dir / "code_change_set.json",
+                        best_failed_candidate.model_dump_json(indent=2),
+                    )
+                    self._write(
+                        output_dir / "development_verification_failure.txt", feedback
+                    )
+                if (
+                    decision.action != RecoveryAction.RETURN_TO_AGENT
+                    or not decision.retry_allowed
+                ):
+                    raise
                 report = VerificationReport(
                     verdict=Verdict.REVISE,
                     criterion_checks=[{
@@ -654,7 +689,7 @@ class ExecutionPipeline:
                     report.model_dump_json(indent=2),
                 )
                 return {
-                    MAKER_STATE_KEY: candidate.model_dump(mode="json"),
+                    MAKER_STATE_KEY: previous_change_set.model_dump(mode="json"),
                     VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
                     SKIP_VERIFIER_STATE_KEY: True,
                 }

@@ -29,6 +29,26 @@ def test_catalog_exposes_only_the_approved_exchange_repository(tmp_path: Path) -
     assert ProjectCatalog(exchange_root=root).list("fx")
 
 
+def test_catalog_ignores_onebrief_control_files(tmp_path: Path) -> None:
+    root = tmp_path / "exchange"
+    root.mkdir()
+    (root / "package.json").write_text("{}", encoding="utf-8")
+    _git(root, "init")
+    _git(root, "config", "user.name", "OneBrief Test")
+    _git(root, "config", "user.email", "onebrief@example.invalid")
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "Baseline")
+    (root / "ONEBRIEF_PROJECT.json").write_text("{}", encoding="utf-8")
+    control = root / ".onebrief" / "project_state.json"
+    control.parent.mkdir()
+    control.write_text("{}", encoding="utf-8")
+
+    project = ProjectCatalog(exchange_root=root).get("exchange")
+
+    assert project.worktree_status == "clean"
+    assert project.ready_for_isolated_edit is True
+
+
 def test_catalog_blocks_isolated_edit_when_worktree_is_modified(tmp_path: Path) -> None:
     root = tmp_path / "exchange"
     root.mkdir()
