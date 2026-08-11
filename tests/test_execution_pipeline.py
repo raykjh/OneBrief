@@ -240,6 +240,63 @@ def test_production_gateway_selects_adk_convergence_without_legacy_writer_calls(
     assert (output_dir / "final.md").is_file()
 
 
+def test_cloud_document_continuation_reenters_adk_convergence_with_restored_draft(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    intake = IntakeRequest(goal="Create a guide.", max_revision_rounds=2)
+    source = _source()
+    run_dir = _approve(tmp_path, intake, source)
+    gateway = FakeBudgetedGateway([])
+    output_dir = tmp_path / "adk-continuation"
+    output_dir.mkdir()
+    (output_dir / "analysis.json").write_text(
+        _analysis().model_dump_json(indent=2), encoding="utf-8"
+    )
+    (output_dir / "draft_r0.json").write_text(
+        _draft(
+            "Restored incomplete candidate still requires a grounded procedure before it can pass. [F01]"
+        ).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    (output_dir / "continuation_manifest.json").write_text(
+        json.dumps({"schema_version": "onebrief-cloud-continuation-v1"}),
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+
+    def fake_adk(self, **_: object):
+        calls.append("restored-adk")
+        assert (output_dir / "draft_r0.json").is_file()
+        draft = _draft(
+            "Restored candidate was repaired by the same accountable maker and now includes the grounded procedure. [F01]"
+        )
+        report = _verification("PASS")
+        (output_dir / "draft_r1.json").write_text(
+            draft.model_dump_json(indent=2), encoding="utf-8"
+        )
+        (output_dir / "verification_r1.json").write_text(
+            report.model_dump_json(indent=2), encoding="utf-8"
+        )
+        (output_dir / "adk_convergence_trace.json").write_text(
+            json.dumps({"same_maker_reused": True}), encoding="utf-8"
+        )
+        return draft, report, 1
+
+    monkeypatch.setattr(ExecutionPipeline, "_run_adk_document_convergence", fake_adk)
+
+    result = ExecutionPipeline(run_dir, gateway=gateway).run(
+        intake=intake,
+        requirements=_requirements(),
+        sources=[source],
+        output_dir=output_dir,
+    )
+
+    assert result.status == PipelineStatus.COMPLETE
+    assert calls == ["restored-adk"]
+    assert gateway.calls == []
+    assert "same accountable maker" in (output_dir / "final.md").read_text("utf-8")
+
+
 def test_adk_software_loop_repairs_failed_isolated_test_before_independent_review(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

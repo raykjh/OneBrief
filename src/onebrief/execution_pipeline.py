@@ -503,12 +503,15 @@ class ExecutionPipeline:
             and bool(reusable_drafts)
         )
         initial_state = None
-        if reverify_only:
+        if reusable_drafts:
             previous_draft = DraftArtifact.model_validate_json(
                 reusable_drafts[-1].read_text(encoding="utf-8")
             )
             initial_state = {
                 MAKER_STATE_KEY: previous_draft.model_dump(mode="json"),
+                # Verify the restored candidate before paying its original
+                # maker for a repair. If it fails, later ADK rounds retain the
+                # same maker identity and receive the deterministic repair plan.
                 REVERIFY_EXISTING_STATE_KEY: True,
             }
         agent = build_text_convergence_agent(
@@ -1356,6 +1359,28 @@ class ExecutionPipeline:
                     intake=intake, requirements=requirements, sources=sources,
                     source_payload=source_payload, contract=contract,
                     analysis=analysis, output_dir=output_dir,
+                )
+            elif (
+                use_adk_convergence
+                and not self._is_development(intake)
+                and (output_dir / "continuation_manifest.json").is_file()
+            ):
+                # A Cloud continuation restores one canonical narrative
+                # candidate. Re-enter the native maker/verifier convergence
+                # loop instead of the legacy checkpoint loop so repair plans,
+                # repeated-failure stopping, and same-maker identity remain in
+                # force after a budget or authorization pause.
+                self._checkpoint(
+                    output_dir, PipelineStatus.RUNNING, "adk_quality_convergence", completed, 0
+                )
+                draft, adk_report, revision_round = self._run_adk_document_convergence(
+                    intake=intake,
+                    requirements=requirements,
+                    sources=sources,
+                    source_payload=source_payload,
+                    contract=contract,
+                    analysis=analysis,
+                    output_dir=output_dir,
                 )
             elif use_adk_convergence:
                 # A legacy or interrupted pre-ADK run has no durable ADK session.
