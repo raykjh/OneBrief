@@ -90,6 +90,16 @@ def inspect_onebrief_job(job_uri: str) -> dict[str, Any]:
     return {"job_uri": validate_approved_job_uri(job_uri, settings), "managed": True}
 
 
+def return_tool_receipt_without_summarization(
+    *, tool: Any, args: dict[str, Any], tool_context: Any, tool_response: Any
+) -> None:
+    """Make the Cloud Run receipt the final event and avoid a redundant model turn."""
+
+    del args, tool_response
+    if tool.name == "start_approved_onebrief_job":
+        tool_context.actions.skip_summarization = True
+
+
 def build_project_owner_agent() -> LlmAgent:
     """Build the managed project-owner agent with a deliberately tiny tool surface."""
 
@@ -109,6 +119,7 @@ def build_project_owner_agent() -> LlmAgent:
             "for status requests. The Cloud Run worker owns the maker-verifier-revision loop."
         ),
         tools=[start_approved_onebrief_job, inspect_onebrief_job],
+        after_tool_callback=return_tool_receipt_without_summarization,
     )
 
 

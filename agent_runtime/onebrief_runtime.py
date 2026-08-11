@@ -96,6 +96,16 @@ def inspect_onebrief_job(job_uri: str) -> dict[str, Any]:
     return {"job_uri": validate_job_uri(job_uri, settings), "managed": True}
 
 
+def return_tool_receipt_without_summarization(
+    *, tool: Any, args: dict[str, Any], tool_context: Any, tool_response: Any
+) -> None:
+    """End routing turns on the exact tool receipt instead of a second model call."""
+
+    del args, tool_response
+    if tool.name == "start_approved_onebrief_job":
+        tool_context.actions.skip_summarization = True
+
+
 def build_agent_engine_app():
     from agentplatform.agent_engines import AdkApp
     from google.adk.sessions import InMemorySessionService
@@ -116,6 +126,7 @@ def build_agent_engine_app():
             "change a budget, select an executor, or retry a work order."
         ),
         tools=[start_approved_onebrief_job, inspect_onebrief_job],
+        after_tool_callback=return_tool_receipt_without_summarization,
     )
     # This dispatcher is deliberately one-shot and stores no conversation data.
     # A custom ephemeral session also avoids granting the runtime permission to
