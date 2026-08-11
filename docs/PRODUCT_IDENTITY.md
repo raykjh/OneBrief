@@ -29,6 +29,9 @@ completion.
 5. Objective criteria use deterministic proof whenever possible. Semantic and
    subjective quality use an independent reviewer plus disclosed working defaults. An
    approved run is not interrupted for preference feedback.
+   When the user does not request a visual direction, the first delivery uses an
+   accessible conventional professional design. Distinctive design exploration is a
+   later existing-project improvement rather than an untestable first-run objective.
 6. The loop continues within the approved budget and policy: make, verify, diagnose,
    return to owner, revise, and reverify.
 7. Before execution, OneBrief calls the user only for missing authoritative information,
@@ -92,6 +95,9 @@ completion.
 2. The accountable maker produces the artifact.
 3. Deterministic checks and an independent verifier accept or reject each criterion.
 4. Failed work returns to the same maker with evidence until all required criteria pass.
+   Each return is a criterion-scoped repair plan: passing criteria are frozen as
+   regression constraints, the failed slice becomes the next bounded task, and a
+   repeated failure is decomposed instead of receiving blind additional retries.
 5. OneBrief safely applies or packages only the proven result.
 
 Stage 2 may never silently widen stage 1. Missing authoritative information,
@@ -106,6 +112,11 @@ policy or authority blocker remains. Revision depth is an internal safety ceilin
 a user setting or product success condition. If the approved budget or capability
 boundary cannot support further correction, the run returns to stage 1 instead of
 claiming completion or silently expanding authority.
+
+Broad goals are executable only after they become atomic observable slices. A criterion
+must be able to fail independently and name its own evidence. OneBrief may group those
+slices into a coherent release, but it must not hide several independently failing
+behaviors behind one vague criterion such as “the application is professional.”
 
 Example cases should be selected after this loop works. They are test vectors for
 different artifact types and evaluation modes, not the center of product design.

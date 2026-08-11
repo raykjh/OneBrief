@@ -100,6 +100,22 @@ Rules:
     in the selected locale, and no missing-glyph placeholders are present. Existing
     regression tests are not evidence for a newly requested behavior unless they
     exercise that behavior.
+    Make every required quality criterion an atomic observable slice. Do not combine multiple
+    independently failing behaviors into one criterion merely because the user described them
+    in one sentence. For software, separate startup/build health, each primary interaction,
+    state persistence, content or data correctness, visual integrity, and regression safety
+    when they materially apply. Each slice must name evidence that can independently pass or
+    fail, while keeping the complete contract within twelve criteria.
+    Unless the user explicitly requests a distinctive visual direction, the first delivery uses
+    a conventional, accessible professional design that preserves supplied brand assets. Do not
+    spend the first execution inventing visual novelty. A later existing-project improvement can
+    revise design after the functional result is proven.
+    Bound negative or novelty claims to observable search coverage. A request such as "exclude
+    anything that already exists" must define practical similarity dimensions, the searched market
+    and source classes, and an as-of date; never claim universal absence from an incomplete search.
+    Regulated-product concept research is supported as research, not as authorization to manufacture,
+    advertise, diagnose, or treat. Separate source-backed evidence, legally permitted claim status,
+    market differentiation, and unresolved safety or regulatory review in the completion criteria.
 11. Mark ready_for_estimate true only when supported and no mandatory gap remains.
 12. Creative drafting is supported, including screenplays, stories, designs, and
     other long-form artifacts. Do not mark a task unsupported merely because it

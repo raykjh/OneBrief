@@ -23,6 +23,9 @@ goal into a complete work contract in about 30 seconds. See `docs/SIXSENSE.md`.
 - Requirements Analyst built with Google ADK and Gemini 3.5 Flash
 - SixSense rapid sequential intake with one-pass question generation and recommended defaults
 - ADK-native Accountable Maker -> Independent Verifier -> original-maker revision loop
+- criterion-scoped repair plans that freeze passing behavior, fingerprint repeated
+  failures, decompose the second attempt, and stop blind third retries
+- standard-first product delivery when no distinctive visual direction is requested
 - criterion-level completion ledger showing pending, failed, revised, and proven work
 - software convergence with isolated ToolPack build/test execution before independent review
 - deterministic grounding, completion-evidence, and reality gates that can overrule model PASS

@@ -15,6 +15,7 @@ from onebrief.adk_convergence import (
     MAKER_STATE_KEY,
     REVERIFY_EXISTING_STATE_KEY,
     EXACT_EDIT_ANCHORS_STATE_KEY,
+    REPAIR_PLAN_STATE_KEY,
     VERIFICATION_STATE_KEY,
     AdkConvergenceAgent,
     BudgetedAdkLlm,
@@ -177,12 +178,14 @@ def test_contextual_maker_receives_current_exact_edit_anchors() -> None:
         state = {
             MAKER_STATE_KEY: {"changes": []},
             VERIFICATION_STATE_KEY: {"verdict": "REVISE"},
+            REPAIR_PLAN_STATE_KEY: {"tasks": [{"criterion_id": "Q02"}]},
             EXACT_EDIT_ANCHORS_STATE_KEY: [{"path": "web/app/page.tsx"}],
         }
 
     rendered = instruction(Context())
     assert "onebrief_exact_edit_anchors" not in rendered
     assert "web/app/page.tsx" in rendered
+    assert '"criterion_id": "Q02"' in rendered
 
 
 def test_deterministic_gate_overrules_model_pass_and_forces_original_maker_retry() -> None:

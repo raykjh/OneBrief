@@ -47,6 +47,14 @@ completion contract
   -> safe delivery/application only when all required criteria pass
 ```
 
+`REVISE` now creates `repair_plan_r*_n*.json`. Each task binds one failed `Qnn`
+criterion to its evidence, exact revision instructions, a normalized failure
+fingerprint, and the already passing criteria that must not regress. The first failure
+receives a bounded repair. The second identical fingerprint requires a smaller,
+independently verifiable change. A third identical fingerprint stops blind retries and
+reports the unresolved slice rather than consuming the remaining budget on the same
+approach.
+
 There is no silent authority expansion. `NEEDS_INFORMATION`, `NEEDS_BUDGET`, and
 `NEEDS_AUTHORIZATION` are structured returns to stage 1. The user approves an amended
 plan; OneBrief then resumes from persisted evidence instead of pretending the first run
@@ -79,8 +87,8 @@ checks pass.
 1. Make the criterion ledger the main run screen and agent activity secondary.
 2. Require verifiers to reference exact `Qnn` IDs and preserve attempt history.
 3. Expand evidence adapters for documents, spreadsheets, web apps, and software builds.
-4. Add explicit user-authority criteria for visual or creative judgments that cannot be
-   honestly automated.
+4. Use a disclosed conventional design baseline for first delivery; reserve user taste
+   questions and distinctive visual exploration for an explicit follow-up improvement.
 5. Measure convergence: criteria passed, revisions required, stop reason, time, and cost.
 6. Demonstrate one small end-to-end case where a real first attempt may fail,
    same-maker repair produces new evidence, and only PASS enables safe application.

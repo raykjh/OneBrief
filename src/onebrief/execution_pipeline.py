@@ -21,6 +21,7 @@ from onebrief.adk_convergence import (
     VERIFICATION_STATE_KEY,
     REVERIFY_EXISTING_STATE_KEY,
     EXACT_EDIT_ANCHORS_STATE_KEY,
+    REPAIR_PLAN_STATE_KEY,
     VERIFIER_CONTEXT_STATE_KEY,
     build_text_convergence_agent,
     run_convergence_agent,
@@ -76,6 +77,7 @@ from onebrief.execution_profile import (
 from onebrief.guarded_gemini import BudgetedGeminiClient
 from onebrief.grounded_search import run_grounded_research
 from onebrief.recovery_policy import RecoveryAction, RecoveryDecision, RecoveryPolicy
+from onebrief.repair_planning import RepairPlan, build_repair_plan
 from onebrief.reality_check import apply_reality_check_override, evaluate_reality_check
 from onebrief.requirements_gate import require_ready_for_estimate
 from onebrief.schemas import IntakeRequest, InternalSource, OutputTarget, RequirementsAnalysis, ToolPackId
@@ -542,6 +544,38 @@ class ExecutionPipeline:
             best_failure_quality = development_failure_quality(best_failure_message)
         latest_run: DevelopmentRun | None = None
         initial_state: dict[str, object] = {}
+        repair_fingerprints: list[str] = []
+        for plan_path in sorted(output_dir.glob("repair_plan_r*.json")):
+            try:
+                prior_plan = RepairPlan.model_validate_json(
+                    plan_path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValidationError):
+                continue
+            repair_fingerprints.extend(item.fingerprint for item in prior_plan.tasks)
+
+        def prepare_repair(
+            report: VerificationReport, round_number: int
+        ) -> RepairPlan | None:
+            if requirements.completion_contract is None or report.verdict != Verdict.REVISE:
+                return None
+            plan = build_repair_plan(
+                requirements.completion_contract,
+                report,
+                round_number=round_number,
+                prior_fingerprints=repair_fingerprints,
+            )
+            if plan is None:
+                return None
+            repair_fingerprints.extend(item.fingerprint for item in plan.tasks)
+            self._write(
+                output_dir / (
+                    f"repair_plan_r{round_number}_n{len(repair_fingerprints):02d}.json"
+                ),
+                plan.model_dump_json(indent=2),
+            )
+            return plan
+
         maker_sources = prepared_sources
         prior_failure = output_dir / "development_verification_failure.txt"
         if previous_change_set is not None:
@@ -580,6 +614,12 @@ class ExecutionPipeline:
                 ],
                 missing_information=[],
             ).model_dump(mode="json")
+            continuation_report = VerificationReport.model_validate(
+                initial_state[VERIFICATION_STATE_KEY]
+            )
+            continuation_plan = prepare_repair(continuation_report, 0)
+            if continuation_plan is not None:
+                initial_state[REPAIR_PLAN_STATE_KEY] = continuation_plan.model_dump(mode="json")
         repair_feedback = (
             " ".join(prior_failure.read_text("utf-8").split())[:12_000]
             if prior_failure.is_file()
@@ -643,9 +683,13 @@ class ExecutionPipeline:
                     ],
                     missing_information=[],
                 )
+                repair_plan = prepare_repair(report, round_number)
                 return {
                     MAKER_STATE_KEY: previous_change_set.model_dump(mode="json"),
                     VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
+                    **({
+                        REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
+                    } if repair_plan is not None else {}),
                     EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
                     SKIP_VERIFIER_STATE_KEY: True,
                 }
@@ -739,9 +783,13 @@ class ExecutionPipeline:
                 current_exact_edit_anchors = developer.exact_edit_anchors(
                     previous_change_set, feedback
                 )
+                repair_plan = prepare_repair(report, round_number)
                 return {
                     MAKER_STATE_KEY: previous_change_set.model_dump(mode="json"),
                     VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
+                    **({
+                        REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
+                    } if repair_plan is not None else {}),
                     EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
                     SKIP_VERIFIER_STATE_KEY: True,
                 }
@@ -787,6 +835,21 @@ class ExecutionPipeline:
                 report = settle_consistent_verification(
                     requirements.completion_contract, report
                 )
+            repair_plan = prepare_repair(report, round_number)
+            if repair_plan is not None:
+                ctx.session.state[REPAIR_PLAN_STATE_KEY] = repair_plan.model_dump(mode="json")
+                if repair_plan.stop_after_this_round:
+                    report = VerificationReport(
+                        verdict=Verdict.UNVERIFIABLE,
+                        criterion_checks=report.criterion_checks,
+                        blocking_issues=list(dict.fromkeys([
+                            *report.blocking_issues,
+                            "The same completion failure repeated three times; blind retries are stopped.",
+                        ])),
+                        revision_instructions=[],
+                        missing_information=report.missing_information,
+                        temperament_decisions=report.temperament_decisions,
+                    )
             feedback = " ".join([
                 *report.blocking_issues,
                 *report.revision_instructions,
@@ -814,6 +877,9 @@ class ExecutionPipeline:
             "runtime, or independent-review failure while preserving all "
             "previously passing behavior. New files may use complete content; existing files must use exact edits. "
             "Prefer small incremental changes that can be verified and extended in later rounds. Return only the schema."
+            " When repair_plan is present, treat it as the complete scope of this revision: repair those failed "
+            "criterion slices only, preserve every passing criterion listed there, and do not redesign unrelated behavior. "
+            "A decompose_scope task must be reduced to one independently verifiable source change before editing."
             " For web language repairs, expose a real select whose identity contains language or locale and whose "
             "option values are canonical locale codes such as ko and en. Activating every option must update "
             "document.documentElement.lang and visibly change all meaningful page copy, not only the status line. "

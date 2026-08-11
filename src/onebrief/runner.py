@@ -16,6 +16,7 @@ from onebrief.agents import requirements_analyst
 from onebrief.requirements_gate import apply_requirements_gate
 from onebrief.schemas import IntakeRequest, RequirementsAnalysis
 from onebrief.sixsense import apply_sixsense_policy
+from onebrief.delivery_policy import apply_standard_first_delivery_policy
 
 APP_NAME = "onebrief"
 def _normalize_requirements_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -210,14 +211,18 @@ async def inspect_requirements(intake: IntakeRequest) -> RequirementsAnalysis:
             ),
         }
     )
-    return apply_sixsense_policy(intake, apply_requirements_gate(intake, result))
+    return apply_standard_first_delivery_policy(
+        intake, apply_sixsense_policy(intake, apply_requirements_gate(intake, result))
+    )
 
 
 async def analyze_requirements(intake: IntakeRequest) -> RequirementsAnalysis:
     result = await _run_requirements(
         {"mode": "initial_analysis", "intake": intake.model_dump(mode="json")}
     )
-    return apply_sixsense_policy(intake, apply_requirements_gate(intake, result))
+    return apply_standard_first_delivery_policy(
+        intake, apply_sixsense_policy(intake, apply_requirements_gate(intake, result))
+    )
 
 
 async def reinspect_requirements(
@@ -273,5 +278,5 @@ async def reinspect_requirements(
         result = result.model_copy(
             update={"sixsense": result.sixsense.model_copy(update={"questions": []})}
         )
-    return result
+    return apply_standard_first_delivery_policy(intake, result)
 
