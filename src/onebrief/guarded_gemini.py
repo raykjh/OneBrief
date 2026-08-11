@@ -48,6 +48,19 @@ class BudgetedGeminiClient:
                     raise
                 time.sleep(delays[attempt])
 
+    @staticmethod
+    def _thinking_config(model: str) -> types.ThinkingConfig:
+        """Return a model-compatible bounded reasoning setting.
+
+        Gemini 3.1 Pro uses thinking levels and rejects the Flash-oriented
+        MINIMAL/zero-budget configuration. LOW keeps the critical decision call
+        bounded; reasoning tokens remain inside max_output_tokens and are settled
+        against the same hard budget ledger.
+        """
+        if model == "gemini-3.1-pro-preview":
+            return types.ThinkingConfig(thinking_level="low")
+        return types.ThinkingConfig(thinking_budget=0)
+
     def _generate(
         self,
         *,
@@ -63,8 +76,9 @@ class BudgetedGeminiClient:
         if status not in {RunStatus.APPROVED, RunStatus.RUNNING}:
             raise BudgetGuardError(f"run cannot start a call while {status.value}")
 
-        # Disable hidden reasoning tokens so max_output_tokens is an enforceable billed-output cap.
-        thinking = types.ThinkingConfig(thinking_budget=0)
+        # Use the least model-compatible reasoning setting. max_output_tokens remains
+        # the enforceable cap for response plus reasoning tokens.
+        thinking = self._thinking_config(model)
         provider_schema = gemini_compatible_model(response_schema) if response_schema else None
         generation = types.GenerationConfig(
             max_output_tokens=max_output_tokens,
@@ -196,7 +210,7 @@ class BudgetedGeminiClient:
         if status not in {RunStatus.APPROVED, RunStatus.RUNNING}:
             raise BudgetGuardError(f"run cannot start a call while {status.value}")
         generation = config.model_copy(deep=True) if config is not None else types.GenerateContentConfig()
-        generation.thinking_config = types.ThinkingConfig(thinking_budget=0)
+        generation.thinking_config = self._thinking_config(model)
         max_output_tokens = int(generation.max_output_tokens or 4096)
         count_generation = types.GenerationConfig(
             max_output_tokens=max_output_tokens,

@@ -22,11 +22,16 @@ class AgentType(StrEnum):
 
 
 class ApprovedModel(StrEnum):
+    GEMINI_3_1_PRO_PREVIEW = "gemini-3.1-pro-preview"
     GEMINI_3_5_FLASH = "gemini-3.5-flash"
     GEMINI_3_5_FLASH_LITE = "gemini-3.5-flash-lite"
 
 
 APPROVED_MODEL_CATALOG: dict[ApprovedModel, str] = {
+    ApprovedModel.GEMINI_3_1_PRO_PREVIEW: (
+        "Higher-reasoning preview model reserved for decision-critical planning, "
+        "independent verification, governance, and final approval."
+    ),
     ApprovedModel.GEMINI_3_5_FLASH: "Primary model for complex planning, creation, and review.",
     ApprovedModel.GEMINI_3_5_FLASH_LITE: "Lower-cost model for bounded, simpler structured work.",
 }

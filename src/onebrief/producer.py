@@ -17,7 +17,7 @@ from onebrief.requirements_gate import require_ready_for_estimate
 from onebrief.schemas import BudgetEnvelope, BudgetStatus, IntakeRequest, RequirementsAnalysis, StageEstimate, ToolPackId
 from onebrief.team_planning import TEAM_PLANNING_OUTPUT_CAP
 
-PRICE_CARD_VERSION = "google-agent-platform-global-standard-search-2026-08-05"
+PRICE_CARD_VERSION = "google-agent-platform-global-standard-search-2026-08-12"
 PRICE_SOURCE_URL = "https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing"
 
 
@@ -28,6 +28,7 @@ class ModelPrice:
 
 
 PRICES = {
+    "gemini-3.1-pro-preview": ModelPrice(2.00, 12.00),
     "gemini-3.5-flash": ModelPrice(1.50, 9.00),
     "gemini-3.5-flash-lite": ModelPrice(0.30, 2.50),
 }
@@ -96,7 +97,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
 
     stages = [
         _stage(
-            "team_planning", "gemini-3.5-flash",
+            "team_planning", "gemini-3.1-pro-preview",
             contract_tokens + 4500, TEAM_PLANNING_OUTPUT_CAP,
             (1, 1, 1), 2,
         )
@@ -115,9 +116,14 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
         "artifact_integration",
         "policy_guard",
     ):
+        optional_model = (
+            "gemini-3.1-pro-preview"
+            if optional_stage == "policy_guard"
+            else "gemini-3.5-flash"
+        )
         stages.append(
             _stage(
-                optional_stage, "gemini-3.5-flash",
+                optional_stage, optional_model,
                 base + 1800, 1800, (0, 1, 1), 2,
             )
         )
@@ -142,7 +148,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
         ),
         _stage(
             "independent_verification",
-            "gemini-3.5-flash",
+            "gemini-3.1-pro-preview",
             base + ANALYST_OUTPUT_CAP + draft_output_cap,
             VERIFIER_OUTPUT_CAP,
             (1, 1 + recommended_revisions, 1 + revisions),
@@ -158,7 +164,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
         ),
         _stage(
             "final_approval",
-            "gemini-3.5-flash",
+            "gemini-3.1-pro-preview",
             base + ANALYST_OUTPUT_CAP + draft_output_cap + VERIFIER_OUTPUT_CAP,
             1200,
             (1, 1, 1),
@@ -216,6 +222,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
             "Estimate covers work after requirements reinspection; intake calls already made are excluded.",
             "Executable ToolPack evidence reserves 60,000 input tokens per selected pack.",
             "The Project Owner team-planning and final-approval calls are included.",
+            "Decision-critical planning, independent verification, policy review, and final approval may use the approved Gemini 3.1 Pro Preview binding; routine creation remains on Flash tiers.",
             "Optional role nodes are conservatively reserved and removed after TeamPlan selection.",
             "Each revision round includes a new independent verification call.",
             "Development approval preserves explicit headroom for one final repair and verifier turn.",

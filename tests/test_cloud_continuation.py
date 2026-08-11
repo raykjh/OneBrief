@@ -66,7 +66,7 @@ def _requirements() -> RequirementsAnalysis:
 
 def _estimate() -> BudgetEnvelope:
     return BudgetEnvelope(
-        price_card_version="google-agent-platform-global-standard-search-2026-08-05",
+        price_card_version="google-agent-platform-global-standard-search-2026-08-12",
         price_source_url="https://example.test/pricing",
         endpoint="global-standard",
         estimated_source_tokens=100,

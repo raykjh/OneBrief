@@ -100,7 +100,7 @@ def evaluate_model_budget(
     """Reprice the approved work after the owner chooses each instance model."""
     by_id = {member.instance_id: member for member in plan.members}
     stage_models: dict[str, ApprovedModel] = {
-        "team_planning": ApprovedModel.GEMINI_3_5_FLASH,
+        "team_planning": ApprovedModel.GEMINI_3_1_PRO_PREVIEW,
     }
     for stage, owner_id in plan.stage_owners.items():
         stage_models[stage] = by_id[owner_id].model

@@ -1,4 +1,4 @@
-"""Minimal Vertex AI Gemini 3.5 availability check for OneBrief.
+"""Minimal Vertex AI Gemini availability check for OneBrief.
 
 This script uses Application Default Credentials and does not read or persist
 API keys. It intentionally sends a tiny prompt and prints only the response,
@@ -19,6 +19,13 @@ LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "global")
 MODEL_ID = os.getenv("ONEBRIEF_VERIFY_MODEL", "gemini-3.5-flash")
 
 
+def _thinking_config(model_id: str) -> types.ThinkingConfig:
+    # Match the production gateway's model-specific bounded reasoning policy.
+    if model_id == "gemini-3.1-pro-preview":
+        return types.ThinkingConfig(thinking_level="low")
+    return types.ThinkingConfig(thinking_budget=0)
+
+
 def main() -> None:
     client = genai.Client(
         vertexai=True,
@@ -30,8 +37,8 @@ def main() -> None:
         model=MODEL_ID,
         contents="Reply with exactly ONEBRIEF_OK and nothing else.",
         config=types.GenerateContentConfig(
-            max_output_tokens=16,
-            thinking_config=types.ThinkingConfig(thinking_level="minimal"),
+            max_output_tokens=128,
+            thinking_config=_thinking_config(MODEL_ID),
         ),
     )
 

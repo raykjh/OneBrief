@@ -93,9 +93,11 @@ class FakeGateway:
     def __init__(self, plan: TeamPlan):
         self.plan = plan
         self.calls = 0
+        self.models: list[str] = []
 
-    def generate_json(self, *, schema: type, **_: object):
+    def generate_json(self, *, schema: type, model: str, **_: object):
         self.calls += 1
+        self.models.append(model)
         assert schema is TeamPlanDraft
         return self.plan
 
@@ -113,6 +115,30 @@ def test_project_owner_selects_and_validates_minimal_team() -> None:
         AgentType.PROJECT_OWNER, AgentType.ANALYST, AgentType.MAKER, AgentType.CRITIC,
 
     ]
+    assert gateway.models == ["gemini-3.1-pro-preview"]
+    by_type = {member.agent_type: member for member in result.members}
+    assert by_type[AgentType.PROJECT_OWNER].model.value == "gemini-3.1-pro-preview"
+    assert by_type[AgentType.CRITIC].model.value == "gemini-3.1-pro-preview"
+    assert by_type[AgentType.ANALYST].model.value == "gemini-3.5-flash"
+    assert by_type[AgentType.MAKER].model.value == "gemini-3.5-flash"
+
+
+def test_decision_policy_downgrades_pro_from_routine_roles() -> None:
+    plan = _plan().model_copy(deep=True)
+    analyst = next(member for member in plan.members if member.agent_type == AgentType.ANALYST)
+    analyst.model = "gemini-3.1-pro-preview"
+    analyst.model_selection_reason = "Provider selected Pro for all complex work."
+
+    result = ProjectOwnerAgent(FakeGateway(plan)).run(
+        project_id="job-123",
+        intake=IntakeRequest(goal="Create a grounded guide."),
+        requirements=_requirements(),
+        sources=[_source()],
+    )
+
+    selected = next(member for member in result.members if member.agent_type == AgentType.ANALYST)
+    assert selected.model.value == "gemini-3.5-flash"
+    assert "Pro is reserved" in selected.model_selection_reason
 def test_project_owner_makes_the_final_toolpack_selection() -> None:
     plan = _plan().model_copy(update={"toolpack_ids": [ToolPackId.EXCHANGE]})
     result = ProjectOwnerAgent(FakeGateway(plan)).run(

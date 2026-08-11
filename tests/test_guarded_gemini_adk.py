@@ -6,6 +6,16 @@ from onebrief.budget_guard import RunStatus
 from onebrief.guarded_gemini import BudgetedGeminiClient
 
 
+def test_thinking_policy_is_compatible_with_pro_and_bounded_for_flash() -> None:
+    pro = BudgetedGeminiClient._thinking_config("gemini-3.1-pro-preview")
+    flash = BudgetedGeminiClient._thinking_config("gemini-3.5-flash")
+
+    assert pro.thinking_level == types.ThinkingLevel.LOW
+    assert pro.thinking_budget is None
+    assert flash.thinking_level is None
+    assert flash.thinking_budget == 0
+
+
 def test_adk_count_tokens_uses_generation_config_not_generate_content_config() -> None:
     captured = {}
 

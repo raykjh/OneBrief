@@ -24,6 +24,10 @@ completion.
    repository, or authoritative source, but they do not author the pack for OneBrief.
 3. The project owner chooses agents, models, knowledge, skills, tools, memory, ordering,
    and safe parallelism.
+   Model choice follows a deterministic criticality boundary: routine research,
+   analysis, creation, and revision stay on Flash tiers; team planning, independent
+   verification, governance, and final approval may use the approved higher-reasoning
+   model only after that exact cost is included in the immutable budget approval.
 4. Every artifact has one accountable maker. Independent verification may reject it,
    but correctable work returns to the original maker with evidence and instructions.
 5. Objective criteria use deterministic proof whenever possible. Semantic and

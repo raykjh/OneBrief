@@ -15,6 +15,11 @@ policy, budget policy, and final technical decisions were directed by the entran
 submitted runtime uses Gemini through Vertex AI and Google ADK; Codex is not a model or
 agent dependency of the submitted application.
 
+The runtime uses only Google Gemini models. Routine work uses Gemini 3.5 Flash tiers;
+bounded decision-critical stages may use Gemini 3.1 Pro Preview. The latter is a Google
+Cloud preview model and is disclosed as such. Every selected model is included in the
+budget estimate and enforced by the same immutable execution gateway.
+
 ## Pre-existing demonstration projects
 
 Exchange and JULPAE are pre-existing projects owned by the entrant. They are not submitted

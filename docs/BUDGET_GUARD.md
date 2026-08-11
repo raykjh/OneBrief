@@ -18,6 +18,21 @@ Before the provider is called, the gateway:
 After a successful response, provider-reported input, response, and thinking tokens
 replace the reservation with actual model cost. Failed calls release their reservation.
 
+## Decision-critical model escalation
+
+OneBrief does not upgrade the whole team. New team plans reserve
+`gemini-3.1-pro-preview` only for the one-time team-planning call and the selected
+project-owner, independent-critic, and guardian instances. Their executable stages are
+final approval, independent verification, and policy review. Investigator, analyst,
+maker, architect, creator, and integrator work remains on `gemini-3.5-flash` or
+`gemini-3.5-flash-lite`.
+
+The escalation is deterministic after the model-generated TeamPlan. If the provider
+assigns Pro to a routine role, code downgrades that role to Flash. The producer then
+reprices the exact stage bindings. An unaffordable or unapproved plan stops before the
+provider call; it never silently substitutes another model. Gemini 3.1 Pro Preview is
+global-endpoint-only, matching OneBrief's recorded `global-standard` price card.
+
 ## State transitions
 
 ```text
@@ -44,4 +59,3 @@ price-card version and token caps. It cannot cap unrelated Google Cloud services
 taxes, currency conversion, a provider price change, or calls that bypass the gateway.
 Production deployment must therefore deny direct model credentials to worker code and
 route all execution calls through this gateway service.
-

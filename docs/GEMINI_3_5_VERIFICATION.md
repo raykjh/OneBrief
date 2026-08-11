@@ -41,3 +41,20 @@ Firestore는 현재 제품에 필요하지 않아 사용하지 않으며 필수 
 - API 키를 사용하거나 저장하지 않았다.
 - Application Default Credentials를 사용했다.
 - 인증 토큰과 크레딧 코드를 출력 파일에 기록하지 않았다.
+
+## Gemini 3.1 Pro Preview 중요 판단 검증
+
+- 상태: PASS
+- 모델: `gemini-3.1-pro-preview`
+- Google Cloud 프로젝트: `onebrief-agent-20260805`
+- 위치: `global`
+- 응답: `ONEBRIEF_OK`
+- 입력: 12 tokens
+- 응답: 5 tokens
+- 추론: 73 tokens
+- 합계: 90 tokens
+
+Flash 전용 `MINIMAL` 사고 수준은 이 모델에서 400으로 거절되므로 검증 스크립트가
+Pro 모델에는 `LOW`를 사용한다. 최종 성공 호출의 공식 목록 가격 단순 추정비용은
+약 `$0.00096`이다. 이 검증은 OneBrief 프로젝트가 상위 모델에 실제 접근할 수 있고
+global endpoint에서 정상 응답을 받을 수 있음을 증명한다.

@@ -26,6 +26,43 @@ from onebrief.workspaces import WorkspaceManager
 
 TEAM_PLANNING_OUTPUT_CAP = 3000
 
+DECISION_CRITICAL_AGENT_TYPES = frozenset({
+    AgentType.PROJECT_OWNER,
+    AgentType.CRITIC,
+    AgentType.GUARDIAN,
+})
+
+
+def apply_decision_criticality_policy(plan: TeamPlan) -> TeamPlan:
+    """Reserve the higher-reasoning model for bounded judgment roles.
+
+    The provider still chooses the team and the routine Flash tier. Code owns the
+    cost/safety invariant: Pro cannot silently spread to makers or researchers,
+    while owner, critic, and guardian decisions receive the approved escalation.
+    """
+    members: list[TeamMemberPlan] = []
+    for member in plan.members:
+        if member.agent_type in DECISION_CRITICAL_AGENT_TYPES:
+            members.append(member.model_copy(update={
+                "model": ApprovedModel.GEMINI_3_1_PRO_PREVIEW,
+                "model_selection_reason": (
+                    "Decision-critical planning, independent verification, governance, or final "
+                    "approval uses the approved higher-reasoning model; the budget gateway still "
+                    "enforces the exact stage binding and hard cap."
+                ),
+            }))
+        elif member.model == ApprovedModel.GEMINI_3_1_PRO_PREVIEW:
+            members.append(member.model_copy(update={
+                "model": ApprovedModel.GEMINI_3_5_FLASH,
+                "model_selection_reason": (
+                    "Routine research, analysis, creation, and revision remain on Gemini 3.5 "
+                    "Flash; Pro is reserved for decision-critical roles."
+                ),
+            }))
+        else:
+            members.append(member)
+    return plan.model_copy(update={"members": members})
+
 PACK_CATALOG: dict[str, tuple[str, ...]] = {
     "knowledge_packs": ("project-contract", "approved-sources", "acceptance-criteria"),
     "skill_packs": ("existing-project-development", "implementation-verification", "financial-signal-validation"),
@@ -353,7 +390,7 @@ class ProjectOwnerAgent:
         )
         plan = self.gateway.generate_json(
             stage="team_planning",
-            model="gemini-3.5-flash",
+            model="gemini-3.1-pro-preview",
             contents=contents,
             schema=TeamPlanDraft,
             max_output_tokens=TEAM_PLANNING_OUTPUT_CAP,
@@ -377,9 +414,11 @@ class ProjectOwnerAgent:
                 "when no candidate is needed. Choosing a ToolPack activates tool_execution and its evidence. "
                 "Use only pack IDs in pack_catalog. Assign skill_packs only when their specialized guidance is needed: existing-project-development to architect or maker, implementation-verification only to critic, and financial-signal-validation to analyst, maker, critic, or guardian. Assign APT-3 temperament "
                 "as a tie-breaker profile, not authority. Select one model for every member from "
-                "approved_model_catalog and explain the cost/capability reason. Use gemini-3.5-flash "
-                "for the investigator that owns public_research and for complex work; use "
-                "gemini-3.5-flash-lite only for bounded simpler work. Model selection never changes role "
+                "approved_model_catalog and explain the cost/capability reason. Reserve "
+                "gemini-3.1-pro-preview for the project owner, independent critic, and guardian; "
+                "use gemini-3.5-flash for the investigator that owns public_research and complex "
+                "production work; use gemini-3.5-flash-lite only for bounded simpler work. Model "
+                "selection never changes role "
                 "authority. Use short safe lowercase IDs with hyphens and map every executable stage to "
                 "one selected instance. List every unselected type in "
                 "omitted_agent_types. Do not grant permissions; code derives authority from the registry."
@@ -388,6 +427,7 @@ class ProjectOwnerAgent:
         if not isinstance(plan, (TeamPlanDraft, TeamPlan)):
             raise TypeError("project owner returned an invalid TeamPlan type")
         plan = normalize_team_plan(plan, project_id=project_id)
+        plan = apply_decision_criticality_policy(plan)
         if intake.public_research_allowed:
             investigator_id = plan.stage_owners.get("public_research")
             plan = plan.model_copy(update={

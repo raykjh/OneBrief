@@ -56,6 +56,19 @@ def test_producer_reprices_owner_model_choices_and_builds_policy() -> None:
     selected = next(stage for stage in decision.selected_stages if stage.stage == "evidence_analysis")
     original = next(stage for stage in estimate.stages if stage.stage == "evidence_analysis")
     assert selected.recommended_cost_usd < original.recommended_cost_usd
+    assert policy.stage_models["team_planning"] == ApprovedModel.GEMINI_3_1_PRO_PREVIEW
+
+
+def test_price_card_reserves_pro_for_decision_critical_stages() -> None:
+    estimate = _estimate()
+    by_stage = {stage.stage: stage for stage in estimate.stages}
+
+    assert by_stage["team_planning"].model == "gemini-3.1-pro-preview"
+    assert by_stage["independent_verification"].model == "gemini-3.1-pro-preview"
+    assert by_stage["policy_guard"].model == "gemini-3.1-pro-preview"
+    assert by_stage["final_approval"].model == "gemini-3.1-pro-preview"
+    assert by_stage["evidence_analysis"].model == "gemini-3.5-flash"
+    assert by_stage["long_form_draft"].model == "gemini-3.5-flash"
 
 
 def test_producer_rejects_models_that_do_not_fit_approved_minimum() -> None:

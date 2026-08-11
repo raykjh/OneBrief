@@ -17,7 +17,7 @@ from onebrief.schemas import BudgetEnvelope, BudgetStatus, StageEstimate
 
 def _estimate(recommended: float = 0.10) -> BudgetEnvelope:
     return BudgetEnvelope(
-        price_card_version="google-agent-platform-global-standard-search-2026-08-05",
+        price_card_version="google-agent-platform-global-standard-search-2026-08-12",
         price_source_url="https://example.test/pricing",
         endpoint="global-standard",
         estimated_source_tokens=100,
@@ -133,4 +133,3 @@ def test_concurrent_reservations_cannot_double_spend(tmp_path: Path) -> None:
     assert outcomes == ["blocked", "reserved"]
     ledger = store.read()
     assert ledger.actual_usd_micros + ledger.reserved_usd_micros <= ledger.approval.approved_usd_micros
-
