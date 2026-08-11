@@ -9,7 +9,10 @@ param(
     [string]$Memory = "4Gi"
 )
 
-$ErrorActionPreference = "Stop"
+# gcloud writes informational provider details to stderr even when it exits 0.
+# Every native command below has an explicit LASTEXITCODE guard, so PowerShell
+# must not convert harmless stderr into a terminating script exception.
+$ErrorActionPreference = "Continue"
 $serviceAccount = "$JobName@$ProjectId.iam.gserviceaccount.com"
 $image = "$Region-docker.pkg.dev/$ProjectId/$Repository/worker`:$ImageTag"
 
