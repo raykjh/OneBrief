@@ -107,6 +107,24 @@ def _direct_urls(markdown: str) -> set[str]:
     return direct
 
 
+def _table_row_direct_urls(markdown: str) -> set[str]:
+    """Return direct URLs attached to concrete Markdown table data rows."""
+
+    direct: set[str] = set()
+    lines = markdown.splitlines()
+    for index, raw in enumerate(lines):
+        line = raw.strip()
+        next_line = lines[index + 1].strip() if index + 1 < len(lines) else ""
+        if not (line.startswith("|") and line.endswith("|")):
+            continue
+        if re.fullmatch(r"[-|: ]+", line):
+            continue
+        if re.fullmatch(r"\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?", next_line):
+            continue
+        direct.update(_direct_urls(line))
+    return direct
+
+
 def _unbounded_negative_segments(markdown: str) -> list[str]:
     segments = [
         item.strip()
@@ -172,13 +190,15 @@ def validate_evidence_sufficiency(
     ]
     if has_public_research and required_counts:
         required = max(required_counts)
-        observed = len(_direct_urls(body))
+        requires_table = bool(re.search(r"비교\s*(?:분석\s*)?(?:표|테이블)|\btable\b", research_text, re.IGNORECASE))
+        observed = len(_table_row_direct_urls(body) if requires_table else _direct_urls(body))
         if observed < required:
             issues.append(EvidenceSufficiencyIssue(
                 kind=EvidenceSufficiencyIssueKind.QUANTIFIED_EVIDENCE_SHORTFALL,
                 message=(
                     f"The completion contract requires at least {required} individually inspectable "
-                    f"research items, but only {observed} distinct item-level source URLs were found. "
+                    f"research items, but only {observed} distinct item-level source URLs were found"
+                    f"{' on comparison-table data rows' if requires_table else ''}. "
                     "Homepage links, categories, or market segments do not count as named items."
                 ),
             ))

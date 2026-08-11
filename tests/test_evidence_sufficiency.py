@@ -229,3 +229,27 @@ def test_scope_gate_allows_filing_classification_but_rejects_filing_action() -> 
 
     assert not any(item.kind.value == "out_of_scope_followup" for item in allowed.issues)
     assert any(item.kind.value == "out_of_scope_followup" for item in rejected.issues)
+
+
+def test_reference_list_urls_do_not_satisfy_a_comparison_table_contract() -> None:
+    body = """# 결과
+
+| 제품 | 기능성 |
+|---|---|
+| Alpha | 피로 개선 [F01] |
+| Beta | 항산화 [F01] |
+| Gamma | 눈 건강 [F01] |
+
+## 참고 문헌
+- https://example.com/sources/one
+- https://example.com/sources/two
+- https://example.com/sources/three
+"""
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="후보를 조사해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft(body),
+    )
+
+    assert any(item.kind.value == "quantified_evidence_shortfall" for item in result.issues)
