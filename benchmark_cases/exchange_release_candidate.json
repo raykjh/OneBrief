@@ -36,5 +36,12 @@
     ],
     "protect_original_worktree": true,
     "safe_apply_required": true
+  },
+  "intake": {
+    "output_target": "existing_project",
+    "desired_output": "production-ready bilingual web application",
+    "existing_project_id": "exchange-release-onebrief",
+    "upload_paths": [],
+    "supplement": "Use the committed repository, tests, documentation, and first-party data rules as authoritative. Preserve existing behavior. Use only official or permitted free APIs and never mock data. Do not trade, deploy, push, or access credentials."
   }
 }

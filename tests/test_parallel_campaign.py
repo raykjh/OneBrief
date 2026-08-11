@@ -100,10 +100,10 @@ def _evidence(manifest: object, lane_index: int, **updates: object) -> LaneEvide
     return LaneEvidence.model_validate(values)
 
 
-def test_definition_requires_three_isolated_relative_lanes() -> None:
+def test_definition_requires_bounded_isolated_relative_lanes() -> None:
     raw = _definition().model_dump(mode="json")
-    raw["lanes"] = raw["lanes"][:2]
-    with pytest.raises(ValidationError, match="exactly three"):
+    raw["lanes"] = raw["lanes"][:1]
+    with pytest.raises(ValidationError, match="between two and eight"):
         CampaignDefinition.model_validate(raw)
 
     raw = _definition().model_dump(mode="json")
@@ -127,6 +127,41 @@ def test_create_freezes_baseline_contracts_and_permissions(campaign: tuple) -> N
     assert manifest.integration_lane.allows_safe_apply
     assert (store.root / "campaign.json").is_file()
     assert all(len(lane.contract_sha256) == 64 for lane in manifest.lanes)
+
+
+def test_five_lane_matrix_uses_dynamic_aggregate_count(campaign: tuple) -> None:
+    store, manifest = campaign
+    raw = _definition().model_dump(mode="json")
+    raw["campaign_id"] = "parallel-five"
+    raw["total_budget_usd"] = 5
+    for index, lane_id in ((4, "extra-four"), (5, "extra-five")):
+        case = store.root.parent / "repo" / "cases" / f"case-{index}.json"
+        case.write_text(json.dumps({
+            "goal": f"goal {index}",
+            "acceptance_criteria": [f"criterion {index}"],
+        }), encoding="utf-8")
+        raw["lanes"].append({
+            "lane_id": lane_id,
+            "kind": "structured_artifact",
+            "case_path": f"cases/case-{index}.json",
+            "output_root": f"runs/lane-{index}",
+            "max_budget_usd": 1,
+        })
+    repo = store.root.parent / "repo"
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "five lane cases")
+    _git(repo, "tag", "five-lane-baseline")
+    raw["baseline_ref"] = "five-lane-baseline"
+    five_store = ParallelCampaignStore(store.root.parent / "five-campaign")
+    five_manifest = five_store.create(
+        repo_root=repo, definition=CampaignDefinition.model_validate(raw)
+    )
+    for index in range(5):
+        five_store.record_evidence(_evidence(five_manifest, index))
+    aggregate = five_store.integrate().aggregate
+    assert aggregate.lane_count == 5
+    assert aggregate.verified_complete_count == 5
+    assert aggregate.completion_rate == 1
 
 
 def test_record_evidence_enforces_baseline_mutation_and_budget(campaign: tuple) -> None:

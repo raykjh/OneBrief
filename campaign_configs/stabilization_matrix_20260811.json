@@ -1,0 +1,45 @@
+{
+  "schema_version": "onebrief-parallel-campaign-definition-v1",
+  "campaign_id": "onebrief-stabilization-20260811",
+  "baseline_ref": "onebrief-stabilization-20260811",
+  "image_digest": "sha256:87c307cb079b52cadb754778d1a25457f48b65fa548a92903f162b5b088f8f6b",
+  "total_budget_usd": 18.0,
+  "lanes": [
+    {
+      "lane_id": "incident-playbook",
+      "kind": "structured_artifact",
+      "case_path": "benchmark_cases/small_incident_playbook.json",
+      "output_root": "runs/incident-playbook",
+      "max_budget_usd": 1.5
+    },
+    {
+      "lane_id": "operations-workbook",
+      "kind": "structured_artifact",
+      "case_path": "benchmark_cases/structured_operations_workbook.json",
+      "output_root": "runs/operations-workbook",
+      "max_budget_usd": 2.5
+    },
+    {
+      "lane_id": "service-dashboard",
+      "kind": "greenfield_software",
+      "case_path": "benchmark_cases/small_service_dashboard.json",
+      "output_root": "runs/service-dashboard",
+      "max_budget_usd": 3.0
+    },
+    {
+      "lane_id": "public-data-greenfield",
+      "kind": "greenfield_software",
+      "case_path": "benchmark_cases/public_data_briefing_app.json",
+      "output_root": "runs/public-data-greenfield",
+      "max_budget_usd": 4.5
+    },
+    {
+      "lane_id": "exchange-existing",
+      "kind": "existing_software",
+      "case_path": "benchmark_cases/exchange_release_candidate.json",
+      "output_root": "runs/exchange-existing",
+      "max_budget_usd": 6.5,
+      "project_id": "exchange"
+    }
+  ]
+}

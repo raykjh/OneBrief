@@ -1,0 +1,7 @@
+request_id,received_at,category,summary,status,owner,due_date
+REQ-001,2026-08-01,access,신규 입사자 계정 생성,in_progress,ops-a,2026-08-03
+REQ-002,2026-08-02,billing,청구서 수신 주소 변경,open,ops-b,2026-08-05
+REQ-003,2026-08-03,incident,간헐적 로그인 지연,blocked,ops-a,2026-08-03
+REQ-004,2026-08-04,access,퇴사자 권한 회수,done,ops-c,2026-08-04
+REQ-005,2026-08-05,billing,중복 결제 확인 요청,open,ops-b,2026-08-06
+

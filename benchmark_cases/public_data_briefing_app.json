@@ -25,5 +25,11 @@
     ],
     "protect_original_worktree": true,
     "safe_apply_required": false
+  },
+  "intake": {
+    "output_target": "web_app",
+    "desired_output": "self-contained responsive web application with tests and run instructions",
+    "upload_paths": [],
+    "supplement": "Choose official Korean public weather, air-quality, and disaster-alert sources that need no paid account when possible. Use standard accessible responsive web patterns. Missing credentials must produce a documented degraded mode, not mock data."
   }
 }

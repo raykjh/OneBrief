@@ -101,13 +101,13 @@ class CampaignDefinition(BaseModel):
 
     @model_validator(mode="after")
     def validate_campaign(self) -> "CampaignDefinition":
-        if len(self.lanes) != 3:
-            raise ValueError("a parallel campaign requires exactly three test lanes")
+        if not 2 <= len(self.lanes) <= 8:
+            raise ValueError("a parallel campaign requires between two and eight test lanes")
         lane_ids = [item.lane_id for item in self.lanes]
         roots = [Path(item.output_root).as_posix().casefold() for item in self.lanes]
-        if len(set(lane_ids)) != 3:
+        if len(set(lane_ids)) != len(lane_ids):
             raise ValueError("test lane ids must be unique")
-        if len(set(roots)) != 3:
+        if len(set(roots)) != len(roots):
             raise ValueError("test lane output roots must be unique")
         if sum(item.max_budget_usd for item in self.lanes) > self.total_budget_usd:
             raise ValueError("lane budgets exceed the campaign budget")
@@ -221,8 +221,8 @@ class FailureCluster(BaseModel):
 
 
 class CampaignAggregate(BaseModel):
-    lane_count: int = 3
-    verified_complete_count: int = Field(ge=0, le=3)
+    lane_count: int = Field(ge=2, le=8)
+    verified_complete_count: int = Field(ge=0)
     completion_rate: float = Field(ge=0, le=1)
     total_actual_cost_usd: float = Field(ge=0)
     median_elapsed_seconds: float = Field(ge=0)
@@ -400,8 +400,9 @@ class ParallelCampaignStore:
         p95_index = max(0, min(len(elapsed) - 1, round(0.95 * (len(elapsed) - 1))))
         recovery_attempts = sum(item.recovery_attempts for item in evidence)
         aggregate = CampaignAggregate(
+            lane_count=len(evidence),
             verified_complete_count=sum(item.verified_complete for item in evidence),
-            completion_rate=sum(item.verified_complete for item in evidence) / 3,
+            completion_rate=sum(item.verified_complete for item in evidence) / len(evidence),
             total_actual_cost_usd=round(sum(item.actual_cost_usd for item in evidence), 6),
             median_elapsed_seconds=round(statistics.median(elapsed), 3),
             p95_elapsed_seconds=round(elapsed[p95_index], 3),
@@ -438,8 +439,8 @@ class ParallelCampaignStore:
         observed = {item.lane_id for item in receipt.results}
         if receipt.campaign_id != manifest.campaign_id or observed != expected:
             raise ValueError("revalidation must include each campaign lane exactly once")
-        if len(receipt.results) != 3:
-            raise ValueError("revalidation requires exactly three lane results")
+        if len(receipt.results) != len(manifest.lanes):
+            raise ValueError("revalidation requires one result for every campaign lane")
         promoted = receipt.model_copy(update={
             "promotion_allowed": all(item.passed for item in receipt.results)
         })

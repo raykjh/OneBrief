@@ -1,6 +1,6 @@
 # Parallel test campaigns
 
-OneBrief uses three isolated test lanes to find failures quickly and one integration
+OneBrief uses two to eight isolated test lanes to find failures quickly and one integration
 lane to decide what may change shared product code. Parallelism increases evidence
 throughput; it does not grant several workers permission to edit the same baseline.
 
@@ -8,23 +8,28 @@ throughput; it does not grant several workers permission to edit the same baseli
 
 1. Freeze one Git commit, tree hash, container image digest, model policy, case contract,
    and total budget in `campaign.json`.
-2. Run exactly three lanes from that baseline. Each lane has a unique output root and
+2. Run the frozen matrix lanes from that baseline. Each lane has a unique output root and
    budget cap and may only publish evidence.
 3. The integration lane clusters failure fingerprints. A failure seen in two or more
    distinct lanes is eligible for a common OneBrief fix. A one-lane issue remains in
    that project's ToolPack or knowledge pack.
 4. Only the integration lane changes common code. The candidate must then pass all
-   three lanes again before promotion.
+   entire matrix again before promotion.
 5. Safe apply is serialized. Test lanes never apply changes to a source project, and
    two jobs never apply to the same project concurrently.
 
-## Pilot lanes
+## Current five-lane stabilization matrix
 
-- `exchange-existing`: a larger existing software improvement with external data,
-  degraded modes, bilingual UI, build tests, HTTP checks, and safe-apply requirements.
-- `public-data-greenfield`: a new, executable public-data briefing application.
-- `operations-workbook`: a structured Excel deliverable with row-level traceability and
-  deterministic workbook verification.
+- Small `incident-playbook`: an authoritative-source operational document with factual
+  traceability and no public research.
+- Small `operations-workbook`: a structured Excel deliverable with row-level
+  traceability and deterministic workbook verification.
+- Small `service-dashboard`: a compact internal-data web application with build, test,
+  HTTP, and responsive UI checks.
+- Medium `public-data-greenfield`: a new executable application with permitted public
+  data, degraded modes, and source freshness.
+- Medium `exchange-existing`: an existing software improvement with external data,
+  bilingual UI, repository tests, semantic browser checks, and protected source.
 
 This spread is intentional. A homepage-only suite could prove web generation but would
 not reveal whether completion contracts, artifact verification, recovery, and packaging
@@ -55,8 +60,8 @@ jobs or spend model credits.
 ```
 
 Workers submit lane evidence with `record`. The accountable integration process then
-runs `integrate`, makes one reviewed common patch if warranted, reruns all three lanes,
-and records the final three-lane receipt with `revalidate`.
+runs `integrate`, makes one reviewed common patch if warranted, reruns the full matrix,
+and records the final matrix receipt with `revalidate`.
 
 The pilot configuration reserves at most USD 18: USD 8 for Exchange, USD 6 for the new
 web application, and USD 4 for the workbook. This is a configuration ceiling, not

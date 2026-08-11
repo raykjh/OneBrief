@@ -22,5 +22,14 @@
     ],
     "protect_original_worktree": true,
     "safe_apply_required": false
+  },
+  "intake": {
+    "output_target": "spreadsheet",
+    "desired_output": "one verified .xlsx workbook and a concise usage note",
+    "upload_paths": [
+      "benchmark_inputs/operations_requests.csv",
+      "benchmark_inputs/operations_rules.md"
+    ],
+    "supplement": "The uploaded CSV and rules are complete and authoritative. Use 2026-08-10 as the documented as-of date. Apply only supplied categorical rules; do not invent scores."
   }
 }

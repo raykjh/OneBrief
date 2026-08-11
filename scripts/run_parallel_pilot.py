@@ -54,7 +54,25 @@ def _require_ok(response, step: str) -> dict[str, object]:
     return response.json()
 
 
-def _lane_inputs(lane_id: str) -> tuple[str, str, str | None, list[Path], str]:
+def _lane_inputs(
+    lane_id: str, case: dict[str, object]
+) -> tuple[str, str, str | None, list[Path], str]:
+    intake = case.get("intake")
+    if isinstance(intake, dict):
+        upload_paths = intake.get("upload_paths", [])
+        if not isinstance(upload_paths, list):
+            raise ValueError(f"lane intake upload_paths must be a list: {lane_id}")
+        uploads = [(ROOT / str(item)).resolve() for item in upload_paths]
+        for path in uploads:
+            if not path.is_relative_to(ROOT) or not path.is_file():
+                raise FileNotFoundError(f"lane upload is unavailable: {path}")
+        return (
+            str(intake["output_target"]),
+            str(intake["desired_output"]),
+            str(intake["existing_project_id"]) if intake.get("existing_project_id") else None,
+            uploads,
+            str(intake.get("supplement", "")),
+        )
     if lane_id == "exchange-existing":
         return (
             "existing_project",
@@ -121,7 +139,9 @@ def submit_lane(campaign_root: Path, lane_id: str) -> dict[str, object]:
     spec = next(item for item in manifest.lanes if item.lane_id == lane_id)
     runtime = _configure_lane(campaign_root, lane_id, spec.max_budget_usd)
     case = json.loads((ROOT / spec.case_path).read_text(encoding="utf-8"))
-    output_target, desired_output, project_id, uploads, supplement = _lane_inputs(lane_id)
+    output_target, desired_output, project_id, uploads, supplement = _lane_inputs(
+        lane_id, case
+    )
 
     from fastapi.testclient import TestClient
     from onebrief.web_service import app, get_session_store
@@ -132,7 +152,12 @@ def submit_lane(campaign_root: Path, lane_id: str) -> dict[str, object]:
             (
                 path.name,
                 path.read_bytes(),
-                "text/csv" if path.suffix == ".csv" else "text/markdown",
+                {
+                    ".csv": "text/csv",
+                    ".md": "text/markdown",
+                    ".txt": "text/plain",
+                    ".json": "application/json",
+                }.get(path.suffix.lower(), "application/octet-stream"),
             ),
         )
         for path in uploads
