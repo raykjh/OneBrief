@@ -294,7 +294,7 @@ def test_reuse_prefers_playmode_checkpoint_over_newer_static_failure(
         preferred_job_dir=tmp_path / "newer-static-job",
     )
     assert preferred is not None
-    assert preferred.job_id == "newer-static-job"
+    assert preferred.job_id == "playmode-job"
     target = tmp_path / "new-job"
     (target / "work").mkdir(parents=True)
     seed_reusable_artifacts(candidate, target)
