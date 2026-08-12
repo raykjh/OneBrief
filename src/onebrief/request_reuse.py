@@ -153,12 +153,15 @@ def find_reuse_candidate(
     jobs_root: Path,
     intake: IntakeRequest,
     project: RegisteredProject | None,
+    *,
+    preferred_job_dir: Path | None = None,
 ) -> ReuseCandidate | None:
     if not jobs_root.is_dir():
         return None
     wanted = request_fingerprint(intake)
+    preferred = preferred_job_dir.resolve() if preferred_job_dir is not None else None
     candidates: list[
-        tuple[int, int, int, int, float, ReuseCandidate]
+        tuple[int, int, int, int, int, float, ReuseCandidate]
     ] = []
     for job_dir in jobs_root.iterdir():
         if not job_dir.is_dir() or job_dir.name.startswith("."):
@@ -203,10 +206,11 @@ def find_reuse_candidate(
             and not (job_dir / "work" / "code_change_set_retry_delta_r1.json").is_file()
         )
         candidates.append((
+            int(preferred is not None and job_dir.resolve() == preferred),
             int(has_code), quality[0], quality[1], int(not legacy_delta_risk),
             job_dir.stat().st_mtime, candidate,
         ))
-    return max(candidates, key=lambda item: item[:5])[5] if candidates else None
+    return max(candidates, key=lambda item: item[:6])[6] if candidates else None
 
 
 def seed_reusable_artifacts(candidate: ReuseCandidate, new_job_dir: Path) -> Path:

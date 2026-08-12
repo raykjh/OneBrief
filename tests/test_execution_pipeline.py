@@ -683,9 +683,14 @@ def test_adk_software_failure_keeps_most_progressed_candidate(
     assert CodeChangeSet.model_validate_json(
         (output_dir / "development_best_candidate.json").read_text("utf-8")
     ).summary == "improved"
-    assert (output_dir / "development_verification_failure.txt").read_text("utf-8").strip() == (
+    preserved_feedback = (
+        output_dir / "development_verification_failure.txt"
+    ).read_text("utf-8").strip()
+    assert preserved_feedback.startswith(
         "web observation failed: cjk leaked | labels identical"
     )
+    assert "Regression guard from the rejected attempt" in preserved_feedback
+    assert "no control | text same | lang same | one state" in preserved_feedback
 
 
 def test_adk_software_continuation_returns_bad_edit_anchor_to_same_maker(

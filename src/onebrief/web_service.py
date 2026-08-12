@@ -1147,7 +1147,17 @@ async def run_session(
                 )
             local_root = _local_jobs_root()
             local_root.mkdir(parents=True, exist_ok=True)
-            reuse_candidate = find_reuse_candidate(local_root, session.intake, selected_project)
+            preferred_reuse = (
+                Path(session.reuse_source_job_uri)
+                if session.reuse_source_job_uri
+                else None
+            )
+            reuse_candidate = find_reuse_candidate(
+                local_root,
+                session.intake,
+                selected_project,
+                preferred_job_dir=preferred_reuse,
+            )
             job_dir = create_job(
                 jobs_dir=local_root,
                 intake=session.intake,

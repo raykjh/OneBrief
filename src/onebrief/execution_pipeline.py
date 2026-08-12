@@ -1379,9 +1379,22 @@ class ExecutionPipeline:
                 elif best_failed_candidate is not None and best_failure_message is not None:
                     # Do not let a later repair erase already demonstrated
                     # progress.  The next maker turn and any continuation both
-                    # resume from the best deterministic checkpoint.
+                    # resume from the best deterministic checkpoint.  Preserve
+                    # the rejected attempt's newer blocker as a regression
+                    # constraint, otherwise the maker can repeat the same
+                    # locally-improving but globally-regressing edit forever.
+                    rejected_attempt_feedback = feedback
                     previous_change_set = best_failed_candidate
                     feedback = best_failure_message
+                    if (
+                        rejected_attempt_feedback.strip()
+                        and rejected_attempt_feedback.strip()
+                        != best_failure_message.strip()
+                    ):
+                        feedback = (
+                            f"{best_failure_message} | Regression guard from the rejected "
+                            f"attempt: {rejected_attempt_feedback}"
+                        )
                     self._write(
                         output_dir / "code_change_set.json",
                         best_failed_candidate.model_dump_json(indent=2),
