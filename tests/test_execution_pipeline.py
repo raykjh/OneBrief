@@ -1417,6 +1417,9 @@ def test_unity_missing_surface_feedback_requires_separate_executed_captures() ->
         "Unity visual test contract: responsive Unity visual evidence must define "
         "and capture both a measured mobile viewport and a desktop viewport"
     )
+    assert is_unity_evidence_contract_feedback(
+        "Unity visual evidence did not exercise requested locale(s): es"
+    )
 
 
 def test_duplicate_unity_screenshot_feedback_requires_capture_at_each_real_state() -> None:

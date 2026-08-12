@@ -182,6 +182,7 @@ def is_unity_evidence_contract_feedback(feedback: str) -> bool:
         "unity visual evidence requires a distinct rendered scenario",
         "responsive unity visual evidence must define and capture",
         "unity visual evidence reused an identical screenshot",
+        "unity visual evidence did not exercise requested locale",
     ))
 
 
@@ -1302,15 +1303,11 @@ class ExecutionPipeline:
             semantic_visual_repair
             and visual_repair_has_uncommitted_product_candidate(previous_change_set)
         )
-        candidate_file_evidence_repair = (
-            (multi_state_evidence_repair or unity_evidence_topology_repair)
-            and evidence_repair_has_bounded_uncommitted_candidate(previous_change_set)
-        )
         anchored_range_repair = development_repair_requires_anchored_range(
             multi_state_evidence_repair=multi_state_evidence_repair,
             unity_evidence_topology_repair=unity_evidence_topology_repair,
             semantic_visual_repair=semantic_visual_repair,
-        ) and not candidate_file_evidence_repair
+        )
         raw_exact_repair_required = not missing_unity_evidence_harness and (
             "namespace/full name begins" in prior_failure_text.casefold()
             or "the onebrief.visual test must" in prior_failure_text.casefold()
@@ -1331,9 +1328,15 @@ class ExecutionPipeline:
             # time, while retaining the trusted full sources in the closure
             # for exact-edit promotion and base-hash enforcement.
             maker_sources = []
+            visible_repair_paths = set(changed_paths)
+            if latest_repair_contract is not None:
+                visible_repair_paths.update(latest_repair_contract.permitted_paths)
             for source in prepared_sources:
                 compact = dict(source)
-                if str(compact.get("repository_path", "")) in changed_paths:
+                repository_path = str(compact.get("repository_path", ""))
+                if repository_path not in visible_repair_paths:
+                    continue
+                if repository_path in changed_paths:
                     compact["content"] = (
                         "Current candidate content is authoritative in previous_artifact. "
                         "Use an exact small repair against that candidate."
@@ -2188,24 +2191,15 @@ class ExecutionPipeline:
                 "to solve the underlying visual defect in this cleanup turn; trusted verification will expose "
                 "that production defect again on the next turn."
             )
-        if exact_repair_required and candidate_file_evidence_repair:
-            maker_instruction += (
-                "\nBOUNDED CANDIDATE-FILE REPAIR: The failing PlayMode evidence source is a generated file "
-                "that is still new relative to the approved repository and is below 8,000 UTF-8 bytes. Return "
-                "exactly that one path with base_sha256 null and its complete corrected content. Do not return "
-                "search, anchor_id, start_anchor, end_anchor, or replace. Preserve the namespace, class, all "
-                "previously passing scenarios, and every closing brace."
-            )
-        elif exact_repair_required and (
-            multi_state_evidence_repair or unity_evidence_topology_repair
-        ):
+        if anchored_range_repair:
             maker_instruction += (
                 "\nANCHORED-RANGE REPAIR: This evidence fix spans an existing capture region in one generated "
                 "PlayMode test. Return one change with start_anchor and end_anchor copied verbatim from the current "
                 "previous_artifact and replace that one range. Do not use search, anchor_id, or full-file content. "
                 "The replacement must preserve measured desktop and mobile viewport setup and execute and write "
                 "each unique screenshot at the moment Login, Lobby, and Settings is actually visible, then write "
-                "matching scenario metadata."
+                "matching scenario metadata. When the failure names a missing locale, add only one real locale "
+                "interaction and its measured before/after visible-text evidence; preserve every passing scenario."
             )
         elif semantic_visual_repair and candidate_file_visual_repair:
             maker_instruction += (
