@@ -1071,6 +1071,9 @@ class ExecutionPipeline:
             prior_failure.read_text("utf-8") if prior_failure.is_file() else ""
         )
         multi_state_evidence_repair = "reused an identical screenshot" in prior_failure_text.casefold()
+        unity_evidence_topology_repair = is_unity_evidence_contract_feedback(
+            prior_failure_text
+        )
         semantic_visual_repair = (
             "independent unity semantic visual observation failed"
             in prior_failure_text.casefold()
@@ -1079,8 +1082,12 @@ class ExecutionPipeline:
             semantic_visual_repair
             and visual_repair_has_uncommitted_product_candidate(previous_change_set)
         )
-        anchored_range_repair = multi_state_evidence_repair or (
+        anchored_range_repair = (
+            multi_state_evidence_repair
+            or unity_evidence_topology_repair
+            or (
             semantic_visual_repair and not candidate_file_visual_repair
+            )
         )
         raw_exact_repair_required = (
             "namespace/full name begins" in prior_failure_text.casefold()
@@ -1624,13 +1631,16 @@ class ExecutionPipeline:
                 "to solve the underlying visual defect in this cleanup turn; trusted verification will expose "
                 "that production defect again on the next turn."
             )
-        if exact_repair_required and multi_state_evidence_repair:
+        if exact_repair_required and (
+            multi_state_evidence_repair or unity_evidence_topology_repair
+        ):
             maker_instruction += (
                 "\nANCHORED-RANGE REPAIR: This evidence fix spans an existing capture region in one generated "
                 "PlayMode test. Return one change with start_anchor and end_anchor copied verbatim from the current "
                 "previous_artifact and replace that one range. Do not use search, anchor_id, or full-file content. "
-                "The replacement must execute and write each unique screenshot at the moment Login, Lobby, and "
-                "Settings is actually visible, then write matching scenario metadata."
+                "The replacement must preserve measured desktop and mobile viewport setup and execute and write "
+                "each unique screenshot at the moment Login, Lobby, and Settings is actually visible, then write "
+                "matching scenario metadata."
             )
         elif semantic_visual_repair and candidate_file_visual_repair:
             maker_instruction += (

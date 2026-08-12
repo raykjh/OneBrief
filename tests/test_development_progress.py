@@ -40,6 +40,21 @@ def test_distinct_visual_scenario_failure_outranks_static_contract_failure() -> 
     )
 
 
+def test_viewport_contract_remains_a_static_failure() -> None:
+    viewport_contract = (
+        "development verification failed: Unity visual test contract: responsive "
+        "Unity visual evidence must define and capture both a measured mobile viewport "
+        "and a desktop viewport"
+    )
+    scenario_failure = (
+        "Unity visual evidence requires a distinct rendered scenario for settings"
+    )
+
+    assert development_failure_quality(scenario_failure) > development_failure_quality(
+        viewport_contract
+    )
+
+
 def test_semantic_visual_failure_outranks_structural_runtime_evidence() -> None:
     semantic = "independent Unity semantic visual observation failed: mobile UI is clipped"
     evidence = "Unity runtime evidence validation failed: missing scenario"
