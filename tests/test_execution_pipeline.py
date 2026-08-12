@@ -1149,6 +1149,17 @@ def test_unity_png_failure_explains_direct_test_evidence_contract() -> None:
     assert "EncodeToPNG" in instruction
 
 
+def test_unity_discovery_failure_targets_test_namespace_not_asmdef() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "development verification failed: Unity visual test contract: add a discoverable "
+        "Unity PlayMode test whose namespace/full name begins with OneBrief.Visual"
+    )
+
+    instruction = report.revision_instructions[0]
+    assert "namespace begins exactly with OneBrief.Visual" in instruction
+    assert "Do not change or re-emit the asmdef" in instruction
+
+
 def test_project_developer_resolves_verified_anchor_id_without_retyping_source() -> None:
     previous = ProjectCodeChangeSet(
         summary="Existing candidate.",

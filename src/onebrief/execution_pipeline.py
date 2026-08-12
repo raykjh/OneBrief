@@ -380,7 +380,15 @@ class ExecutionPipeline:
         if not blockers:
             blockers = [feedback]
         first = blockers[0].casefold()
-        if "unity visual test contract" in first and "png" in first:
+        if (
+            "unity visual test contract" in first
+            and "namespace/full name begins" in first
+        ):
+            action = (
+                "Edit the generated PlayMode test source itself so its declared namespace begins exactly with "
+                "OneBrief.Visual. Do not change or re-emit the asmdef for this blocker."
+            )
+        elif "unity visual test contract" in first and "png" in first:
             action = (
                 "Implement PNG evidence directly inside the OneBrief.Visual PlayMode test source; do not delegate "
                 "to a production helper. Use the loaded real scene, RenderTexture, ReadPixels, EncodeToPNG, "
