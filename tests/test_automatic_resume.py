@@ -582,6 +582,20 @@ def test_trusted_semantic_failure_skips_only_unchanged_candidate_preflight(
 
     assert receipt is not None
     assert receipt["candidate_sha256"] == hashlib.sha256(candidate.read_bytes()).hexdigest()
+    chained = tmp_path / "chained-work"
+    chained.mkdir()
+    chained_candidate = chained / "code_change_set.json"
+    chained_failure = chained / "development_verification_failure.txt"
+    chained_candidate.write_bytes(candidate.read_bytes())
+    chained_failure.write_bytes(failure.read_bytes())
+    (chained / "trusted_reused_verification.json").write_text(
+        json.dumps(receipt), encoding="utf-8"
+    )
+    inherited = _trusted_semantic_failure_receipt(
+        chained, chained_candidate, chained_failure
+    )
+    assert inherited is not None
+    assert inherited["inherited_receipt_sha256"]
     (development / "change_set.json").write_text(
         '{"candidate":"different"}', encoding="utf-8"
     )

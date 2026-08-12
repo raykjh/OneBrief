@@ -104,6 +104,32 @@ def _trusted_semantic_failure_receipt(
     ToolPack before it can progress.
     """
 
+    if not candidate.is_file() or not failure.is_file():
+        return None
+    inherited = source_work / "trusted_reused_verification.json"
+    if inherited.is_file():
+        try:
+            inherited_payload = json.loads(inherited.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, AttributeError):
+            inherited_payload = {}
+        if (
+            inherited_payload.get("schema_version")
+            == "onebrief-trusted-semantic-failure-reuse-v1"
+            and inherited_payload.get("validator_version")
+            == TRUSTED_REVALIDATION_VERSION
+            and inherited_payload.get("candidate_sha256") == _sha256(candidate)
+            and inherited_payload.get("failure_sha256") == _sha256(failure)
+            and inherited_payload.get("base_head_sha")
+        ):
+            return {
+                **inherited_payload,
+                "inherited_receipt_sha256": _sha256(inherited),
+                "guarantee": (
+                    "The unchanged candidate and failure match the prior trusted receipt; "
+                    "every new delta still requires complete ToolPack verification."
+                ),
+            }
+
     development_change = source_work / "development" / "change_set.json"
     development_run = source_work / "development" / "development_run.json"
     evidence_summary = (
@@ -113,8 +139,6 @@ def _trusted_semantic_failure_receipt(
         source_work / "independent_observations" / "unity_ui_observation.json"
     )
     required = (
-        candidate,
-        failure,
         development_change,
         development_run,
         evidence_summary,
