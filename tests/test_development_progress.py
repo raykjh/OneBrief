@@ -72,3 +72,18 @@ def test_semantic_visual_failure_outranks_structural_runtime_evidence() -> None:
     evidence = "Unity runtime evidence validation failed: missing scenario"
 
     assert development_failure_quality(semantic) > development_failure_quality(evidence)
+
+
+def test_rejection_audit_suffixes_do_not_make_newer_runtime_evidence_worse() -> None:
+    primary = (
+        "Unity visual evidence reused an identical screenshot for lobby_desktop "
+        "and lobby_mobile"
+    )
+    with_audit = (
+        primary
+        + " | Rejected repair delta changed Assets/Tests/PlayMode/Flow.cs"
+        + " | Regression guard from the rejected attempt: older login failure"
+        + " | Repair control: do not repeat the same executable content"
+    )
+
+    assert development_failure_quality(with_audit) == development_failure_quality(primary)

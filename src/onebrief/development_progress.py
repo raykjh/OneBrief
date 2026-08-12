@@ -55,9 +55,23 @@ def development_failure_quality(message: str) -> tuple[int, int]:
     else:
         stage = 1
 
-    if " | " in normalized:
-        blockers = len([item for item in normalized.split(" | ") if item.strip()])
-    else:
-        blockers = 1
+    clauses = [item.strip() for item in normalized.split(" | ") if item.strip()]
+    audit_prefixes = (
+        "rejected repair delta",
+        "regression guard from the rejected attempt:",
+        "repair control:",
+        "previous failed verifier evidence:",
+    )
+    # Audit/control suffixes explain why an edit was rejected, but they are not
+    # additional defects in the current product. Counting them as blockers made
+    # an old one-line failure outrank a newer candidate that reached the same
+    # trusted stage and carried richer rejection history.
+    blockers = max(
+        1,
+        len([
+            clause for clause in clauses
+            if not clause.startswith(audit_prefixes)
+        ]),
+    )
     # At the same stage, fewer blockers are better.
     return stage, -blockers
