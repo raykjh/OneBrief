@@ -14,6 +14,7 @@ from onebrief.execution_pipeline import (
     ExecutionPipeline,
     development_repair_difficulty,
     visual_repair_production_candidate,
+    visual_repair_has_uncommitted_product_candidate,
     visual_repair_production_target_allowed,
 )
 from onebrief.execution_agents import DeveloperAgent
@@ -118,6 +119,21 @@ def test_visual_repair_maker_candidate_hides_proof_and_retains_product_code() ->
         "Assets/JULPAE/Scripts/LobbyLayout.cs"
     ]
     assert len(candidate.changes) == 2
+    assert visual_repair_has_uncommitted_product_candidate(candidate) is True
+
+
+def test_visual_repair_committed_source_does_not_use_candidate_file_mode() -> None:
+    candidate = ProjectCodeChangeSet(
+        summary="Committed product repair.",
+        changes=[{
+            "path": "Assets/JULPAE/Scripts/Localization/JulpaeLanguageDropdown.cs",
+            "base_sha256": "a" * 64,
+            "content": "public class JulpaeLanguageDropdown {}",
+            "reason": "Repair a committed source.",
+        }],
+    )
+
+    assert visual_repair_has_uncommitted_product_candidate(candidate) is False
 
 
 def test_existing_unity_multi_surface_repair_is_classified_complex() -> None:

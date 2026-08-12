@@ -157,6 +157,18 @@ def visual_repair_production_candidate(change_set):
     })
 
 
+def visual_repair_has_uncommitted_product_candidate(change_set) -> bool:
+    """A generated product file has candidate authority, not repository-anchor authority."""
+
+    if change_set is None:
+        return False
+    return any(
+        getattr(item, "base_sha256", None) is None
+        and visual_repair_production_target_allowed(str(getattr(item, "path", "")))
+        for item in getattr(change_set, "changes", [])
+    )
+
+
 def development_repair_difficulty(
     intake: IntakeRequest,
     requirements: RequirementsAnalysis,
@@ -1047,7 +1059,13 @@ class ExecutionPipeline:
             "independent unity semantic visual observation failed"
             in prior_failure_text.casefold()
         )
-        anchored_range_repair = multi_state_evidence_repair or semantic_visual_repair
+        candidate_file_visual_repair = (
+            semantic_visual_repair
+            and visual_repair_has_uncommitted_product_candidate(previous_change_set)
+        )
+        anchored_range_repair = multi_state_evidence_repair or (
+            semantic_visual_repair and not candidate_file_visual_repair
+        )
         raw_exact_repair_required = (
             "namespace/full name begins" in prior_failure_text.casefold()
             or "the onebrief.visual test must" in prior_failure_text.casefold()
@@ -1532,6 +1550,15 @@ class ExecutionPipeline:
                 "The replacement must execute and write each unique screenshot at the moment Login, Lobby, and "
                 "Settings is actually visible, then write matching scenario metadata."
             )
+        elif semantic_visual_repair and candidate_file_visual_repair:
+            maker_instruction += (
+                "\nCANDIDATE-FILE PRODUCTION REPAIR: The independent observer found a real rendered UI "
+                "defect and previous_artifact contains newly generated production files that do not exist in "
+                "the source repository yet. Choose exactly one production UI path. If that path has a null "
+                "base_sha256, return its complete corrected candidate content with null base_sha256; do not use "
+                "repository anchors for it. If you instead choose a committed source path, use one verbatim exact "
+                "or anchored edit. Never select tests, screenshots, evidence metadata, or assertions."
+            )
         elif exact_repair_required and semantic_visual_repair:
             maker_instruction += (
                 "\nANCHORED-RANGE PRODUCTION REPAIR: The independent observer found a real rendered UI "
@@ -1613,8 +1640,10 @@ class ExecutionPipeline:
             maker_output_tokens=(
                 min(
                     DEVELOPER_OUTPUT_CAP,
-                    5_000 if anchored_range_repair else (
+                    8_000 if candidate_file_visual_repair else (
+                        5_000 if anchored_range_repair else (
                         3_000 if exact_repair_required else 8_000
+                        )
                     ),
                 )
                 if prior_failure.is_file()
