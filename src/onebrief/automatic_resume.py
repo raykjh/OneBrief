@@ -572,6 +572,17 @@ def create_bounded_repair_resume(
         if source_failure_path.is_file() else ""
     )
     topology_failure = _is_unity_evidence_topology_failure(source_failure_text)
+    ledger_path = source_work / "convergence_ledger.json"
+    try:
+        source_ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        ledger_contracts = source_ledger.get("repair_contracts", [])
+        terminal_ledger_gate = bool(
+            ledger_contracts
+            and not bool(ledger_contracts[-1].get("execution_allowed"))
+        )
+    except (OSError, json.JSONDecodeError, AttributeError, TypeError):
+        source_ledger = None
+        terminal_ledger_gate = False
     reused: list[str] = []
     reusable_names = [
         "project_architecture.json",
@@ -581,7 +592,8 @@ def create_bounded_repair_resume(
         "analysis.json",
     ]
     if not topology_failure:
-        reusable_names.append("convergence_ledger.json")
+        if not terminal_ledger_gate:
+            reusable_names.append("convergence_ledger.json")
         contract_path = source_work / "repair_contract.json"
         try:
             reusable_contract = bool(json.loads(
@@ -601,6 +613,26 @@ def create_bounded_repair_resume(
         if source.is_file():
             shutil.copy2(source, child_work / name)
             reused.append(name)
+    if (
+        not topology_failure
+        and terminal_ledger_gate
+        and isinstance(source_ledger, dict)
+    ):
+        # The immutable parent remains the audit source for every denied
+        # contract. A user-authorized continuation keeps its observations and
+        # executable history, but a terminal denial cannot remain the active
+        # child gate or it would block before the selected newer checkpoint is
+        # revalidated.
+        resumed_ledger = dict(source_ledger)
+        resumed_ledger["repair_contracts"] = [
+            item for item in source_ledger.get("repair_contracts", [])
+            if isinstance(item, dict) and bool(item.get("execution_allowed"))
+        ]
+        (child_work / "convergence_ledger.json").write_text(
+            json.dumps(resumed_ledger, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        reused.append("convergence_ledger.json")
     pending_candidates = [
         source_work / "development_pending_promotion.json",
         *sorted(

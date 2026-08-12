@@ -343,7 +343,8 @@ def test_rejected_candidate_resumes_without_repeating_completed_context(tmp_path
         "missing test assembly", encoding="utf-8"
     )
     (work / "convergence_ledger.json").write_text(
-        '{"schema_version":"onebrief-convergence-ledger-v1","observations":[],"repair_contracts":[]}',
+        '{"schema_version":"onebrief-convergence-ledger-v1","observations":[],"repair_contracts":['
+        '{"execution_allowed":false}]}',
         encoding="utf-8",
     )
     (work / "repair_contract.json").write_text(
@@ -435,6 +436,10 @@ def test_bounded_resume_discards_stale_non_executable_contract(tmp_path: Path) -
 
     assert (child / "work" / "convergence_ledger.json").is_file()
     assert not (child / "work" / "repair_contract.json").exists()
+    resumed_ledger = json.loads(
+        (child / "work" / "convergence_ledger.json").read_text("utf-8")
+    )
+    assert resumed_ledger["repair_contracts"] == []
 
 
 def test_static_unity_topology_resume_skips_duplicate_revalidation_and_stale_gate(
