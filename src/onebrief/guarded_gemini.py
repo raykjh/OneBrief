@@ -21,12 +21,15 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class BudgetedGeminiClient:
+    PROVIDER_TIMEOUT_MS = 360_000
+
     def __init__(self, run_dir: Path):
         self.store = BudgetStore(run_dir)
         self.client = genai.Client(
             vertexai=True,
             project=os.getenv("GOOGLE_CLOUD_PROJECT", "onebrief-agent-20260805"),
             location=os.getenv("GOOGLE_CLOUD_LOCATION", "global"),
+            http_options=types.HttpOptions(timeout=self.PROVIDER_TIMEOUT_MS),
         )
 
     @staticmethod

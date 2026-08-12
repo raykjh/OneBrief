@@ -16,6 +16,10 @@ def test_thinking_policy_is_compatible_with_pro_and_bounded_for_flash() -> None:
     assert flash.thinking_budget == 0
 
 
+def test_provider_timeout_is_bounded() -> None:
+    assert BudgetedGeminiClient.PROVIDER_TIMEOUT_MS == 360_000
+
+
 def test_adk_count_tokens_uses_generation_config_not_generate_content_config() -> None:
     captured = {}
 
