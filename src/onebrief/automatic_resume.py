@@ -440,6 +440,22 @@ def create_bounded_repair_resume(
         shutil.copy2(candidate, child_work / "code_change_set.json")
         shutil.copy2(failure, child_work / "development_verification_failure.txt")
         reused.extend([candidate.name, failure.name])
+    # A continuation can run under newer trusted validators than its parent.
+    # Revalidate the preserved candidate before paying the same maker to edit
+    # it. If the failure remains, the normal convergence loop receives that
+    # fresh evidence on its next turn; if the validator was corrected, the
+    # candidate progresses without an unnecessary model call.
+    revalidation_marker = {
+        "schema_version": "onebrief-reverify-existing-candidate-v1",
+        "validator_version": TRUSTED_REVALIDATION_VERSION,
+        "source_job_id": source_record.job_id,
+        "candidate_sha256": _sha256(child_work / "code_change_set.json"),
+    }
+    (child_work / "reverify_existing_candidate.json").write_text(
+        json.dumps(revalidation_marker, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    reused.append("reverify_existing_candidate.json")
     team_plans = sorted((source_work / "workspace" / "projects").glob(
         "*/02_plan_and_teams/team_plan.json"
     )) if (source_work / "workspace" / "projects").is_dir() else []

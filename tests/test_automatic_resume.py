@@ -334,6 +334,11 @@ def test_rejected_candidate_resumes_without_repeating_completed_context(tmp_path
     assert (child / "work" / "analysis.json").is_file()
     assert (child / "work" / "code_change_set.json").is_file()
     assert (child / "work" / "development_verification_failure.txt").is_file()
+    marker = json.loads(
+        (child / "work" / "reverify_existing_candidate.json").read_text("utf-8")
+    )
+    assert marker["source_job_id"] == source.name
+    assert marker["candidate_sha256"]
     assert plan.remaining_approved_usd == 0.01
     assert plan.cumulative_actual_usd == 0.002
     assert plan.aggregate_approval_ceiling_usd == 0.012
