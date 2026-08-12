@@ -470,6 +470,7 @@ def can_attempt_bounded_repair_resume(job_dir: Path) -> bool:
         or "development repair stalled" in message
         or "convergence progress gate stopped verification" in message
         or "convergence progress gate blocked a non-learning repair" in message
+        or "convergence progress gate blocked a repeated repair strategy" in message
         or "convergence progress gate requires" in message
         or "repeating an identical repair candidate" in message
         or "existing file was not included in approved model context" in message

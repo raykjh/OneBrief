@@ -239,7 +239,7 @@ def validate_and_copy_unity_visual_evidence(
     observed_states: set[str] = set()
     observed_state_sequence: list[str] = []
     screenshot_sources: list[tuple[Path, str]] = []
-    screenshot_digests: dict[str, str] = {}
+    screenshot_digests: dict[str, UnityVisualScenario] = {}
     for scenario in manifest.scenarios:
         has_locale_measurement = any(value is not None for value in (
             scenario.expected_locale,
@@ -296,12 +296,28 @@ def validate_and_copy_unity_visual_evidence(
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
         previous_scenario = screenshot_digests.get(digest)
         if previous_scenario is not None:
-            raise RuntimeError(
-                "Unity visual evidence reused an identical screenshot for "
-                f"{previous_scenario} and {scenario.scenario_id}; the capture does not prove "
-                "the visible UI changed between scenarios"
+            previous_surface = _normalized_ui_surface(previous_scenario.observed_state or "")
+            current_surface = _normalized_ui_surface(scenario.observed_state or "")
+            same_return_state = bool(
+                previous_surface
+                and previous_surface == current_surface
+                and previous_scenario.interaction
+                and scenario.interaction
+                and (previous_scenario.assertion_count or 0) > 0
+                and (scenario.assertion_count or 0) > 0
+                and not any(value is not None for value in (
+                    previous_scenario.expected_locale,
+                    scenario.expected_locale,
+                ))
             )
-        screenshot_digests[digest] = scenario.scenario_id
+            if not same_return_state:
+                raise RuntimeError(
+                    "Unity visual evidence reused an identical screenshot for "
+                    f"{previous_scenario.scenario_id} and {scenario.scenario_id}; the capture does not prove "
+                    "the visible UI changed between scenarios"
+                )
+        else:
+            screenshot_digests[digest] = scenario
         screenshot_sources.append((source, scenario.screenshot_path))
 
     required = requested_locales(goal_text)

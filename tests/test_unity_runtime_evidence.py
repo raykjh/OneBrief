@@ -245,6 +245,50 @@ def test_ordered_ui_journey_accepts_distinct_final_return_evidence(tmp_path: Pat
     assert summary.scenario_count == 4
 
 
+def test_ordered_ui_journey_accepts_identical_screenshot_for_real_return_state(
+    tmp_path: Path,
+) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results)
+    scenarios = [
+        ui_scenario("login", width=64, height=32),
+        ui_scenario("lobby", width=32, height=64, interaction="login click"),
+        ui_scenario("settings", width=32, height=64, interaction="settings click"),
+        ui_scenario("lobby-returned", width=32, height=64, interaction="back click"),
+    ]
+    write_evidence(tmp_path, scenarios)
+    lobby = tmp_path / "onebrief-evidence" / str(scenarios[1]["screenshot_path"])
+    returned = tmp_path / "onebrief-evidence" / str(scenarios[3]["screenshot_path"])
+    returned.write_bytes(lobby.read_bytes())
+
+    summary = validate_and_copy_unity_visual_evidence(
+        tmp_path,
+        results,
+        tmp_path / "packaged",
+        "login -> lobby -> settings -> lobby",
+    )
+
+    assert summary.scenario_count == 4
+
+
+def test_identical_screenshot_still_rejects_different_ui_states(tmp_path: Path) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results)
+    scenarios = [
+        ui_scenario("login", width=64, height=32),
+        ui_scenario("lobby", width=64, height=32, interaction="login click"),
+    ]
+    write_evidence(tmp_path, scenarios)
+    login = tmp_path / "onebrief-evidence" / str(scenarios[0]["screenshot_path"])
+    lobby = tmp_path / "onebrief-evidence" / str(scenarios[1]["screenshot_path"])
+    lobby.write_bytes(login.read_bytes())
+
+    with pytest.raises(RuntimeError, match="identical screenshot"):
+        validate_and_copy_unity_visual_evidence(
+            tmp_path, results, tmp_path / "packaged", "login -> lobby",
+        )
+
+
 def test_combined_final_state_names_do_not_replace_distinct_surface_screenshots(
     tmp_path: Path,
 ) -> None:

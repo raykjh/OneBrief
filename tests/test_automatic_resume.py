@@ -832,6 +832,25 @@ def test_stalled_distinct_unity_surface_evidence_can_resume(tmp_path: Path) -> N
     assert can_attempt_bounded_repair_resume(job) is True
 
 
+def test_repeated_strategy_gate_can_revalidate_after_validator_fix(tmp_path: Path) -> None:
+    job = tmp_path / "repeated-strategy"
+    _failed_job(job)
+    record = JobRecord.model_validate_json((job / "job.json").read_text("utf-8"))
+    record = record.model_copy(update={
+        "message": (
+            "convergence progress gate blocked a repeated repair strategy: "
+            "no new evidence"
+        ),
+    })
+    (job / "job.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    (job / "work" / "development_verification_failure.txt").write_text(
+        "Unity visual evidence reused an identical screenshot for lobby and lobby_return",
+        encoding="utf-8",
+    )
+
+    assert can_attempt_bounded_repair_resume(job) is True
+
+
 def test_non_learning_promotion_gate_can_resume_after_runtime_improvement(tmp_path: Path) -> None:
     job = tmp_path / "non-learning-promotion"
     _failed_job(job)
