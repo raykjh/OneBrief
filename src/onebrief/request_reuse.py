@@ -234,6 +234,29 @@ def seed_reusable_artifacts(candidate: ReuseCandidate, new_job_dir: Path) -> Pat
         shutil.copy2(source, target)
         digest = hashlib.sha256(target.read_bytes()).hexdigest()
         copied.append({"source": name, "target": target_name, "sha256": digest})
+    copied_targets = {item["target"] for item in copied}
+    if {
+        "code_change_set.json",
+        "development_verification_failure.txt",
+    }.issubset(copied_targets):
+        marker = {
+            "schema_version": "onebrief-reverify-existing-candidate-v1",
+            "source_job_id": candidate.job_id,
+            "candidate_sha256": hashlib.sha256(
+                (target_work / "code_change_set.json").read_bytes()
+            ).hexdigest(),
+            "reason": "A reused failed candidate must be checked by the current trusted validators before repair.",
+        }
+        marker_path = target_work / "reverify_existing_candidate.json"
+        marker_path.write_text(
+            json.dumps(marker, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        copied.append({
+            "source": "current_trusted_validator",
+            "target": "reverify_existing_candidate.json",
+            "sha256": hashlib.sha256(marker_path.read_bytes()).hexdigest(),
+        })
     manifest = {
         "schema_version": "onebrief-reuse-manifest-v1",
         "source_job_id": candidate.job_id,

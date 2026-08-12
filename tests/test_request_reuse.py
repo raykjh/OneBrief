@@ -231,3 +231,8 @@ def test_reuse_prefers_playmode_checkpoint_over_newer_static_failure(
     assert "unity_playmode_visual_tests" in (
         target / "work" / "development_verification_failure.txt"
     ).read_text("utf-8")
+    marker = json.loads(
+        (target / "work" / "reverify_existing_candidate.json").read_text("utf-8")
+    )
+    assert marker["source_job_id"] == "playmode-job"
+    assert marker["candidate_sha256"]
