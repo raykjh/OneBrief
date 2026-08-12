@@ -415,8 +415,17 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
             (job_dir / "inputs" / "budget_estimate.json").read_text(encoding="utf-8")
         )
         approved_usd = micros_to_dollars(BudgetStore(run_dir).read().approval.approved_usd_micros)
+        continuation_manifest = job_dir / "work" / "continuation_manifest.json"
+        continuation_cost_stages = (
+            {"long_form_draft", "independent_verification", "final_approval"}
+            if continuation_manifest.is_file()
+            else None
+        )
         model_decision, model_policy = evaluate_model_budget(
-            estimate, plan, approved_usd=approved_usd
+            estimate,
+            plan,
+            approved_usd=approved_usd,
+            cost_stage_names=continuation_cost_stages,
         )
         persist_model_approval(
             run_dir=run_dir,

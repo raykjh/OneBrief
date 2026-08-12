@@ -244,6 +244,7 @@ def evaluate_model_budget(
     plan: TeamPlan,
     *,
     approved_usd: float,
+    cost_stage_names: set[str] | None = None,
 ) -> tuple[ModelBudgetDecision, ModelExecutionPolicy]:
     """Reprice the approved work after the owner chooses each instance model."""
     by_id = {member.instance_id: member for member in plan.members}
@@ -269,6 +270,8 @@ def evaluate_model_budget(
 
     selected: list[StageEstimate] = []
     for stage in estimate.stages:
+        if cost_stage_names is not None and stage.stage not in cost_stage_names:
+            continue
         chosen = stage_models.get(stage.stage)
         if chosen is None:
             if stage.minimum_calls == 0:

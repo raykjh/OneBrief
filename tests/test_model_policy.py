@@ -81,6 +81,28 @@ def test_producer_rejects_models_that_do_not_fit_approved_minimum() -> None:
         evaluate_model_budget(_estimate(), minimal_team_plan("job-models"), approved_usd=0.000001)
 
 
+def test_bounded_continuation_reprices_only_unfinished_model_stages() -> None:
+    estimate = _estimate()
+    plan = minimal_team_plan("job-models")
+    full, _ = evaluate_model_budget(
+        estimate, plan, approved_usd=estimate.maximum_cost_usd
+    )
+    continuation, policy = evaluate_model_budget(
+        estimate,
+        plan,
+        approved_usd=estimate.maximum_cost_usd,
+        cost_stage_names={
+            "long_form_draft", "independent_verification", "final_approval"
+        },
+    )
+
+    assert {item.stage for item in continuation.selected_stages} == {
+        "long_form_draft", "independent_verification", "final_approval"
+    }
+    assert continuation.minimum_cost_usd < full.minimum_cost_usd
+    assert policy.stage_models["team_planning"] == ApprovedModel.GEMINI_3_1_PRO_PREVIEW
+
+
 class RecordingGateway:
     def __init__(self):
         self.calls: list[tuple[str, str]] = []
