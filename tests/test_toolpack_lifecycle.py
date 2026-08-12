@@ -118,6 +118,32 @@ def test_regeneration_invalidates_approval_when_repository_head_changes(tmp_path
     assert regenerated.generated.repository_head_sha != first.generated.repository_head_sha
 
 
+def test_stale_capability_binding_keeps_project_visible_for_regeneration(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _root, registry = _registered_unity(tmp_path, monkeypatch)
+    lifecycle = ProjectToolPackLifecycle("toolpack-game", registry)
+    generated = lifecycle.generate_and_qualify()
+    lifecycle.approve(generated.qualification.toolpack_sha256)
+    path = registry / "toolpack-game" / "toolpacks" / "generated.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["capability_packs"][0]["definition_sha256"] = "0" * 64
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    stale = lifecycle.state()
+    project = ProjectCatalog(
+        exchange_root=tmp_path / "missing-exchange",
+        registry_root=registry,
+    ).get("toolpack-game")
+
+    assert stale.status == "needs_generation"
+    assert stale.execution_ready is False
+    assert "stale" in stale.execution_blockers[0]
+    assert project.project_id == "toolpack-game"
+    assert project.toolpack_status == "needs_generation"
+    assert lifecycle.generate_and_qualify().status == "approved"
+
+
 def test_toolpack_web_generate_review_and_approve(tmp_path: Path, monkeypatch) -> None:
     _root, registry = _registered_unity(tmp_path, monkeypatch)
     monkeypatch.setenv("ONEBRIEF_PROJECTS_ROOT", str(registry))

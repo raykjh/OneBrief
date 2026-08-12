@@ -470,7 +470,20 @@ class ProjectToolPackLifecycle:
         return self.state()
 
     def state(self) -> ToolPackLifecycleState:
-        generated = self._load("generated.json", GeneratedProjectToolPack)
+        try:
+            generated = self._load("generated.json", GeneratedProjectToolPack)
+        except ValueError:
+            # A capability-pack implementation/version change intentionally makes
+            # the persisted composition stale. Keep the imported project visible
+            # so it can be regenerated, but never expose the old approval as ready.
+            return ToolPackLifecycleState(
+                project_id=self.project_id,
+                status="needs_generation",
+                execution_ready=False,
+                execution_blockers=[
+                    "The stored ToolPack component binding is stale; regenerate and approve the new exact hash."
+                ],
+            )
         qualification = self._load("qualification.json", ToolPackQualification)
         approval = self._load("approval.json", ToolPackApproval)
         if generated is None:
