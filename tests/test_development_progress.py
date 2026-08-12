@@ -25,6 +25,21 @@ def test_runtime_evidence_failure_outranks_playmode_failure() -> None:
     )
 
 
+def test_distinct_visual_scenario_failure_outranks_static_contract_failure() -> None:
+    static_failure = (
+        "development verification failed: Unity visual test contract must "
+        "observe product text"
+    )
+    scenario_failure = (
+        "Unity visual evidence requires a distinct rendered scenario for "
+        "every requested real UI surface: login"
+    )
+
+    assert development_failure_quality(scenario_failure) > development_failure_quality(
+        static_failure
+    )
+
+
 def test_semantic_visual_failure_outranks_structural_runtime_evidence() -> None:
     semantic = "independent Unity semantic visual observation failed: mobile UI is clipped"
     evidence = "Unity runtime evidence validation failed: missing scenario"
