@@ -180,6 +180,54 @@ def _trusted_semantic_failure_receipt(
             "every new delta still requires complete ToolPack verification."
         ),
     }
+
+
+def _is_unity_evidence_topology_failure(value: str) -> bool:
+    text = " ".join(value.split()).casefold()
+    return any(marker in text for marker in (
+        "unity visual test contract: add",
+        "unity visual evidence requires a distinct rendered scenario",
+        "responsive unity visual evidence must define and capture",
+        "unity visual evidence reused an identical screenshot",
+    ))
+
+
+def _trusted_static_topology_failure_receipt(
+    source_work: Path, candidate: Path, failure: Path
+) -> dict[str, object] | None:
+    """Bind a deterministic static evidence-topology failure to one candidate."""
+
+    if not candidate.is_file() or not failure.is_file():
+        return None
+    failure_text = failure.read_text(encoding="utf-8", errors="replace")
+    if not _is_unity_evidence_topology_failure(failure_text):
+        return None
+    provenance = source_work / "project_snapshot" / "restore_evidence.json"
+    if not provenance.is_file():
+        return None
+    try:
+        payload = json.loads(provenance.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return None
+    if (
+        payload.get("status") != "verified_and_approved"
+        or not payload.get("source_head_sha")
+        or not payload.get("source_toolpack_sha256")
+    ):
+        return None
+    return {
+        "schema_version": "onebrief-trusted-static-topology-failure-reuse-v1",
+        "validator_version": TRUSTED_REVALIDATION_VERSION,
+        "candidate_sha256": _sha256(candidate),
+        "failure_sha256": _sha256(failure),
+        "provenance_sha256": _sha256(provenance),
+        "base_head_sha": str(payload["source_head_sha"]),
+        "toolpack_sha256": str(payload["source_toolpack_sha256"]),
+        "guarantee": (
+            "The unchanged candidate skips only the already-proven static topology failure; "
+            "every new evidence delta still requires complete ToolPack verification."
+        ),
+    }
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -420,6 +468,7 @@ def can_attempt_bounded_repair_resume(job_dir: Path) -> bool:
         "development verification failed:" in message
         or "development verification failed:" in preserved_failure
         or "development repair stalled" in message
+        or "convergence progress gate stopped verification" in message
         or "repeating an identical repair candidate" in message
         or "existing file was not included in approved model context" in message
         or "exactrepairprojectcodechangeset" in message
@@ -516,16 +565,23 @@ def create_bounded_repair_resume(
     source_work = source_job / "work"
     child_work = child / "work"
     child_work.mkdir(parents=True, exist_ok=True)
+    source_failure_path = source_work / "development_verification_failure.txt"
+    source_failure_text = (
+        source_failure_path.read_text(encoding="utf-8", errors="replace")
+        if source_failure_path.is_file() else ""
+    )
+    topology_failure = _is_unity_evidence_topology_failure(source_failure_text)
     reused: list[str] = []
-    for name in (
+    reusable_names = [
         "project_architecture.json",
         "public_research.json",
         "public_research.md",
         "public_research_unavailable.json",
         "analysis.json",
-        "convergence_ledger.json",
-        "repair_contract.json",
-    ):
+    ]
+    if not topology_failure:
+        reusable_names.extend(["convergence_ledger.json", "repair_contract.json"])
+    for name in reusable_names:
         source = source_work / name
         if source.is_file():
             shutil.copy2(source, child_work / name)
@@ -588,6 +644,10 @@ def create_bounded_repair_resume(
         trusted_failure = _trusted_semantic_failure_receipt(
             source_work, candidate, failure
         )
+        if trusted_failure is None:
+            trusted_failure = _trusted_static_topology_failure_receipt(
+                source_work, candidate, failure
+            )
     rejected_fingerprints = discover_rejected_change_fingerprints(source_work)
     if rejected_fingerprints:
         write_rejected_change_fingerprints(child_work, rejected_fingerprints)

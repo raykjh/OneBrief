@@ -162,7 +162,18 @@ def unity_evidence_contract_target_allowed(path: str) -> bool:
     """Allow evidence-topology repairs only in the executed PlayMode harness."""
 
     normalized = path.replace("\\", "/").strip("/").casefold()
-    return "/tests/playmode/" in f"/{normalized}" and normalized.endswith(".cs")
+    return (
+        "/tests/playmode/" in f"/{normalized}"
+        and normalized.endswith((".cs", ".asmdef"))
+    )
+
+
+def is_missing_unity_evidence_harness(feedback: str) -> bool:
+    normalized = " ".join(feedback.split()).casefold()
+    return any(marker in normalized for marker in (
+        "add a discoverable unity playmode test",
+        "add a unity test .asmdef",
+    ))
 
 
 def is_unity_evidence_contract_feedback(feedback: str) -> bool:
@@ -1240,6 +1251,9 @@ class ExecutionPipeline:
         unity_evidence_topology_repair = is_unity_evidence_contract_feedback(
             prior_failure_text
         )
+        missing_unity_evidence_harness = is_missing_unity_evidence_harness(
+            prior_failure_text
+        )
         semantic_visual_repair = (
             "independent unity semantic visual observation failed"
             in prior_failure_text.casefold()
@@ -1253,7 +1267,7 @@ class ExecutionPipeline:
             unity_evidence_topology_repair=unity_evidence_topology_repair,
             semantic_visual_repair=semantic_visual_repair,
         )
-        raw_exact_repair_required = (
+        raw_exact_repair_required = not missing_unity_evidence_harness and (
             "namespace/full name begins" in prior_failure_text.casefold()
             or "the onebrief.visual test must" in prior_failure_text.casefold()
             or "inside the onebrief.visual test" in prior_failure_text.casefold()
@@ -1471,7 +1485,7 @@ class ExecutionPipeline:
             ])
             evidence_contract_repair = is_unity_evidence_contract_feedback(
                 active_feedback
-            )
+            ) or is_missing_unity_evidence_harness(active_feedback)
             if evidence_contract_repair and not reverify_existing:
                 raw_paths = [
                     str(getattr(item, "path", "")).replace("\\", "/")

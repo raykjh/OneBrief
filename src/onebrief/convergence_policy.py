@@ -22,6 +22,7 @@ class FailureLayer(StrEnum):
     SOURCE_BINDING = "source_binding"
     BUILD = "build"
     RUNTIME = "runtime"
+    EVIDENCE_TOPOLOGY = "evidence_topology"
     EVIDENCE_INTEGRITY = "evidence_integrity"
     SEMANTIC_PRODUCT = "semantic_product"
     AUTHORITY = "authority"
@@ -110,6 +111,13 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
     )):
         return FailureLayer.STRUCTURED_OUTPUT
     if any(marker in text for marker in (
+        "unity visual test contract: add",
+        "unity visual evidence requires a distinct rendered scenario",
+        "responsive unity visual evidence must define and capture",
+        "unity visual evidence reused an identical screenshot",
+    )):
+        return FailureLayer.EVIDENCE_TOPOLOGY
+    if any(marker in text for marker in (
         "edits tests or evidence instead of production ui",
         "verification-code block", "synthetic ui", "construct synthetic",
     )):
@@ -171,6 +179,12 @@ def extract_symptom_keys(
         ("navigation", ("navigation failed", "screen transition", "route failed")),
         ("runtime_failure", ("runtime test failed", "playmode failed", "interaction failed")),
         ("compile_failure", ("compile error", "compilation failed", "build failed")),
+        ("missing_playmode_test", ("add a discoverable unity playmode test",)),
+        ("missing_test_asmdef", ("add a unity test .asmdef", "testassemblies")),
+        ("evidence_topology", (
+            "distinct rendered scenario", "responsive unity visual evidence",
+            "reused an identical screenshot",
+        )),
     )
 
     def surface(segment: str) -> str:
@@ -249,6 +263,13 @@ def _hypothesis(
             "Re-run only the first failing scenario with fixed inputs and preserve its trace.",
             "The targeted scenario passes and produces a new trusted receipt.",
             "One runtime behavior slice; preserve all previously passing scenarios.",
+            True,
+        ),
+        FailureLayer.EVIDENCE_TOPOLOGY: (
+            "The executed evidence harness is missing or does not prove each requested real UI state.",
+            "Add or repair only the smallest Tests/PlayMode source or test asmdef required by the first static contract failure.",
+            "The static evidence contract passes and the targeted PlayMode test produces a new trusted receipt.",
+            "Tests/PlayMode evidence topology only; product UI and acceptance criteria remain unchanged.",
             True,
         ),
         FailureLayer.EVIDENCE_INTEGRITY: (
@@ -428,6 +449,9 @@ class ConvergencePolicy:
             FailureLayer.STRUCTURED_OUTPUT: ["schema_validation", "exact_source_promotion", "targeted_verification"],
             FailureLayer.BUILD: ["exact_source_promotion", "compile", "targeted_test", "full_verification"],
             FailureLayer.RUNTIME: ["exact_source_promotion", "compile", "targeted_test", "full_verification"],
+            FailureLayer.EVIDENCE_TOPOLOGY: [
+                "proof_topology_scan", "compile", "targeted_test", "evidence_integrity", "full_verification"
+            ],
             FailureLayer.EVIDENCE_INTEGRITY: ["immutable_proof_scan", "exact_source_promotion", "targeted_test", "full_verification"],
             FailureLayer.SEMANTIC_PRODUCT: ["exact_source_promotion", "compile", "targeted_state", "semantic_observation", "full_verification"],
             FailureLayer.AUTHORITY: ["authority_digest_check"],

@@ -26,6 +26,30 @@ def test_source_binding_failure_uses_deterministic_probe_without_model_escalatio
     assert contract.verification_ladder[0] == "schema_and_selector_probe"
 
 
+def test_missing_unity_playmode_harness_is_evidence_topology_not_product_runtime() -> None:
+    policy = ConvergencePolicy()
+    observation = policy.observe(
+        context="development_verification",
+        failure_text=(
+            "development verification failed: Unity visual test contract: add a discoverable "
+            "Unity PlayMode test whose namespace/full name begins with OneBrief.Visual | "
+            "Unity visual test contract: add a Unity test .asmdef with optionalUnityReferences "
+            "containing TestAssemblies"
+        ),
+        attempt_number=1,
+    )
+    contract = policy.issue_contract(ConvergenceLedger(), observation)
+
+    assert observation.layer == FailureLayer.EVIDENCE_TOPOLOGY
+    assert set(observation.symptom_keys) == {
+        "artifact:missing_playmode_test",
+        "artifact:missing_test_asmdef",
+    }
+    assert contract.execution_allowed is True
+    assert contract.permitted_paths == []
+    assert contract.verification_ladder[0] == "proof_topology_scan"
+
+
 def test_same_failure_and_same_strategy_is_blocked_as_no_progress() -> None:
     policy = ConvergencePolicy()
     ledger = ConvergenceLedger()
