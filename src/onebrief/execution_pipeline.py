@@ -50,7 +50,9 @@ from onebrief.development_toolpack import (
 from onebrief.development_progress import development_failure_quality
 from onebrief.development_change_tracking import (
     development_change_fingerprint,
+    discover_rejected_change_history,
     discover_rejected_change_fingerprints,
+    write_rejected_change_history,
     write_rejected_change_fingerprints,
 )
 from onebrief.generic_development_toolpack import (
@@ -1189,6 +1191,7 @@ class ExecutionPipeline:
         current_exact_edit_anchors = exact_edit_anchors
         consecutive_identical_candidates = 0
         rejected_change_fingerprints = discover_rejected_change_fingerprints(output_dir)
+        rejected_change_history = discover_rejected_change_history(output_dir)
 
         def after_maker(raw: object, _ctx, round_number: int) -> dict[str, object]:
             nonlocal previous_change_set, latest_run
@@ -1354,7 +1357,9 @@ class ExecutionPipeline:
             if not reverify_existing and delta_fingerprint in rejected_change_fingerprints:
                 repeated_warning = (
                     "Rejected a repair delta that already failed trusted verification in an earlier round. "
-                    "Do not submit the same path and content again; choose a different production path or a "
+                    "Already rejected path(s): "
+                    + ", ".join(str(item.path) for item in getattr(delta, "changes", []))
+                    + ". Do not submit the same path and content again; choose a different production path or a "
                     "different bounded range that addresses the preserved visual evidence."
                 )
                 preserved_failure_path = output_dir / "development_verification_failure.txt"
@@ -1490,6 +1495,14 @@ class ExecutionPipeline:
                 self._append_recovery(decision)
                 self._persist_recoveries(output_dir)
                 feedback = " ".join(str(exc).split())[:12_000]
+                if not reverify_existing:
+                    failed_paths = ", ".join(
+                        str(item.path) for item in getattr(delta, "changes", [])
+                    )
+                    feedback += (
+                        " | Rejected repair delta changed path(s): " + failed_paths
+                        + ". This exact content did not improve the trusted evidence; do not repeat it."
+                    )
                 self._write(
                     output_dir / f"development_verification_failure_r{round_number}.txt",
                     feedback,
@@ -1500,6 +1513,8 @@ class ExecutionPipeline:
                     write_rejected_change_fingerprints(
                         output_dir, rejected_change_fingerprints
                     )
+                    rejected_change_history = discover_rejected_change_history(output_dir)
+                    write_rejected_change_history(output_dir, rejected_change_history)
                 quality = development_failure_quality(feedback)
                 if best_failure_quality is None or quality > best_failure_quality:
                     best_failed_candidate = candidate
@@ -1668,6 +1683,12 @@ class ExecutionPipeline:
             "an aria-label is not a verifiable language control."
             + (("\n\n" + developer.skill_context) if developer.skill_context else "")
         )
+        if rejected_change_history:
+            maker_instruction += (
+                "\n\nREJECTED REPAIR HISTORY (trusted verification failed; never repeat these exact strategies):\n"
+                + json.dumps(rejected_change_history, ensure_ascii=False)
+                + "\nChoose a different production path or a materially different bounded range."
+            )
         if prior_failure.is_file():
             maker_instruction += (
                 "\n\nCOMPACT REPAIR CONTRACT: Return exactly one changed path and keep the entire JSON "

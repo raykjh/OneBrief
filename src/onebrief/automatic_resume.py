@@ -12,7 +12,9 @@ from pydantic import BaseModel, Field
 from onebrief.budget_guard import BudgetStore, micros_to_dollars
 from onebrief.development_progress import development_failure_quality
 from onebrief.development_change_tracking import (
+    discover_rejected_change_history,
     discover_rejected_change_fingerprints,
+    write_rejected_change_history,
     write_rejected_change_fingerprints,
 )
 from onebrief.development_toolpack import DevelopmentRun
@@ -475,6 +477,10 @@ def create_bounded_repair_resume(
     if rejected_fingerprints:
         write_rejected_change_fingerprints(child_work, rejected_fingerprints)
         reused.append("development_rejected_change_fingerprints.json")
+        write_rejected_change_history(
+            child_work, discover_rejected_change_history(source_work)
+        )
+        reused.append("development_rejected_change_history.json")
     # A continuation can run under newer trusted validators than its parent.
     # Revalidate the preserved candidate before paying the same maker to edit
     # it. If the failure remains, the normal convergence loop receives that

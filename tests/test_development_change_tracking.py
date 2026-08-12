@@ -2,7 +2,9 @@ import json
 
 from onebrief.development_change_tracking import (
     development_change_fingerprint,
+    discover_rejected_change_history,
     discover_rejected_change_fingerprints,
+    write_rejected_change_history,
     write_rejected_change_fingerprints,
 )
 
@@ -39,3 +41,20 @@ def test_failed_round_delta_is_discovered_and_persisted(tmp_path) -> None:
     (tmp_path / "development_verification_failure_r2.txt").unlink()
     write_rejected_change_fingerprints(tmp_path, discovered)
     assert discover_rejected_change_fingerprints(tmp_path) == discovered
+
+
+def test_rejected_history_preserves_paths_without_full_code(tmp_path) -> None:
+    payload = _change("failed responsive strategy")
+    fingerprint = development_change_fingerprint(payload)
+    write_rejected_change_fingerprints(tmp_path, {fingerprint})
+    (tmp_path / "code_change_set_delta_r1.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+    history = discover_rejected_change_history(tmp_path)
+    assert history[0]["changed_paths"] == ["Assets/UI/Lobby.cs"]
+    assert "class Lobby" not in json.dumps(history)
+
+    write_rejected_change_history(tmp_path, history)
+    (tmp_path / "code_change_set_delta_r1.json").unlink()
+    assert discover_rejected_change_history(tmp_path) == history

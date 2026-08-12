@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 
 REGISTER_NAME = "development_rejected_change_fingerprints.json"
+HISTORY_NAME = "development_rejected_change_history.json"
 
 
 def development_change_fingerprint(candidate: BaseModel | dict[str, Any]) -> str:
@@ -73,3 +74,47 @@ def discover_rejected_change_fingerprints(work: Path) -> set[str]:
         except (OSError, json.JSONDecodeError, AttributeError, TypeError):
             continue
     return fingerprints
+
+
+def discover_rejected_change_history(work: Path) -> list[dict[str, Any]]:
+    """Return compact, model-readable facts about already rejected deltas."""
+
+    accepted = discover_rejected_change_fingerprints(work)
+    records: dict[str, dict[str, Any]] = {}
+    history = work / HISTORY_NAME
+    if history.is_file():
+        try:
+            payload = json.loads(history.read_text(encoding="utf-8"))
+            for item in payload.get("rejected_changes", []):
+                if isinstance(item, dict) and item.get("fingerprint") in accepted:
+                    records[str(item["fingerprint"])] = item
+        except (OSError, json.JSONDecodeError, AttributeError):
+            pass
+    for delta_path in sorted(work.glob("code_change_set_delta_r*.json")):
+        try:
+            payload = json.loads(delta_path.read_text(encoding="utf-8"))
+            fingerprint = development_change_fingerprint(payload)
+        except (OSError, json.JSONDecodeError, AttributeError, TypeError):
+            continue
+        if fingerprint not in accepted:
+            continue
+        changes = [item for item in payload.get("changes", []) if isinstance(item, dict)]
+        records[fingerprint] = {
+            "fingerprint": fingerprint,
+            "summary": str(payload.get("summary", ""))[:500],
+            "changed_paths": sorted({str(item.get("path", "")) for item in changes}),
+            "reasons": [str(item.get("reason", ""))[:300] for item in changes],
+        }
+    return [records[key] for key in sorted(records)]
+
+
+def write_rejected_change_history(work: Path, records: list[dict[str, Any]]) -> Path:
+    target = work / HISTORY_NAME
+    target.write_text(
+        json.dumps({
+            "schema_version": "onebrief-rejected-change-history-v1",
+            "rejected_changes": records,
+        }, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return target
