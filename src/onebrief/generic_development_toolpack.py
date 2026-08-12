@@ -917,14 +917,25 @@ class ApprovedProjectDevelopmentToolPack:
         rebound: list[ProjectFileChange] = []
         for change in change_set.changes:
             try:
-                self._blob(head, change.path)
+                committed = self._blob(head, change.path)
                 exists = True
             except RuntimeError:
+                committed = b""
                 exists = False
             if exists and change.path not in inspected:
-                raise PermissionError(
-                    f"existing file was not included in approved model context: {change.path}"
-                )
+                committed_sha256 = hashlib.sha256(committed).hexdigest()
+                if change.base_sha256 != committed_sha256:
+                    raise PermissionError(
+                        f"existing file was not included in approved model context: {change.path}"
+                    )
+                # A bounded continuation merges its new delta with the prior
+                # rejected candidate. Goal retargeting may legitimately evict
+                # an unchanged prior file from the new 120 KiB inspection.
+                # Preserve it only when its already-bound hash still matches
+                # the exact approved HEAD; a new or stale unseen edit remains
+                # blocked above.
+                rebound.append(change)
+                continue
             rebound.append(change.model_copy(update={
                 "base_sha256": inspected[change.path] if exists else None,
             }))

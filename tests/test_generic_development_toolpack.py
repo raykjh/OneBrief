@@ -726,6 +726,34 @@ def test_change_set_cannot_edit_existing_file_omitted_from_context(tmp_path: Pat
         pack.bind_change_set_to_inspection(proposed, inspection)
 
 
+def test_change_set_preserves_prior_hash_bound_file_after_context_retarget(tmp_path: Path) -> None:
+    root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    inspection, _sources = pack.inspect(tmp_path / "inspection", "localization language")
+    inspection = inspection.model_copy(update={
+        "context_files": [
+            item for item in inspection.context_files if item.path != "src/app.js"
+        ]
+    })
+    committed = subprocess.run(
+        ["git", "show", "HEAD:src/app.js"], cwd=root, check=True, capture_output=True
+    ).stdout
+    digest = hashlib.sha256(committed).hexdigest()
+    preserved = ProjectCodeChangeSet(
+        summary="Preserve a previously approved candidate file.",
+        changes=[{
+            "path": "src/app.js",
+            "base_sha256": digest,
+            "content": "export const answer = 41;\n",
+            "reason": "Retain the already hash-bound prior candidate during repair.",
+        }],
+    )
+
+    rebound = pack.bind_change_set_to_inspection(preserved, inspection)
+
+    assert rebound.changes[0].base_sha256 == digest
+
+
 def test_patch_includes_new_files_and_excludes_validator_side_effects(tmp_path: Path) -> None:
     root, registry = _approved_node_project(tmp_path)
     committed = subprocess.run(
