@@ -16,6 +16,8 @@ from onebrief.execution_pipeline import (
     visual_repair_production_candidate,
     visual_repair_has_uncommitted_product_candidate,
     visual_repair_production_target_allowed,
+    is_unity_evidence_contract_feedback,
+    unity_evidence_contract_target_allowed,
 )
 from onebrief.execution_agents import DeveloperAgent
 from onebrief.execution_limits import DEVELOPER_OUTPUT_CAP
@@ -1203,6 +1205,15 @@ def test_unity_missing_surface_feedback_requires_separate_executed_captures() ->
     assert "for Lobby, capture after the real login/start transition" in instruction
     assert "for Settings, capture only after invoking the real Settings button" in instruction
     assert "LoginToLobbyToSettings is not distinct evidence" in instruction
+    assert is_unity_evidence_contract_feedback(
+        "Unity visual evidence requires a distinct rendered scenario for settings"
+    )
+    assert unity_evidence_contract_target_allowed(
+        "Assets/JULPAE/Tests/PlayMode/JulpaePlayModeVerification.cs"
+    )
+    assert not unity_evidence_contract_target_allowed(
+        "Assets/JULPAE/Scripts/UI/ModernizedSettingsUI.cs"
+    )
 
 
 def test_duplicate_unity_screenshot_feedback_requires_capture_at_each_real_state() -> None:

@@ -143,6 +143,22 @@ def visual_repair_production_target_allowed(path: str) -> bool:
     return True
 
 
+def unity_evidence_contract_target_allowed(path: str) -> bool:
+    """Allow evidence-topology repairs only in the executed PlayMode harness."""
+
+    normalized = path.replace("\\", "/").strip("/").casefold()
+    return "/tests/playmode/" in f"/{normalized}" and normalized.endswith(".cs")
+
+
+def is_unity_evidence_contract_feedback(feedback: str) -> bool:
+    normalized = " ".join(feedback.split()).casefold()
+    return any(marker in normalized for marker in (
+        "unity visual evidence requires a distinct rendered scenario",
+        "responsive unity visual evidence must define and capture",
+        "unity visual evidence reused an identical screenshot",
+    ))
+
+
 def visual_repair_production_candidate(change_set):
     """Return the candidate view a visual repair maker may inspect."""
 
@@ -1152,7 +1168,60 @@ class ExecutionPipeline:
                 and bool(_ctx.session.state.get(REVERIFY_EXISTING_STATE_KEY))
                 and previous_change_set is not None
             )
-            if semantic_visual_repair and not reverify_existing:
+            active_report_payload = _ctx.session.state.get(VERIFICATION_STATE_KEY)
+            active_report = (
+                VerificationReport.model_validate(active_report_payload)
+                if active_report_payload
+                else None
+            )
+            active_feedback = " ".join([
+                *(active_report.blocking_issues if active_report else []),
+                *(active_report.revision_instructions if active_report else []),
+            ])
+            evidence_contract_repair = is_unity_evidence_contract_feedback(
+                active_feedback
+            )
+            if evidence_contract_repair and not reverify_existing:
+                raw_paths = [
+                    str(getattr(item, "path", "")).replace("\\", "/")
+                    for item in getattr(raw, "changes", [])
+                ]
+                forbidden = [
+                    path for path in raw_paths
+                    if not unity_evidence_contract_target_allowed(path)
+                ]
+                if forbidden:
+                    feedback = (
+                        "Unity runtime-evidence topology is incomplete, but the proposed repair edits "
+                        "product source instead of the executed PlayMode evidence harness: "
+                        + ", ".join(forbidden)
+                    )
+                    report = VerificationReport(
+                        verdict=Verdict.REVISE,
+                        criterion_checks=[{
+                            "criterion": "Repair the executed Unity evidence topology",
+                            "passed": False,
+                            "evidence": feedback,
+                        }],
+                        blocking_issues=[feedback],
+                        revision_instructions=[
+                            "Edit exactly one C# source under Tests/PlayMode so the real product state is "
+                            "captured for every required viewport and surface; do not change product UI "
+                            "source for an evidence-topology blocker."
+                        ],
+                        missing_information=[],
+                    )
+                    repair_plan = prepare_repair(report, round_number)
+                    return {
+                        MAKER_STATE_KEY: previous_change_set.model_dump(mode="json"),
+                        VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
+                        **({
+                            REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
+                        } if repair_plan is not None else {}),
+                        EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
+                        SKIP_VERIFIER_STATE_KEY: True,
+                    }
+            if semantic_visual_repair and not evidence_contract_repair and not reverify_existing:
                 raw_paths = [
                     str(getattr(item, "path", "")).replace("\\", "/")
                     for item in getattr(raw, "changes", [])
