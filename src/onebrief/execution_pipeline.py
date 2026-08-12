@@ -1158,6 +1158,15 @@ class ExecutionPipeline:
                     previous_change_set
                 )
                 initial_state[MAKER_STATE_KEY] = visible_candidate.model_dump(mode="json")
+                if candidate_file_visual_repair:
+                    # Generated production files are authoritative in
+                    # previous_artifact. Re-sending the large original Unity
+                    # repository context can push a small visual repair above
+                    # 100k input tokens and cause provider deadlines. Keep the
+                    # original sources only in the trusted promotion closure
+                    # for path/base-hash checks; the maker sees the complete
+                    # current candidate it is actually allowed to repair.
+                    maker_sources = []
         if previous_change_set is not None and prior_failure.is_file():
             feedback = self._compact_development_feedback(
                 prior_failure.read_text("utf-8")
