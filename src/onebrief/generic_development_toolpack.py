@@ -278,6 +278,15 @@ class ExactRepairProjectFileChange(BaseModel):
 
     @model_validator(mode="after")
     def validate_edit_mode(self) -> "ExactRepairProjectFileChange":
+        # Prefer the most deterministic selector if a provider redundantly
+        # fills several optional selector fields in structured output.
+        if self.anchor_id is not None:
+            self.search = None
+            self.start_anchor = None
+            self.end_anchor = None
+        elif self.search is not None:
+            self.start_anchor = None
+            self.end_anchor = None
         catalog = self.anchor_id is not None and self.search is None
         exact = self.anchor_id is None and self.search is not None
         anchored = (

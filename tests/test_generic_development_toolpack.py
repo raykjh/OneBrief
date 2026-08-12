@@ -135,6 +135,22 @@ def test_exact_repair_schema_cannot_emit_a_full_file() -> None:
     })
     assert proposal.changes[0].search == "public class ExistingTest"
 
+    redundant = ExactRepairProjectCodeChangeSet.model_validate({
+        "summary": "Use the trusted catalog selector.",
+        "changes": [{
+            "path": "Assets/Tests/PlayMode/OneBriefVisualTests.cs",
+            "base_sha256": None,
+            "anchor_id": "A123456789abc",
+            "search": "redundant model field",
+            "start_anchor": "also redundant",
+            "end_anchor": "also redundant",
+            "replace": "namespace OneBrief.Visual { public class ExistingTest",
+            "reason": "The catalog ID is the most deterministic selector.",
+        }],
+    })
+    assert redundant.changes[0].anchor_id == "A123456789abc"
+    assert redundant.changes[0].search is None
+
 
 def test_structural_anchors_rediscover_a_changed_existing_region() -> None:
     developer = DeveloperAgent(
