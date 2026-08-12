@@ -11,6 +11,8 @@ from onebrief.jobs import JobStatus, build_result_package, create_job, verify_in
 from onebrief.producer import estimate_budget
 from onebrief.project_import import ExternalProjectImporter, MANIFEST_NAME
 from onebrief.project_snapshot import (
+    MAX_SNAPSHOT_BYTES,
+    MAX_SNAPSHOT_FILE_BYTES,
     SNAPSHOT_ARCHIVE,
     SNAPSHOT_MANIFEST,
     create_project_snapshot,
@@ -139,6 +141,26 @@ def test_snapshot_includes_the_registration_manifest_without_committing_it(
     restored = restore_project_snapshot(tmp_path / "job", "snapshot-python")
     assert restored is not None
     assert (restored / MANIFEST_NAME).is_file()
+
+
+def test_snapshot_bounds_cover_a_medium_unity_client_without_becoming_unbounded(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root, registry = _approved_python_project(tmp_path, monkeypatch)
+    fixture = root / "reports" / "medium-runtime-asset.bin"
+    fixture.write_bytes(b"0" * 6_000_000)
+    _git(root, "add", "reports/medium-runtime-asset.bin")
+    _git(root, "commit", "-m", "Add a medium runtime asset")
+    lifecycle = ProjectToolPackLifecycle("snapshot-python", registry)
+    state = lifecycle.generate_and_qualify()
+    lifecycle.approve(state.qualification.toolpack_sha256)
+
+    manifest = create_project_snapshot("snapshot-python", tmp_path / "job" / "inputs")
+
+    record = next(item for item in manifest.files if item.path == fixture.relative_to(root).as_posix())
+    assert record.size_bytes == 6_000_000
+    assert 16_500_000 <= MAX_SNAPSHOT_FILE_BYTES <= 25_000_000
+    assert 300_000_000 <= MAX_SNAPSHOT_BYTES <= 400_000_000
 
 
 def test_snapshot_tampering_is_rejected_before_restore(tmp_path: Path, monkeypatch) -> None:

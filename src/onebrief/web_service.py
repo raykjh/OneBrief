@@ -1261,6 +1261,9 @@ async def run_session(
                 else "The Cloud Run background job was queued within the approved budget."
             ),
         }
+    except (PermissionError, ValueError) as exc:
+        store.release_run(session_id)
+        raise HTTPException(422, str(exc)) from exc
     except Exception as exc:
         store.release_run(session_id)
         raise HTTPException(502, f"Service operation failed: {type(exc).__name__}") from exc

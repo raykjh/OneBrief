@@ -62,7 +62,7 @@ _COMMON_BLOCKS = [
 BUILTIN_CAPABILITY_PACKS: dict[CapabilityPackId, CapabilityPackDefinition] = {
     CapabilityPackId.REPOSITORY_CONTROL: CapabilityPackDefinition(
         pack_id=CapabilityPackId.REPOSITORY_CONTROL,
-        version="1.0.0",
+        version="1.1.0",
         title="Isolated repository control",
         ecosystems=["git"],
         adapter_ids=["repository_snapshot"],
@@ -70,6 +70,7 @@ BUILTIN_CAPABILITY_PACKS: dict[CapabilityPackId, CapabilityPackDefinition] = {
             "bind execution to one immutable Git revision",
             "create a disposable repository snapshot",
             "enforce exact source hashes and bounded paths",
+            "transfer a bounded medium-project snapshot for remote deterministic verification",
         ],
         evidence_contracts=["repository identity, clean worktree, and source revision receipt"],
         blocked_boundaries=_COMMON_BLOCKS,

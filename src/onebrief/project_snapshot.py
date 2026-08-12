@@ -21,8 +21,13 @@ from onebrief.toolpack_lifecycle import ProjectToolPackLifecycle
 SNAPSHOT_ARCHIVE = "project_snapshot.zip"
 SNAPSHOT_MANIFEST = "project_snapshot.json"
 MAX_SNAPSHOT_FILES = 5_000
-MAX_SNAPSHOT_FILE_BYTES = 5_000_000
-MAX_SNAPSHOT_BYTES = 50_000_000
+# A remote Unity verification snapshot must preserve committed fonts, scene data,
+# audio, and small runtime media or its compile/render evidence is not faithful.
+# Keep the transfer bounded, but size it for a medium client rather than a source-
+# only Python project. Julpae's largest committed file is ~16.4 MB and its exact
+# approved tree is ~295 MB.
+MAX_SNAPSHOT_FILE_BYTES = 20_000_000
+MAX_SNAPSHOT_BYTES = 350_000_000
 BLOCKED_PARTS = {
     ".git", ".ssh", "credentials", "library", "logs", "node_modules",
     "secrets", "service-account", "service_account", "temp", "usersettings",
