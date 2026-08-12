@@ -50,6 +50,7 @@ from onebrief.development_toolpack import (
 from onebrief.development_progress import development_failure_quality
 from onebrief.development_change_tracking import (
     development_change_fingerprint,
+    development_change_strategy_fingerprint,
     discover_rejected_change_history,
     discover_rejected_change_fingerprints,
     write_rejected_change_history,
@@ -1201,6 +1202,10 @@ class ExecutionPipeline:
         consecutive_identical_candidates = 0
         rejected_change_fingerprints = discover_rejected_change_fingerprints(output_dir)
         rejected_change_history = discover_rejected_change_history(output_dir)
+        rejected_strategy_fingerprints = {
+            str(item.get("strategy_fingerprint") or development_change_strategy_fingerprint(item))
+            for item in rejected_change_history
+        }
 
         def after_maker(raw: object, _ctx, round_number: int) -> dict[str, object]:
             nonlocal previous_change_set, latest_run
@@ -1370,14 +1375,23 @@ class ExecutionPipeline:
                 delta.model_dump_json(indent=2),
             )
             delta_fingerprint = development_change_fingerprint(delta)
-            if not reverify_existing and delta_fingerprint in rejected_change_fingerprints:
+            delta_strategy_fingerprint = development_change_strategy_fingerprint(delta)
+            repeated_exact_delta = delta_fingerprint in rejected_change_fingerprints
+            repeated_declared_strategy = (
+                delta_strategy_fingerprint in rejected_strategy_fingerprints
+            )
+            if not reverify_existing and (
+                repeated_exact_delta or repeated_declared_strategy
+            ):
                 consecutive_identical_candidates += 1
                 repeated_warning = (
-                    "Rejected a repair delta that already failed trusted verification in an earlier round. "
+                    "Rejected a repair delta whose exact code or declared strategy already failed trusted "
+                    "verification in an earlier round. "
                     "Already rejected path(s): "
                     + ", ".join(str(item.path) for item in getattr(delta, "changes", []))
-                    + ". Do not submit the same path and content again; choose a different production path or a "
-                    "different bounded range that addresses the preserved visual evidence."
+                    + ". Keep the repair on a surface that current primary evidence explicitly marks as "
+                    "failing, but use a materially different mechanism or bounded range. Never switch to a "
+                    "passing surface merely to avoid the duplicate gate."
                 )
                 preserved_failure_path = output_dir / "development_verification_failure.txt"
                 preserved_failure = (
@@ -1552,6 +1566,7 @@ class ExecutionPipeline:
                 self._write(output_dir / "development_verification_failure.txt", feedback)
                 if not reverify_existing:
                     rejected_change_fingerprints.add(delta_fingerprint)
+                    rejected_strategy_fingerprints.add(delta_strategy_fingerprint)
                     write_rejected_change_fingerprints(
                         output_dir, rejected_change_fingerprints
                     )
@@ -1729,7 +1744,9 @@ class ExecutionPipeline:
             maker_instruction += (
                 "\n\nREJECTED REPAIR HISTORY (trusted verification failed; never repeat these exact strategies):\n"
                 + json.dumps(rejected_change_history, ensure_ascii=False)
-                + "\nChoose a different production path or a materially different bounded range."
+                + "\nUse a materially different mechanism or bounded range on a surface that the current "
+                "primary evidence explicitly marks as failing. Do not modify a passing surface just to choose "
+                "a different path."
             )
         if prior_failure.is_file():
             maker_instruction += (

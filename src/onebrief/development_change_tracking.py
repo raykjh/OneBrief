@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from pydantic import BaseModel
@@ -12,6 +13,54 @@ from pydantic import BaseModel
 
 REGISTER_NAME = "development_rejected_change_fingerprints.json"
 HISTORY_NAME = "development_rejected_change_history.json"
+
+
+_STRATEGY_STOP_WORDS = {
+    "a", "an", "and", "by", "for", "from", "in", "of", "on", "or", "the",
+    "to", "with", "fix", "fixed", "repair", "repaired", "update", "updated",
+    "configure", "configured", "ensure", "ensures", "change", "changes",
+}
+
+
+def _strategy_tokens(value: object) -> list[str]:
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", str(value)).casefold()
+    tokens = re.findall(r"[a-z0-9_]+|[\uac00-\ud7a3]+", text)
+    return sorted({item for item in tokens if item not in _STRATEGY_STOP_WORDS})
+
+
+def development_change_strategy_fingerprint(
+    candidate: BaseModel | dict[str, Any],
+) -> str:
+    """Hash the maker-declared repair approach independently of exact code bytes.
+
+    This deliberately remains narrower than semantic code equivalence: an agent may
+    try a materially different edit in the same file, but it may not re-submit the
+    same declared strategy with cosmetically different source formatting.
+    """
+
+    payload = (
+        candidate.model_dump(mode="json")
+        if isinstance(candidate, BaseModel)
+        else candidate
+    )
+    changes = [
+        item for item in payload.get("changes", []) if isinstance(item, dict)
+    ]
+    paths = payload.get("changed_paths")
+    if not isinstance(paths, list):
+        paths = [item.get("path", "") for item in changes]
+    reasons = payload.get("reasons")
+    if not isinstance(reasons, list):
+        reasons = [item.get("reason", "") for item in changes]
+    canonical = {
+        "paths": sorted(
+            str(item).replace("\\", "/").casefold() for item in paths if item
+        ),
+        "summary_tokens": _strategy_tokens(payload.get("summary", "")),
+        "reason_tokens": _strategy_tokens(" ".join(str(item) for item in reasons)),
+    }
+    encoded = json.dumps(canonical, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def development_change_fingerprint(candidate: BaseModel | dict[str, Any]) -> str:
@@ -101,6 +150,7 @@ def discover_rejected_change_history(work: Path) -> list[dict[str, Any]]:
         changes = [item for item in payload.get("changes", []) if isinstance(item, dict)]
         records[fingerprint] = {
             "fingerprint": fingerprint,
+            "strategy_fingerprint": development_change_strategy_fingerprint(payload),
             "summary": str(payload.get("summary", ""))[:500],
             "changed_paths": sorted({str(item.get("path", "")) for item in changes}),
             "reasons": [str(item.get("reason", ""))[:300] for item in changes],
