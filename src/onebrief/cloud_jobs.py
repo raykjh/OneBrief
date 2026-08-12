@@ -36,6 +36,8 @@ REUSABLE_WORK_ARTIFACTS = (
     "development_best_failure.txt",
     REGISTER_NAME,
     HISTORY_NAME,
+    "convergence_ledger.json",
+    "repair_contract.json",
 )
 
 

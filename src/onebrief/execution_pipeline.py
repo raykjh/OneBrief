@@ -21,6 +21,7 @@ from onebrief.adk_convergence import (
     VERIFICATION_STATE_KEY,
     REVERIFY_EXISTING_STATE_KEY,
     EXACT_EDIT_ANCHORS_STATE_KEY,
+    REPAIR_CONTRACT_STATE_KEY,
     REPAIR_PLAN_STATE_KEY,
     VERIFIER_CONTEXT_STATE_KEY,
     build_text_convergence_agent,
@@ -83,6 +84,11 @@ from onebrief.execution_schemas import (
     Verdict,
 )
 from onebrief.completion_ledger import refresh_completion_ledger, settle_consistent_verification
+from onebrief.convergence_policy import (
+    ConvergenceLedger,
+    ConvergencePolicy,
+    RepairContract,
+)
 from onebrief.execution_profile import (
     compact_work_contract,
     effective_revision_rounds,
@@ -884,6 +890,53 @@ class ExecutionPipeline:
                 report = settle_consistent_verification(
                     requirements.completion_contract, report
                 )
+            if report.verdict == Verdict.REVISE:
+                failed_ids = [
+                    str(check.criterion_id) for check in report.criterion_checks
+                    if not check.passed and check.criterion_id
+                ]
+                passing_ids = [
+                    str(check.criterion_id) for check in report.criterion_checks
+                    if check.passed and check.criterion_id
+                ]
+                failure_text = " | ".join([
+                    *report.blocking_issues,
+                    *[
+                        check.evidence for check in report.criterion_checks
+                        if not check.passed
+                    ],
+                ])[:12_000]
+                active_paths = [
+                    str(item.path)
+                    for item in getattr(previous_change_set, "changes", [])
+                ]
+                convergence_contract = record_convergence_failure(
+                    context="development_acceptance_verification",
+                    failure_text=failure_text or "Acceptance verification requested revision.",
+                    attempt_number=round_number + 1,
+                    affected_paths=active_paths,
+                    failed_criterion_ids=failed_ids,
+                    preserve_criterion_ids=passing_ids,
+                    strategy_fingerprint=(
+                        development_change_strategy_fingerprint(previous_change_set)
+                        if previous_change_set is not None else None
+                    ),
+                )
+                ctx.session.state[REPAIR_CONTRACT_STATE_KEY] = (
+                    convergence_contract.model_dump(mode="json")
+                )
+                if not convergence_contract.execution_allowed:
+                    report = VerificationReport(
+                        verdict=Verdict.UNVERIFIABLE,
+                        criterion_checks=report.criterion_checks,
+                        blocking_issues=list(dict.fromkeys([
+                            *report.blocking_issues,
+                            "The convergence progress gate found no new causal evidence; blind repair is stopped.",
+                        ])),
+                        revision_instructions=[],
+                        missing_information=report.missing_information,
+                        temperament_decisions=report.temperament_decisions,
+                    )
             repair_plan = prepare_repair(report, round_number)
             if repair_plan is not None:
                 _ctx.session.state[REPAIR_PLAN_STATE_KEY] = repair_plan.model_dump(mode="json")
@@ -1063,6 +1116,64 @@ class ExecutionPipeline:
                 continue
             repair_fingerprints.extend(item.fingerprint for item in prior_plan.tasks)
 
+        convergence_policy = ConvergencePolicy()
+        convergence_ledger_path = output_dir / "convergence_ledger.json"
+        try:
+            convergence_ledger = ConvergenceLedger.model_validate_json(
+                convergence_ledger_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValidationError):
+            convergence_ledger = ConvergenceLedger()
+        latest_repair_contract: RepairContract | None = (
+            convergence_ledger.repair_contracts[-1]
+            if convergence_ledger.repair_contracts else None
+        )
+
+        def record_convergence_failure(
+            *,
+            context: str,
+            failure_text: str,
+            attempt_number: int,
+            affected_paths: list[str] | None = None,
+            failed_criterion_ids: list[str] | None = None,
+            preserve_criterion_ids: list[str] | None = None,
+            strategy_fingerprint: str | None = None,
+        ) -> RepairContract:
+            """Persist the causal observation before authorizing another maker turn."""
+
+            nonlocal convergence_ledger, latest_repair_contract
+            observation = convergence_policy.observe(
+                context=context,
+                failure_text=failure_text,
+                attempt_number=attempt_number,
+                affected_paths=affected_paths,
+                failed_criterion_ids=failed_criterion_ids,
+                strategy_fingerprint=strategy_fingerprint,
+            )
+            contract = convergence_policy.issue_contract(
+                convergence_ledger,
+                observation,
+                preserve_criterion_ids=preserve_criterion_ids,
+            )
+            convergence_ledger = convergence_policy.record(
+                convergence_ledger, observation, contract
+            )
+            latest_repair_contract = contract
+            self._write(
+                convergence_ledger_path,
+                convergence_ledger.model_dump_json(indent=2),
+            )
+            self._write(
+                output_dir
+                / f"repair_contract_f{len(convergence_ledger.repair_contracts):02d}.json",
+                contract.model_dump_json(indent=2),
+            )
+            self._write(
+                output_dir / "repair_contract.json",
+                contract.model_dump_json(indent=2),
+            )
+            return contract
+
         def prepare_repair(
             report: VerificationReport, round_number: int
         ) -> RepairPlan | None:
@@ -1099,6 +1210,21 @@ class ExecutionPipeline:
         prior_failure_text = (
             prior_failure.read_text("utf-8") if prior_failure.is_file() else ""
         )
+        if prior_failure_text and not convergence_ledger.observations:
+            latest_repair_contract = record_convergence_failure(
+                context="development_verification",
+                failure_text=prior_failure_text,
+                attempt_number=1,
+            )
+        if latest_repair_contract is not None:
+            initial_state[REPAIR_CONTRACT_STATE_KEY] = (
+                latest_repair_contract.model_dump(mode="json")
+            )
+            if not latest_repair_contract.execution_allowed:
+                raise RuntimeError(
+                    "convergence progress gate requires a new diagnosis or explicit decision before resume: "
+                    + latest_repair_contract.rationale
+                )
         multi_state_evidence_repair = "reused an identical screenshot" in prior_failure_text.casefold()
         unity_evidence_topology_repair = is_unity_evidence_contract_feedback(
             prior_failure_text
@@ -1245,6 +1371,18 @@ class ExecutionPipeline:
                         "product source instead of the executed PlayMode evidence harness: "
                         + ", ".join(forbidden)
                     )
+                    convergence_contract = record_convergence_failure(
+                        context="development_evidence_topology",
+                        failure_text=feedback,
+                        attempt_number=round_number + 1,
+                        affected_paths=forbidden,
+                        strategy_fingerprint=development_change_strategy_fingerprint(raw),
+                    )
+                    if not convergence_contract.execution_allowed:
+                        raise RuntimeError(
+                            "convergence progress gate blocked a non-learning evidence repair: "
+                            + convergence_contract.rationale
+                        )
                     report = VerificationReport(
                         verdict=Verdict.REVISE,
                         criterion_checks=[{
@@ -1267,6 +1405,7 @@ class ExecutionPipeline:
                         **({
                             REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
                         } if repair_plan is not None else {}),
+                        REPAIR_CONTRACT_STATE_KEY: convergence_contract.model_dump(mode="json"),
                         EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
                         SKIP_VERIFIER_STATE_KEY: True,
                     }
@@ -1285,6 +1424,18 @@ class ExecutionPipeline:
                         "repair edits tests or evidence instead of production UI: "
                         + ", ".join(forbidden)
                     )
+                    convergence_contract = record_convergence_failure(
+                        context="development_visual_target",
+                        failure_text=feedback,
+                        attempt_number=round_number + 1,
+                        affected_paths=forbidden,
+                        strategy_fingerprint=development_change_strategy_fingerprint(raw),
+                    )
+                    if not convergence_contract.execution_allowed:
+                        raise RuntimeError(
+                            "convergence progress gate blocked a non-learning visual repair: "
+                            + convergence_contract.rationale
+                        )
                     report = VerificationReport(
                         verdict=Verdict.REVISE,
                         criterion_checks=[{
@@ -1306,6 +1457,7 @@ class ExecutionPipeline:
                         **({
                             REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
                         } if repair_plan is not None else {}),
+                        REPAIR_CONTRACT_STATE_KEY: convergence_contract.model_dump(mode="json"),
                         EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
                         SKIP_VERIFIER_STATE_KEY: True,
                     }
@@ -1335,6 +1487,28 @@ class ExecutionPipeline:
                         / f"development_candidate_promotion_raw_r{round_number}.json",
                         raw_text,
                     )
+                raw_payload = (
+                    raw.model_dump(mode="json")
+                    if isinstance(raw, BaseModel)
+                    else (raw if isinstance(raw, dict) else {})
+                )
+                raw_changes = [
+                    item for item in raw_payload.get("changes", [])
+                    if isinstance(item, dict)
+                ]
+                convergence_contract = record_convergence_failure(
+                    context="development_candidate_promotion",
+                    failure_text=str(exc),
+                    attempt_number=round_number + 1,
+                    affected_paths=[
+                        str(item.get("path", "")) for item in raw_changes
+                        if item.get("path")
+                    ],
+                    strategy_fingerprint=(
+                        development_change_strategy_fingerprint(raw_payload)
+                        if raw_payload else None
+                    ),
+                )
                 decision = self.recovery_policy.decide(
                     exc,
                     context="development_candidate_promotion",
@@ -1342,6 +1516,11 @@ class ExecutionPipeline:
                 )
                 self._append_recovery(decision)
                 self._persist_recoveries(output_dir)
+                if not convergence_contract.execution_allowed:
+                    raise RuntimeError(
+                        "convergence progress gate blocked a non-learning repair: "
+                        + convergence_contract.rationale
+                    ) from exc
                 if (
                     decision.action != RecoveryAction.RETURN_TO_AGENT
                     or not decision.retry_allowed
@@ -1361,7 +1540,8 @@ class ExecutionPipeline:
                     }],
                     blocking_issues=[feedback],
                     revision_instructions=[
-                        "Keep previous_artifact unchanged and copy a small exact search or both anchors verbatim from it."
+                        convergence_contract.hypothesis.cheapest_probe,
+                        convergence_contract.hypothesis.repair_boundary,
                     ],
                     missing_information=[],
                 )
@@ -1372,6 +1552,7 @@ class ExecutionPipeline:
                     **({
                         REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
                     } if repair_plan is not None else {}),
+                    REPAIR_CONTRACT_STATE_KEY: convergence_contract.model_dump(mode="json"),
                     EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
                     SKIP_VERIFIER_STATE_KEY: True,
                 }
@@ -1407,6 +1588,15 @@ class ExecutionPipeline:
                     f"{preserved_failure} | Repair control: {repeated_warning}"
                     if preserved_failure else repeated_warning
                 )
+                convergence_contract = record_convergence_failure(
+                    context="development_rejected_strategy",
+                    failure_text=feedback,
+                    attempt_number=consecutive_identical_candidates,
+                    affected_paths=[
+                        str(item.path) for item in getattr(delta, "changes", [])
+                    ],
+                    strategy_fingerprint=delta_strategy_fingerprint,
+                )
                 self._write(
                     output_dir / f"development_repeated_delta_r{round_number}.txt",
                     feedback,
@@ -1419,6 +1609,11 @@ class ExecutionPipeline:
                         "development repair stalled after two identical candidates; "
                         "the same maker must resume with a different path or bounded range: "
                         + feedback[:4_000]
+                    )
+                if not convergence_contract.execution_allowed:
+                    raise RuntimeError(
+                        "convergence progress gate blocked a repeated repair strategy: "
+                        + convergence_contract.rationale
                     )
                 repeated_paths = {
                     str(item.path).replace("\\", "/").casefold()
@@ -1441,6 +1636,7 @@ class ExecutionPipeline:
                     **({
                         REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
                     } if repair_plan is not None else {}),
+                    REPAIR_CONTRACT_STATE_KEY: convergence_contract.model_dump(mode="json"),
                     EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
                     SKIP_VERIFIER_STATE_KEY: True,
                 }
@@ -1493,11 +1689,25 @@ class ExecutionPipeline:
                     f"{preserved_failure} | Repair control: {repeated_warning}"
                     if preserved_failure else repeated_warning
                 )
+                convergence_contract = record_convergence_failure(
+                    context="development_identical_candidate",
+                    failure_text=feedback,
+                    attempt_number=consecutive_identical_candidates,
+                    affected_paths=[
+                        str(item.path) for item in getattr(delta, "changes", [])
+                    ],
+                    strategy_fingerprint=delta_strategy_fingerprint,
+                )
                 if consecutive_identical_candidates >= 2:
                     raise RuntimeError(
                         "development repair stalled after two identical candidates; "
                         "the same maker must be resumed with a different repair strategy: "
                         + feedback[:4_000]
+                    )
+                if not convergence_contract.execution_allowed:
+                    raise RuntimeError(
+                        "convergence progress gate blocked an identical repair candidate: "
+                        + convergence_contract.rationale
                     )
                 self._write(
                     output_dir / f"development_repeated_candidate_r{round_number}.txt",
@@ -1518,6 +1728,7 @@ class ExecutionPipeline:
                     **({
                         REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
                     } if repair_plan is not None else {}),
+                    REPAIR_CONTRACT_STATE_KEY: convergence_contract.model_dump(mode="json"),
                     EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
                     SKIP_VERIFIER_STATE_KEY: True,
                 }
@@ -1613,6 +1824,20 @@ class ExecutionPipeline:
                     self._write(
                         output_dir / "development_verification_failure.txt", feedback
                     )
+                convergence_contract = record_convergence_failure(
+                    context="development_verification",
+                    failure_text=str(exc),
+                    attempt_number=same_failure_count + 1,
+                    affected_paths=[
+                        str(item.path) for item in getattr(delta, "changes", [])
+                    ],
+                    strategy_fingerprint=delta_strategy_fingerprint,
+                )
+                if not convergence_contract.execution_allowed:
+                    raise RuntimeError(
+                        "convergence progress gate stopped verification without new evidence: "
+                        + convergence_contract.rationale
+                    ) from exc
                 if (
                     decision.action != RecoveryAction.RETURN_TO_AGENT
                     or not decision.retry_allowed
@@ -1633,6 +1858,7 @@ class ExecutionPipeline:
                     **({
                         REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
                     } if repair_plan is not None else {}),
+                    REPAIR_CONTRACT_STATE_KEY: convergence_contract.model_dump(mode="json"),
                     EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
                     SKIP_VERIFIER_STATE_KEY: True,
                 }
@@ -1737,6 +1963,10 @@ class ExecutionPipeline:
             " When repair_plan is present, treat it as the complete scope of this revision: repair those failed "
             "criterion slices only, preserve every passing criterion listed there, and do not redesign unrelated behavior. "
             "A decompose_scope task must be reduced to one independently verifiable source change before editing."
+            " When repair_contract is present, it is the causal contract for this turn. Follow its cheapest_probe, "
+            "stay inside permitted_paths and repair_boundary, and produce evidence in its verification_ladder order. "
+            "Do not claim a different cause merely to evade the progress gate; if the probe cannot distinguish the "
+            "hypothesis, make no unrelated product edit."
             " For web language repairs, expose a real select whose identity contains language or locale and whose "
             "option values are canonical locale codes such as ko and en. Activating every option must update "
             "document.documentElement.lang and visibly change all meaningful page copy, not only the status line. "

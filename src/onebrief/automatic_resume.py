@@ -523,6 +523,8 @@ def create_bounded_repair_resume(
         "public_research.md",
         "public_research_unavailable.json",
         "analysis.json",
+        "convergence_ledger.json",
+        "repair_contract.json",
     ):
         source = source_work / name
         if source.is_file():

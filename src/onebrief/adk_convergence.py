@@ -28,6 +28,7 @@ SKIP_VERIFIER_STATE_KEY = "onebrief_skip_verifier"
 REVERIFY_EXISTING_STATE_KEY = "onebrief_reverify_existing_candidate"
 EXACT_EDIT_ANCHORS_STATE_KEY = "onebrief_exact_edit_anchors"
 REPAIR_PLAN_STATE_KEY = "onebrief_repair_plan"
+REPAIR_CONTRACT_STATE_KEY = "onebrief_repair_contract"
 
 
 class BudgetedAdkLlm(BaseLlm):
@@ -212,6 +213,7 @@ def build_text_convergence_agent(
                 "previous_artifact": previous,
                 "verification_feedback": verification,
                 "repair_plan": ctx.state.get(REPAIR_PLAN_STATE_KEY),
+                "repair_contract": ctx.state.get(REPAIR_CONTRACT_STATE_KEY),
                 "exact_edit_anchors": ctx.state.get(EXACT_EDIT_ANCHORS_STATE_KEY, []),
             },
             ensure_ascii=False,

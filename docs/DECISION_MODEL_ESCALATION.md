@@ -20,6 +20,13 @@ The Project Owner still selects the smallest team. After normalization, code bin
 to owner, critic, and guardian instances and removes Pro from routine roles. Model
 selection never changes authority or allows a maker to approve its own work.
 
+Failure-time escalation is causal rather than automatic. Provider, JSON truncation,
+source-anchor, base-hash, build-order, permission, and budget failures remain on the base
+model and are handled by deterministic diagnostics or the responsible authority.
+Complex semantic product failures may promote the same maker from the approved Flash
+rung to Pro. The maker keeps the same role and repair history; the stronger model does
+not receive additional ToolPack, source-write, budget, or safe-apply authority.
+
 ## Budget and runtime enforcement
 
 The versioned price card records standard global prices per million tokens:

@@ -45,6 +45,14 @@ execution succeeds, the verifier receives the changed files and trusted evidence
 than the maker's summary. Unknown, policy, permission, and authority failures still stop
 through the recovery-policy layer instead of expanding agent authority.
 
+Every software repair is now preceded by a causal repair contract. Verification proceeds
+from the cheapest boundary outward: schema/selector promotion, compile, targeted test or
+state, semantic observation, and only then full verification. A structural selector
+mistake is normalized or re-cataloged by trusted runtime code and never purchases a
+stronger reasoning model. Semantic product failures may keep the same maker identity and
+use an approved higher reasoning rung, but only when the repair contract identifies
+reasoning as the missing capability.
+
 ## Deterministic grounding gate
 
 The model verifier cannot overrule this gate. For every authoritative CSV, the gate
@@ -71,6 +79,8 @@ written as a checkpoint so a crash or budget block leaves inspectable state.
 - `final.md`
 - `final_verification.json`
 - `completion_ledger.json`
+- `convergence_ledger.json`
+- `repair_contract.json` and versioned `repair_contract_fNN.json`
 - `execution_checkpoint.json`
 - `adk_convergence_trace.json`
 

@@ -97,6 +97,9 @@ def test_home_serves_the_real_workflow() -> None:
     assert "에이전트 실행 흐름" in response.text
     assert 'new URLSearchParams(location.search).get("session")' in response.text
     assert "terminalWaits>=5" in response.text
+    assert 'id="convergenceStatus"' in response.text
+    assert "renderConvergenceStatus(j)" in response.text
+    assert "Automatic retry stopped" in response.text
 
     assert 'name="output_target"' in response.text
     assert "기존 프로젝트 개선" in response.text
@@ -706,6 +709,8 @@ def test_status_exposes_safe_apply_only_for_completed_local_project_session(monk
                 "work/evaluation_metrics.json",
                 "work/lineage_summary.json",
                 "work/resume_capsule_l0.json",
+                "work/convergence_ledger.json",
+                "work/repair_contract.json",
             }:
                 raise FileNotFoundError(relative)
             assert relative == "work/completion_ledger.json"

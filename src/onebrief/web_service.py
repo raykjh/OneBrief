@@ -1308,6 +1308,26 @@ async def session_status(
         except FileNotFoundError:
             payload["resume_capsule"] = None
         try:
+            payload["convergence_ledger"] = await asyncio.to_thread(
+                repository.read_json, "work/convergence_ledger.json"
+            )
+        except FileNotFoundError:
+            payload["convergence_ledger"] = None
+        try:
+            payload["repair_contract"] = await asyncio.to_thread(
+                repository.read_json, "work/repair_contract.json"
+            )
+        except FileNotFoundError:
+            payload["repair_contract"] = None
+        repair_contract_payload = payload["repair_contract"]
+        progress_gate_allows_resume = bool(
+            repair_contract_payload is None
+            or (
+                isinstance(repair_contract_payload, dict)
+                and repair_contract_payload.get("execution_allowed", False)
+            )
+        )
+        try:
             session = store.read(session_id)
             try:
                 completion = await asyncio.to_thread(
@@ -1354,16 +1374,21 @@ async def session_status(
                 if link.operation_name == "local":
                     local_job = Path(link.job_uri).resolve()
                     payload["auto_resume_available"] = (
-                        can_attempt_automatic_resume(local_job)
-                        or can_attempt_bounded_repair_resume(local_job)
-                        or can_attempt_structural_resume(local_job)
+                        progress_gate_allows_resume
+                        and (
+                            can_attempt_automatic_resume(local_job)
+                            or can_attempt_bounded_repair_resume(local_job)
+                            or can_attempt_structural_resume(local_job)
+                        )
                     )
                 else:
                     # Cloud candidates are downloaded and deterministically
                     # revalidated by the local coordinator when Resume is
                     # requested.  Do not hide that recovery path merely
                     # because the preserved job is in GCS.
-                    payload["auto_resume_available"] = link.job_uri.startswith("gs://")
+                    payload["auto_resume_available"] = bool(
+                        progress_gate_allows_resume and link.job_uri.startswith("gs://")
+                    )
             else:
                 payload["auto_resume_available"] = False
         except FileNotFoundError:

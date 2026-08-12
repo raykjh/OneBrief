@@ -799,6 +799,15 @@ def test_adk_software_continuation_returns_bad_edit_anchor_to_same_maker(
 
     assert report.verdict == Verdict.PASS
     assert (output_dir / "development_candidate_promotion_failure_r0.txt").is_file()
+    convergence = json.loads(
+        (output_dir / "convergence_ledger.json").read_text(encoding="utf-8")
+    )
+    assert convergence["observations"][-1]["layer"] == "source_binding"
+    assert convergence["repair_contracts"][-1]["execution_allowed"] is True
+    assert (
+        convergence["repair_contracts"][-1]["hypothesis"]["requires_model_reasoning"]
+        is False
+    )
 
 
 def test_budget_block_writes_resumable_checkpoint(tmp_path: Path) -> None:
@@ -1555,6 +1564,49 @@ def test_project_developer_resolves_verified_anchor_id_without_retyping_source()
 
     assert "과거 시점별 모델 성능" in result.changes[0].content
     assert "Historical Model Performance" not in result.changes[0].content
+
+
+def test_project_developer_normalizes_catalog_id_misplaced_in_range_fields() -> None:
+    previous = ProjectCodeChangeSet(
+        summary="Existing Unity candidate.",
+        changes=[{
+            "path": "Assets/UI/ModernizedSettingsUI.cs", "base_sha256": None,
+            "content": (
+                "void Bind() {\n"
+                "    languageDropdown.SetOptions(new [] { \"English\", \"Español\" });\n"
+                "}\n"
+            ),
+            "reason": "Current generated production candidate.",
+        }],
+    )
+    anchors = DeveloperAgent.exact_edit_anchors(
+        previous, "Missing glyphs are visible in Español language dropdown."
+    )
+    anchor_id = str(anchors[0]["anchors"][0]["anchor_id"])
+    misplaced = AnchoredRangeRepairProjectCodeChangeSet.model_validate({
+        "summary": "Use a supported Spanish label.",
+        "changes": [{
+            "path": "Assets/UI/ModernizedSettingsUI.cs",
+            "base_sha256": None,
+            "start_anchor": anchor_id,
+            "end_anchor": anchor_id,
+            "replace": (
+                "void Bind() {\n"
+                "    languageDropdown.SetOptions(new [] { \"English\", \"Spanish\" });\n"
+                "}"
+            ),
+            "reason": "Replace the approved catalog window without another maker call.",
+        }],
+    })
+    developer = DeveloperAgent(
+        object(), change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/", path_approver=lambda path: path,
+    )
+
+    result = developer.promote_candidate(misplaced, [], previous, anchors)
+
+    assert "Spanish" in result.changes[0].content
+    assert "Español" not in result.changes[0].content
 
 
 def test_developer_rejects_blind_existing_file_replacement_and_uses_sidecar() -> None:

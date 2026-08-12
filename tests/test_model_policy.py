@@ -170,6 +170,7 @@ def test_complex_semantic_failure_escalates_same_maker_to_approved_pro_rung() ->
 @pytest.mark.parametrize("failure", [
     "Invalid JSON: EOF while parsing",
     "stale or missing base hash: web/app/page.tsx",
+    "edit anchors could not rediscover one approved source range: Assets/UI.cs",
     "provider returned status code 503",
 ])
 def test_non_reasoning_failures_do_not_buy_a_stronger_model(failure: str) -> None:

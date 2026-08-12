@@ -55,6 +55,17 @@ independently verifiable change. A third identical fingerprint stops blind retri
 reports the unresolved slice rather than consuming the remaining budget on the same
 approach.
 
+Duplicate blocking is necessary but not sufficient. Software runs additionally persist
+`convergence_ledger.json` and an evidence-bound `repair_contract.json`. A trusted failure
+is classified at the structured-output, source-binding, build, runtime,
+evidence-integrity, semantic-product, authority, or provider boundary. The contract then
+records one causal hypothesis, its cheapest discriminating probe, the permitted repair
+surface, predicted evidence, and a progressive verification ladder. The same causal
+failure plus the same strategy is `no_progress` and is blocked before another maker
+call. One materially different hypothesis may be tested; two different repairs reaching
+the same boundary stop for diagnosis or an explicit decision. This turns the loop from
+"reject and retry" into "observe, hypothesize, probe, repair, and learn."
+
 There is no silent authority expansion. `NEEDS_INFORMATION`, `NEEDS_BUDGET`, and
 `NEEDS_AUTHORIZATION` are structured returns to stage 1. The user approves an amended
 plan; OneBrief then resumes from persisted evidence instead of pretending the first run

@@ -233,6 +233,22 @@ class DeveloperAgent:
                     baseline = ""
                     match: tuple[int, int] | None = None
                     anchor_id = str(change.get("anchor_id") or "")
+                    start_selector = str(change.get("start_anchor") or "")
+                    end_selector = str(change.get("end_anchor") or "")
+                    # Structured models occasionally place a displayed catalog
+                    # ID into both free-text range fields.  This is not a new
+                    # repair hypothesis: normalize the unambiguous approved ID
+                    # before spending another maker turn.  Unknown IDs still
+                    # fail closed against the catalog below.
+                    if (
+                        not anchor_id
+                        and start_selector == end_selector
+                        and re.fullmatch(r"A[0-9a-f]{12}", start_selector)
+                    ):
+                        anchor_id = start_selector
+                        change["anchor_id"] = anchor_id
+                        change["start_anchor"] = None
+                        change["end_anchor"] = None
                     if anchor_id:
                         needle = catalog.get((path, anchor_id), "")
                         if not needle:

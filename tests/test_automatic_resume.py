@@ -342,6 +342,14 @@ def test_rejected_candidate_resumes_without_repeating_completed_context(tmp_path
     (work / "development_verification_failure.txt").write_text(
         "missing test assembly", encoding="utf-8"
     )
+    (work / "convergence_ledger.json").write_text(
+        '{"schema_version":"onebrief-convergence-ledger-v1","observations":[],"repair_contracts":[]}',
+        encoding="utf-8",
+    )
+    (work / "repair_contract.json").write_text(
+        '{"schema_version":"onebrief-repair-contract-v1","execution_allowed":true}',
+        encoding="utf-8",
+    )
     (work / "continuation_manifest.json").write_text(json.dumps({
         "source_actual_usd": 0.002,
         "aggregate_approval_ceiling_usd": 0.012,
@@ -353,6 +361,8 @@ def test_rejected_candidate_resumes_without_repeating_completed_context(tmp_path
     assert (child / "work" / "analysis.json").is_file()
     assert (child / "work" / "code_change_set.json").is_file()
     assert (child / "work" / "development_verification_failure.txt").is_file()
+    assert (child / "work" / "convergence_ledger.json").is_file()
+    assert (child / "work" / "repair_contract.json").is_file()
     marker = json.loads(
         (child / "work" / "reverify_existing_candidate.json").read_text("utf-8")
     )
