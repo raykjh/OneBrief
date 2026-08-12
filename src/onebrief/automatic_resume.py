@@ -161,6 +161,7 @@ def can_attempt_bounded_repair_resume(job_dir: Path) -> bool:
         "development verification failed:" in message
         or "repeating an identical repair candidate" in message
         or "existing file was not included in approved model context" in message
+        or "exactrepairprojectcodechangeset" in message
         or (
             "compactproposedprojectcodechangeset" in message
             and (

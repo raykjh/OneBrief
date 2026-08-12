@@ -322,6 +322,22 @@ def test_false_context_authorization_gate_can_resume_after_hash_fix(tmp_path: Pa
     assert can_attempt_bounded_repair_resume(job) is True
 
 
+def test_exact_repair_shape_error_can_resume_after_schema_normalization(tmp_path: Path) -> None:
+    job = tmp_path / "exact-repair-shape"
+    _failed_job(job)
+    record = JobRecord.model_validate_json((job / "job.json").read_text("utf-8"))
+    record = record.model_copy(update={
+        "message": "ValidationError: ExactRepairProjectCodeChangeSet invalid selector shape",
+    })
+    (job / "job.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    (job / "work" / "development_verification_failure.txt").write_text(
+        "Unity visual test contract: namespace/full name begins with OneBrief.Visual",
+        encoding="utf-8",
+    )
+
+    assert can_attempt_bounded_repair_resume(job) is True
+
+
 def test_invalid_compact_edit_shape_can_resume_from_preserved_candidate(tmp_path: Path) -> None:
     job = tmp_path / "invalid-compact-shape"
     _failed_job(job)
