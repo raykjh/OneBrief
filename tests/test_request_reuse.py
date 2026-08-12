@@ -56,6 +56,46 @@ def test_fingerprint_normalizes_whitespace_and_case() -> None:
     assert request_fingerprint(first) == request_fingerprint(second)
 
 
+def test_fingerprint_ignores_generated_project_continuation_history() -> None:
+    base = _intake()
+    first = base.model_copy(update={
+        "internal_sources": [
+            *base.internal_sources,
+            InternalSource(
+                name="onebrief-project-continuation-exchange.json",
+                priority=SourcePriority.MANDATORY,
+                requirement_keys=["existing_project_continuation"],
+                content='{"last_run":"failed-a"}',
+            ),
+        ],
+    })
+    second = base.model_copy(update={
+        "internal_sources": [
+            *base.internal_sources,
+            InternalSource(
+                name="onebrief-project-continuation-exchange.json",
+                priority=SourcePriority.MANDATORY,
+                requirement_keys=["existing_project_continuation"],
+                content='{"last_run":"failed-b","new_evidence":true}',
+            ),
+        ],
+    })
+
+    assert request_fingerprint(first) == request_fingerprint(second)
+
+
+def test_fingerprint_still_binds_user_supplied_source_changes() -> None:
+    first = _intake()
+    changed = first.model_copy(update={
+        "internal_sources": [first.internal_sources[0].model_copy(update={
+            "content": "Use delayed mock data instead.",
+            "sha256": None,
+        })],
+    })
+
+    assert request_fingerprint(first) != request_fingerprint(changed)
+
+
 def test_reuses_grounded_artifacts_and_only_compatible_code(tmp_path: Path) -> None:
     head = "a" * 40
     old = tmp_path / "old-job"
