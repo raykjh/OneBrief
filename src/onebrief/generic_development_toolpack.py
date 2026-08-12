@@ -231,7 +231,7 @@ class CompactProposedProjectFileChange(BaseModel):
     # discard one. Keep the schema itself below a single model response cap so
     # a repair cannot be truncated before validation.
     content: str | None = Field(default=None, max_length=8000)
-    search: str | None = Field(default=None, min_length=1, max_length=3000)
+    search: str | None = Field(default=None, min_length=1, max_length=8000)
     replace: str | None = Field(default=None, max_length=8000)
     anchor_id: str | None = Field(default=None, pattern=r"^A[0-9a-f]{12}$")
     start_anchor: str | None = Field(default=None, min_length=1, max_length=1000)
@@ -326,7 +326,7 @@ class ExactRepairProjectFileChange(BaseModel):
     path: str
     base_sha256: str | None = None
     content: str | None = Field(default=None, max_length=8000)
-    search: str | None = Field(default=None, min_length=1, max_length=3000)
+    search: str | None = Field(default=None, min_length=1, max_length=8000)
     replace: str | None = Field(default=None, max_length=8000)
     anchor_id: str | None = Field(default=None, pattern=r"^A[0-9a-f]{12}$")
     start_anchor: str | None = Field(default=None, min_length=1, max_length=1000)

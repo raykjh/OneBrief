@@ -7,7 +7,8 @@ from google.genai import types
 from onebrief.development_toolpack import CodeChangeSet, DevelopmentCommandResult, DevelopmentRun
 from onebrief.generic_development_toolpack import (
     AnchoredRangeRepairProjectCodeChangeSet,
-    CompactProposedProjectCodeChangeSet, ProjectCodeChangeSet, ProposedProjectCodeChangeSet,
+    CompactProposedProjectCodeChangeSet, ExactRepairProjectCodeChangeSet,
+    ProjectCodeChangeSet, ProposedProjectCodeChangeSet,
 )
 from onebrief.budget_guard import BudgetExceeded, BudgetStore, RunStatus
 from onebrief.execution_pipeline import (
@@ -717,6 +718,21 @@ def test_compact_repair_schema_allows_small_test_and_assembly_pair() -> None:
     })
 
     assert len(repair.changes) == 2
+
+
+def test_exact_repair_schema_allows_one_bounded_coherent_search_range() -> None:
+    repair = ExactRepairProjectCodeChangeSet.model_validate({
+        "summary": "Repair one coherent evidence function.",
+        "changes": [{
+            "path": "Assets/Tests/PlayMode/VisualFlowTest.cs",
+            "base_sha256": None,
+            "search": "x" * 6_000,
+            "replace": "y" * 6_500,
+            "reason": "Bind measured capture dimensions to each scenario.",
+        }],
+    })
+
+    assert len(repair.changes[0].search or "") == 6_000
 
 
 def test_png_viewport_mismatch_requests_measured_capture_dimensions() -> None:
