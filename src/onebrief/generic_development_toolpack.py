@@ -44,6 +44,14 @@ from onebrief.schemas import InternalSource, SourcePriority
 from onebrief.toolpack_lifecycle import AdapterId, ProjectToolPackLifecycle
 
 
+# Provider-authored edits remain capped by MAX_CHANGE_BYTES (64 KiB).  Trusted
+# promotion may apply one small exact edit to an already-approved mature source
+# file that is larger than that.  Keep that materialized candidate bounded, but
+# do not force the model to rewrite or split the existing file just to satisfy a
+# transport-oriented response cap.
+MAX_BOUND_PROJECT_CHANGE_BYTES = 256_000
+
+
 def _csharp_code_only(value: str) -> str:
     """Remove C# comments and string literals before structural identifier checks."""
     token = re.compile(
@@ -105,7 +113,7 @@ def generic_safe_relative(value: str) -> PurePosixPath:
 class ProjectFileChange(BaseModel):
     path: str
     base_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
-    content: str = Field(max_length=MAX_CHANGE_BYTES)
+    content: str = Field(max_length=MAX_BOUND_PROJECT_CHANGE_BYTES)
     reason: str = Field(min_length=3, max_length=500)
 
     @field_validator("path")
@@ -142,7 +150,7 @@ class ProjectCodeChangeSet(BaseModel):
         paths = [item.path.casefold() for item in self.changes]
         if len(paths) != len(set(paths)):
             raise ValueError("a change set cannot edit the same path twice")
-        if sum(len(item.content.encode("utf-8")) for item in self.changes) > MAX_CHANGE_BYTES:
+        if sum(len(item.content.encode("utf-8")) for item in self.changes) > MAX_BOUND_PROJECT_CHANGE_BYTES:
             raise ValueError("change set exceeds the total text-size limit")
         return self
 

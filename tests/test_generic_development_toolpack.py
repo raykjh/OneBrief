@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from onebrief.generic_development_toolpack import (
     ApprovedProjectDevelopmentToolPack,
@@ -1127,6 +1128,49 @@ def test_project_file_change_discards_invalid_model_hash_before_trusted_binding(
     )
 
     assert change.base_sha256 is None
+
+
+def test_trusted_exact_edit_can_materialize_a_large_approved_project_file() -> None:
+    original = "public partial class Lobby {\n" + ("    // approved row\n" * 3600) + "}\n"
+    assert len(original) > 64_000
+    raw = ProposedProjectCodeChangeSet.model_validate({
+        "summary": "Apply one bounded settings repair.",
+        "changes": [{
+            "path": "Assets/JULPAE/Scripts/Lobby/LobbyPopupController.SettingsAccount.cs",
+            "base_sha256": "a" * 64,
+            "search": "public partial class Lobby {",
+            "replace": "public partial class Lobby { // modern settings",
+            "reason": "Keep the approved large file while changing one unique anchor.",
+        }],
+    })
+    developer = DeveloperAgent(
+        gateway=object(),
+        change_set_schema=ProjectCodeChangeSet,
+        source_prefix="",
+        path_approver=lambda value: value,
+    )
+
+    promoted = developer.promote_candidate(raw, [{
+        "repository_path": raw.changes[0].path,
+        "sha256": "a" * 64,
+        "content": original,
+    }])
+
+    assert len(promoted.changes[0].content) > 64_000
+    assert "Lobby { // modern settings" in promoted.changes[0].content
+
+
+def test_provider_still_cannot_return_a_large_full_project_file() -> None:
+    with pytest.raises(ValidationError, match="at most 64000"):
+        ProposedProjectCodeChangeSet.model_validate({
+            "summary": "Unsafe whole-file response.",
+            "changes": [{
+                "path": "Assets/JULPAE/Scripts/Lobby/Large.cs",
+                "base_sha256": "a" * 64,
+                "content": "x" * 70_000,
+                "reason": "This must remain a bounded exact edit instead.",
+            }],
+        })
 
 
 def test_change_set_cannot_edit_existing_file_omitted_from_context(tmp_path: Path) -> None:
