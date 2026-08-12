@@ -1705,15 +1705,16 @@ class ExecutionPipeline:
             delta_fingerprint = development_change_fingerprint(delta)
             delta_strategy_fingerprint = development_change_strategy_fingerprint(delta)
             repeated_exact_delta = delta_fingerprint in rejected_change_fingerprints
-            repeated_declared_strategy = (
-                delta_strategy_fingerprint in rejected_strategy_fingerprints
-            )
-            if not reverify_existing and (
-                repeated_exact_delta or repeated_declared_strategy
-            ):
+            # A declared strategy is diagnostic memory, not executable
+            # identity. Two incomplete edits can share the same honest summary
+            # while a later implementation combines their missing code paths.
+            # Block byte-identical executable results here; let the convergence
+            # ledger stop a materially different implementation only after
+            # trusted verification proves the same causal failure again.
+            if not reverify_existing and repeated_exact_delta:
                 consecutive_identical_candidates += 1
                 repeated_warning = (
-                    "Rejected a repair delta whose exact code or declared strategy already failed trusted "
+                    "Rejected a repair delta whose exact executable content already failed trusted "
                     "verification in an earlier round. "
                     "Already rejected path(s): "
                     + ", ".join(str(item.path) for item in getattr(delta, "changes", []))
