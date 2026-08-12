@@ -47,6 +47,7 @@ class FailureObservation(BaseModel):
     evidence_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     affected_paths: list[str] = Field(default_factory=list, max_length=16)
     failed_criterion_ids: list[str] = Field(default_factory=list, max_length=16)
+    symptom_keys: list[str] = Field(default_factory=list, max_length=32)
     strategy_fingerprint: str | None = None
     attempt_number: int = Field(ge=1)
 
@@ -115,7 +116,8 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
         return FailureLayer.EVIDENCE_INTEGRITY
     if any(marker in text for marker in (
         "independent unity semantic visual observation failed",
-        "responsive layout", "rendered ui defect", "missing glyph",
+        "responsive layout", "rendered ui defect", "missing glyph", "glyph",
+        "overlap", "clipped", "clipping", "unreadable",
     )):
         return FailureLayer.SEMANTIC_PRODUCT
     if any(marker in text for marker in (
@@ -140,6 +142,79 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
     if context == "development_candidate_promotion":
         return FailureLayer.SOURCE_BINDING
     return FailureLayer.UNKNOWN
+
+
+def extract_symptom_keys(
+    failure_text: str,
+    *,
+    failed_criterion_ids: list[str] | None = None,
+) -> list[str]:
+    """Extract stable failure atoms from noisy verifier prose.
+
+    Independent observers may rephrase the same defect on every pass. Paths
+    changed by the maker are also not the defect's identity.  These atoms bind
+    the visible state and symptom category so wording changes cannot reset the
+    progress counter, while a genuinely removed symptom is measurable progress.
+    """
+
+    text = failure_text.casefold().replace("\\", "/")
+    keys = {f"criterion:{item.casefold()}" for item in (failed_criterion_ids or [])}
+    segments = re.split(r"[;\n|]|(?=-\s+screenshots?/)", text)
+    categories: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("missing_glyph", ("missing glyph", "tofu", "□", "unsupported glyph")),
+        ("overlap", ("overlap", "overlapping")),
+        ("clipped", ("clipped", "clipping", "cut off")),
+        ("unreadable", ("unreadable", "not readable")),
+        ("not_responsive", ("not responsive", "poor responsiveness", "responsive design")),
+        ("blank", ("blank screen", "empty screen", "nothing rendered")),
+        ("wrong_language", ("wrong language", "untranslated", "translation missing")),
+        ("navigation", ("navigation failed", "screen transition", "route failed")),
+        ("runtime_failure", ("runtime test failed", "playmode failed", "interaction failed")),
+        ("compile_failure", ("compile error", "compilation failed", "build failed")),
+    )
+
+    def surface(segment: str) -> str:
+        screenshot = re.search(r"screenshots?/([a-z0-9_.-]+)", segment)
+        if screenshot:
+            return screenshot.group(1).removesuffix(".png")
+        for name in (
+            "login_mobile", "lobby_mobile", "settings_mobile",
+            "login_desktop", "lobby_desktop", "settings_desktop",
+            "mobile", "desktop",
+        ):
+            if name.replace("_", " ") in segment or name in segment:
+                return name
+        return "artifact"
+
+    for segment in segments:
+        active_surface = surface(segment)
+        for category, markers in categories:
+            if any(marker in segment for marker in markers):
+                keys.add(f"{active_surface}:{category}")
+    if not keys:
+        # Non-visual/tooling errors retain their normalized causal identity.
+        keys.add("message:" + hashlib.sha256(_normalize(failure_text).encode("utf-8")).hexdigest()[:16])
+    return sorted(keys)[:32]
+
+
+def _same_causal_boundary(
+    previous: FailureObservation,
+    current: FailureObservation,
+) -> bool:
+    if previous.layer != current.layer:
+        return False
+    prior = set(previous.symptom_keys or extract_symptom_keys(
+        previous.normalized_signature,
+        failed_criterion_ids=previous.failed_criterion_ids,
+    ))
+    active = set(current.symptom_keys or extract_symptom_keys(
+        current.normalized_signature,
+        failed_criterion_ids=current.failed_criterion_ids,
+    ))
+    if prior and active:
+        overlap = len(prior & active) / max(1, min(len(prior), len(active)))
+        return overlap >= 0.6
+    return previous.normalized_signature == current.normalized_signature
 
 
 def _hypothesis(layer: FailureLayer, observation_id: str) -> RepairHypothesis:
@@ -243,6 +318,9 @@ class ConvergencePolicy:
             evidence_sha256=evidence_sha,
             affected_paths=list(dict.fromkeys(affected_paths or []))[:16],
             failed_criterion_ids=list(dict.fromkeys(failed_criterion_ids or []))[:16],
+            symptom_keys=extract_symptom_keys(
+                failure_text, failed_criterion_ids=failed_criterion_ids
+            ),
             strategy_fingerprint=strategy_fingerprint,
             attempt_number=attempt_number,
         )
@@ -256,9 +334,7 @@ class ConvergencePolicy:
     ) -> RepairContract:
         matches = [
             item for item in ledger.observations
-            if item.context == observation.context
-            and item.normalized_signature == observation.normalized_signature
-            and item.affected_paths == observation.affected_paths
+            if _same_causal_boundary(item, observation)
         ]
         same_strategy = bool(
             observation.strategy_fingerprint
@@ -268,7 +344,28 @@ class ConvergencePolicy:
             )
         )
         occurrence = len(matches) + 1
-        if same_strategy:
+        current_symptoms = set(observation.symptom_keys)
+        prior_symptoms = (
+            set(matches[-1].symptom_keys or extract_symptom_keys(
+                matches[-1].normalized_signature,
+                failed_criterion_ids=matches[-1].failed_criterion_ids,
+            ))
+            if matches else set()
+        )
+        narrowed = bool(
+            matches
+            and current_symptoms
+            and prior_symptoms
+            and current_symptoms < prior_symptoms
+        )
+        if narrowed:
+            progress = ProgressKind.CRITERION_ADVANCE
+            allowed = True
+            escalation = False
+            rationale = (
+                "Trusted evidence removed at least one prior symptom. Continue from the narrower failing boundary."
+            )
+        elif same_strategy:
             progress = ProgressKind.NO_PROGRESS
             allowed = False
             escalation = True

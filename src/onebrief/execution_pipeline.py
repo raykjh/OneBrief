@@ -1431,6 +1431,29 @@ class ExecutionPipeline:
                 if active_report_payload
                 else None
             )
+            active_contract_payload = _ctx.session.state.get(REPAIR_CONTRACT_STATE_KEY)
+            active_contract = (
+                RepairContract.model_validate(active_contract_payload)
+                if active_contract_payload else None
+            )
+            proposed_paths = [
+                str(getattr(item, "path", "")).replace("\\", "/")
+                for item in getattr(raw, "changes", [])
+                if getattr(item, "path", None)
+            ]
+            if active_contract is not None and active_contract.permitted_paths:
+                permitted = {
+                    path.replace("\\", "/").casefold()
+                    for path in active_contract.permitted_paths
+                }
+                outside_contract = [
+                    path for path in proposed_paths if path.casefold() not in permitted
+                ]
+                if outside_contract:
+                    raise PermissionError(
+                        "repair proposal is outside the causal contract permitted paths: "
+                        + ", ".join(outside_contract)
+                    )
             active_feedback = " ".join([
                 *(active_report.blocking_issues if active_report else []),
                 *(active_report.revision_instructions if active_report else []),

@@ -66,6 +66,13 @@ call. One materially different hypothesis may be tested; two different repairs r
 the same boundary stop for diagnosis or an explicit decision. This turns the loop from
 "reject and retry" into "observe, hypothesize, probe, repair, and learn."
 
+Semantic failures are compared by stable symptom atoms (for example, a specific mobile
+surface remaining clipped, overlapping, unreadable, or missing glyphs), not by the
+verifier's full prose or by whichever file the last repair touched. A smaller symptom
+set is measurable progress. Rephrasing the same symptoms or moving the same idea to a
+different file is not. The runtime also enforces the repair contract's permitted paths;
+the prompt alone is never the security or convergence boundary.
+
 If a paid proposal failed only at trusted source promotion, the valid structured proposal
 is preserved as `development_pending_promotion.json`. A continuation first re-promotes
 that exact proposal through the current path, hash, and anchor catalog. It buys no new

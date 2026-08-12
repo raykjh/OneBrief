@@ -116,3 +116,70 @@ def test_authority_failure_never_authorizes_autonomous_repair() -> None:
     assert observation.layer == FailureLayer.AUTHORITY
     assert contract.execution_allowed is False
     assert contract.verification_ladder == ["authority_digest_check"]
+
+
+def test_rephrased_visual_observation_cannot_reset_same_symptom_counter() -> None:
+    policy = ConvergencePolicy()
+    ledger = ConvergenceLedger()
+    failures = [
+        (
+            "screenshots/lobby_mobile.png: UI elements are overlapping and unreadable; "
+            "screenshots/settings_mobile.png: UI is clipped; "
+            "screenshots/settings_mobile.png: Missing glyphs are visible."
+        ),
+        (
+            "screenshots/lobby_mobile.png: Severe UI overlapping is present; "
+            "screenshots/settings_mobile.png: controls are clipping at both sides; "
+            "screenshots/settings_mobile.png: unsupported glyph tofu □ remains."
+        ),
+        (
+            "screenshots/lobby_mobile.png: navigation labels overlap; "
+            "screenshots/settings_mobile.png: the panel is clipped; "
+            "screenshots/settings_mobile.png: Missing glyph remains."
+        ),
+    ]
+    contracts = []
+    for attempt, failure in enumerate(failures, start=1):
+        observation = policy.observe(
+            context="development_verification",
+            failure_text=failure,
+            attempt_number=attempt,
+            affected_paths=[f"Assets/UI/Attempt{attempt}.cs"],
+            strategy_fingerprint=f"strategy-{attempt}",
+        )
+        contract = policy.issue_contract(ledger, observation)
+        contracts.append(contract)
+        ledger = policy.record(ledger, observation, contract)
+
+    assert contracts[0].occurrence == 1
+    assert contracts[1].occurrence == 2
+    assert contracts[2].occurrence == 3
+    assert contracts[2].execution_allowed is False
+    assert contracts[2].progress_kind == ProgressKind.NO_PROGRESS
+
+
+def test_removed_visual_symptom_counts_as_real_progress() -> None:
+    policy = ConvergencePolicy()
+    ledger = ConvergenceLedger()
+    first = policy.observe(
+        context="development_verification",
+        failure_text=(
+            "screenshots/lobby_mobile.png: controls overlap; "
+            "screenshots/settings_mobile.png: panel is clipped; "
+            "screenshots/settings_mobile.png: missing glyph remains."
+        ),
+        attempt_number=1,
+    )
+    ledger = policy.record(ledger, first, policy.issue_contract(ledger, first))
+    narrowed = policy.observe(
+        context="development_verification",
+        failure_text=(
+            "screenshots/lobby_mobile.png: controls overlap; "
+            "screenshots/settings_mobile.png: panel is clipped."
+        ),
+        attempt_number=2,
+    )
+    contract = policy.issue_contract(ledger, narrowed)
+
+    assert contract.progress_kind == ProgressKind.CRITERION_ADVANCE
+    assert contract.execution_allowed is True
