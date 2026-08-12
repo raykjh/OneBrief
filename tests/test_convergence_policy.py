@@ -50,6 +50,18 @@ def test_missing_unity_playmode_harness_is_evidence_topology_not_product_runtime
     assert contract.verification_ladder[0] == "proof_topology_scan"
 
 
+def test_missing_requested_unity_locale_is_evidence_topology() -> None:
+    policy = ConvergencePolicy()
+    observation = policy.observe(
+        context="development_verification",
+        failure_text="Unity visual evidence did not exercise requested locale(s): es",
+        attempt_number=1,
+    )
+
+    assert observation.layer == FailureLayer.EVIDENCE_TOPOLOGY
+    assert observation.symptom_keys == ["artifact:evidence_topology"]
+
+
 def test_evidence_topology_can_advance_when_static_blockers_change() -> None:
     policy = ConvergencePolicy()
     ledger = ConvergenceLedger()

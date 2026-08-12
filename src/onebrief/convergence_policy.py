@@ -115,6 +115,7 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
         "unity visual evidence requires a distinct rendered scenario",
         "responsive unity visual evidence must define and capture",
         "unity visual evidence reused an identical screenshot",
+        "unity visual evidence did not exercise requested locale",
     )):
         return FailureLayer.EVIDENCE_TOPOLOGY
     if any(marker in text for marker in (
@@ -183,7 +184,7 @@ def extract_symptom_keys(
         ("missing_test_asmdef", ("add a unity test .asmdef", "testassemblies")),
         ("evidence_topology", (
             "distinct rendered scenario", "responsive unity visual evidence",
-            "reused an identical screenshot",
+            "reused an identical screenshot", "did not exercise requested locale",
         )),
         ("runtime_evidence_json", ("must write onebrief-evidence/runtime-evidence.json",)),
         ("png_capture", ("must capture png runtime evidence",)),

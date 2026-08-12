@@ -736,6 +736,18 @@ class ExecutionPipeline:
                     "that real transition and before opening Settings, and Settings after invoking the real Settings "
                     "button. Do not duplicate scenario rows, paths, or bytes, and do not relabel one final-state PNG."
                 )
+            if "unity visual evidence did not exercise requested locale" in lowered:
+                return (
+                    "The runtime interaction may already select the requested locale, but the evidence manifest does "
+                    "not prove it. After operating the real visible language dropdown, append a dedicated locale "
+                    "scenario to runtime-evidence.json. That scenario must contain scenario_id, expected_locale, "
+                    "observed_locale, changed_visible_text_count, missing_glyph_count, and screenshot_path. Set "
+                    "expected_locale and observed_locale to the exact missing locale named by the failure; measure "
+                    "changed_visible_text_count from visible TMP text before and after the real selection; derive "
+                    "missing_glyph_count by ForceMeshUpdate plus TMP character/font coverage; and capture a new PNG "
+                    "while the selected locale is visibly active. Do not record the locale dropdown only as a general "
+                    "observed_state scenario, and do not invent passing counts without measuring the running UI."
+                )
             if "unity visual test contract" in lowered and "each general ui evidence scenario" in lowered:
                 return (
                     "Use the exact OneBrief general UI scenario fields: scenario_id, observed_state, interaction, "

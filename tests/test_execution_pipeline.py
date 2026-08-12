@@ -1422,6 +1422,21 @@ def test_unity_missing_surface_feedback_requires_separate_executed_captures() ->
     )
 
 
+def test_missing_unity_locale_feedback_requires_measured_locale_scenario() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "Unity visual evidence did not exercise requested locale(s): es"
+    )
+
+    instruction = " ".join(report.revision_instructions)
+    assert "dedicated locale scenario" in instruction
+    assert "expected_locale" in instruction
+    assert "observed_locale" in instruction
+    assert "changed_visible_text_count" in instruction
+    assert "missing_glyph_count" in instruction
+    assert "exact missing locale" in instruction
+    assert "real visible language dropdown" in instruction
+
+
 def test_duplicate_unity_screenshot_feedback_requires_capture_at_each_real_state() -> None:
     report = ExecutionPipeline._development_failure_report(
         "Unity visual evidence reused an identical screenshot for LoginDesktop and LobbyDesktop; "
