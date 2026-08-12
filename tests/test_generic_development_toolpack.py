@@ -1235,6 +1235,73 @@ def test_unity_visual_preflight_requires_evidence_schema_and_real_navigation(tmp
     assert any("real UI interaction" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_rejects_relabelled_direct_scene_load(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-relabeled-navigation"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (clone / "Assets" / "Login.unity").write_text("Login", encoding="utf-8")
+    (clone / "Assets" / "Lobby.unity").write_text("Lobby", encoding="utf-8")
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'SceneManager.LoadScene("Login"); '
+        'scenarios.Add($"{\\"scenario_id\\":\\"login\\",\\"observed_state\\":\\"Login\\",'
+        '\\"interaction\\":\\"none\\",\\"assertion_count\\":1,\\"viewport_width\\":64,'
+        '\\"viewport_height\\":32,\\"screenshot_path\\":\\"login.png\\"}"); '
+        'SceneManager.LoadScene("Lobby"); '
+        'scenarios.Add($"{\\"scenario_id\\":\\"lobby\\",\\"observed_state\\":\\"Lobby\\",'
+        '\\"interaction\\":\\"login_click\\",\\"assertion_count\\":1,\\"viewport_width\\":64,'
+        '\\"viewport_height\\":32,\\"screenshot_path\\":\\"lobby.png\\"}"); '
+        'var json = "runtime-evidence.json onebrief-unity-visual-evidence-v1 scenarios"; '
+        'var png = "login.png lobby.png"; } }',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile, clone, "Modernize login and lobby UI."
+    )
+
+    assert any("do not relabel a direct scene load as a click" in issue for issue in issues)
+    assert any("hard-coded assertion_count is not proof" in issue for issue in issues)
+
+
+def test_unity_visual_preflight_requires_ordered_return_scenario(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-ordered-navigation"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'SceneManager.LoadScene("Login"); Assert.IsNotNull(button); '
+        'scenarios.Add($"{\\"scenario_id\\":\\"login\\",\\"observed_state\\":\\"Login\\",\\"interaction\\":\\"none\\"}"); '
+        'button.onClick.Invoke(); scenarios.Add($"{\\"scenario_id\\":\\"lobby\\",\\"observed_state\\":\\"Lobby\\",\\"interaction\\":\\"login_click\\"}"); '
+        'button.onClick.Invoke(); scenarios.Add($"{\\"scenario_id\\":\\"settings\\",\\"observed_state\\":\\"Settings\\",\\"interaction\\":\\"settings_click\\"}"); '
+        'var json = "runtime-evidence.json onebrief-unity-visual-evidence-v1 scenarios scenario_id observed_state interaction assertion_count viewport_width viewport_height screenshot_path"; '
+        'var png = "login.png lobby.png settings.png"; } }',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile, clone, "로그인→로비→설정→로비 UI 화면 이동을 검증한다."
+    )
+
+    assert any("login -> lobby -> settings -> lobby" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_rejects_first_arbitrary_button_fallback(tmp_path: Path) -> None:
     _root, registry = _approved_node_project(tmp_path)
     pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)

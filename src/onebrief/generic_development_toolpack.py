@@ -30,6 +30,7 @@ from onebrief.development_toolpack import (
 )
 from onebrief.unity_runtime_evidence import (
     requested_ui_surfaces,
+    requested_ui_transition,
     validate_and_copy_unity_visual_evidence,
 )
 from onebrief.unity_layout_diagnostics import (
@@ -164,6 +165,64 @@ def _uses_screen_sized_render_target(structural_source: str) -> bool:
         for width in width_vars
         for height in height_vars
     )
+
+
+def _unity_literal_scenarios(source: str) -> list[tuple[str, str, int, int]]:
+    """Extract literal observed-state/interaction claims and source spans.
+
+    The model may interpolate numeric measurements, but state and interaction
+    labels must remain literal so they can be bound to the code that precedes
+    each evidence row before the expensive PlayMode run begins.
+    """
+
+    results: list[tuple[str, str, int, int]] = []
+    previous_end = 0
+    for match in re.finditer(
+        r"(?:scenarios|evidenceRows|evidence_rows)\s*\.\s*Add\s*\((.*?)\)\s*;",
+        source,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        body = match.group(1)
+
+        def field(name: str) -> str | None:
+            found = re.search(
+                rf'\\?"{name}\\?"\s*:\s*\\?"([^"\\]+)',
+                body,
+                re.IGNORECASE,
+            )
+            return found.group(1) if found else None
+
+        state = field("observed_state")
+        interaction = field("interaction")
+        if state and interaction:
+            results.append((state, interaction, previous_end, match.start()))
+        previous_end = match.end()
+    return results
+
+
+def _contains_ordered_literals(observed: list[str], requested: list[str]) -> bool:
+    if not requested:
+        return True
+    aliases = {
+        "login": ("login", "sign in", "로그인"),
+        "lobby": ("lobby", "main menu", "로비"),
+        "settings": ("settings", "setting", "options", "설정"),
+    }
+    cursor = 0
+    for value in observed:
+        lowered = value.casefold()
+        surface = next(
+            (
+                name for name, markers in aliases.items()
+                if any(marker in lowered for marker in markers)
+            ),
+            None,
+        )
+        if surface == requested[cursor]:
+            cursor += 1
+            if cursor == len(requested):
+                return True
+    return False
 
 
 def generic_safe_relative(value: str) -> PurePosixPath:
@@ -1392,10 +1451,23 @@ class ApprovedProjectDevelopmentToolPack:
                     name for name, path in project_scenes.items()
                     if "LanguageDropdown" in path.read_text(encoding="utf-8", errors="replace")
                 }
-                if settings_scenes and not any(name in settings_scenes for name in requested_scenes):
+                verified_navigation_to_settings_scene = bool(
+                    any(name in combined_source for name in settings_scenes)
+                    and re.search(r"\bSceneManager\s*\.\s*GetActiveScene\s*\(", combined_source)
+                    and re.search(r"\bAssert\s*\.", combined_source)
+                    and any(token in structural for token in (
+                        ".onclick.invoke", "executeevents.execute", "pointerclickevent",
+                    ))
+                )
+                if (
+                    settings_scenes
+                    and not any(name in settings_scenes for name in requested_scenes)
+                    and not verified_navigation_to_settings_scene
+                ):
                     issues.append(
                         "the OneBrief.Visual test must load a scene containing the real LanguageDropdown: "
                         + ", ".join(sorted(settings_scenes))
+                        + "; alternatively reach it through a real UI action and assert the active scene"
                     )
             requested_surfaces = requested_ui_surfaces(goal_text)
             if len(requested_surfaces) >= 2 and not any(token in structural for token in (
@@ -1405,6 +1477,40 @@ class ApprovedProjectDevelopmentToolPack:
                 issues.append(
                     "the OneBrief.Visual test must perform a real UI interaction to move between requested "
                     "screens; loading scenes and asserting object presence alone does not prove the transition"
+                )
+            literal_scenarios = _unity_literal_scenarios(combined_source)
+            if len(requested_surfaces) >= 2 and literal_scenarios:
+                if not re.search(r"\bAssert\s*\.", structural, re.IGNORECASE):
+                    issues.append(
+                        "multi-screen runtime evidence must execute real Assert checks for discovered controls and "
+                        "observed destinations; a hard-coded assertion_count is not proof"
+                    )
+                action_markers = (
+                    "click", "submit", "start", "login", "setting", "open", "back", "return",
+                    "선택", "열기", "뒤로", "복귀", "로그인", "설정",
+                )
+                action_tokens = (
+                    ".onclick.invoke", "executeevents.execute", "pointerclickevent", "submitevent",
+                )
+                for state, interaction, start, end in literal_scenarios:
+                    if not any(marker in interaction.casefold() for marker in action_markers):
+                        continue
+                    segment = combined_source[start:end]
+                    segment_structural = _csharp_code_only(segment).casefold()
+                    if not any(token in segment_structural for token in action_tokens):
+                        issues.append(
+                            f"runtime evidence labels {state}/{interaction} as a UI action but no real control "
+                            "was invoked before that evidence row; do not relabel a direct scene load as a click"
+                        )
+                        break
+            requested_transition = requested_ui_transition(goal_text)
+            if requested_transition and literal_scenarios and not _contains_ordered_literals(
+                [state for state, _interaction, _start, _end in literal_scenarios],
+                requested_transition,
+            ):
+                issues.append(
+                    "the OneBrief.Visual test must record the requested ordered UI journey, including repeated "
+                    "return destinations: " + " -> ".join(requested_transition)
                 )
             if re.search(r"new\s+(?:unityengine\.)?gameobject", structural) and re.search(
                 r"addcomponent\s*<[^>]*(?:canvas|tmp_|text|image|button|recttransform)[^>]*>",

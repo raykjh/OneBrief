@@ -3,7 +3,10 @@ from pathlib import Path
 
 import pytest
 
-from onebrief.unity_runtime_evidence import validate_and_copy_unity_visual_evidence
+from onebrief.unity_runtime_evidence import (
+    requested_ui_transition,
+    validate_and_copy_unity_visual_evidence,
+)
 
 
 def png(width: int = 32, height: int = 32) -> bytes:
@@ -185,6 +188,53 @@ def test_general_unity_ui_evidence_requires_every_requested_surface(tmp_path: Pa
         validate_and_copy_unity_visual_evidence(
             tmp_path, results, tmp_path / "packaged", "Login, lobby, settings UI"
         )
+
+
+def test_requested_ui_transition_preserves_repeated_return_destination() -> None:
+    goal = (
+        "로그인·로비·설정 UI를 현대화하고 "
+        "로그인→로비→설정→로비의 핵심 화면 이동을 검증한다."
+    )
+
+    assert requested_ui_transition(goal) == ["login", "lobby", "settings", "lobby"]
+
+
+def test_ordered_ui_journey_requires_the_final_return_evidence(tmp_path: Path) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results)
+    write_evidence(tmp_path, [
+        ui_scenario("login", width=64, height=32),
+        ui_scenario("lobby", width=64, height=32, interaction="login click"),
+        ui_scenario("settings", width=32, height=64, interaction="settings click"),
+    ])
+
+    with pytest.raises(RuntimeError, match="login -> lobby -> settings -> lobby"):
+        validate_and_copy_unity_visual_evidence(
+            tmp_path,
+            results,
+            tmp_path / "packaged",
+            "로그인→로비→설정→로비 이동을 검증한다.",
+        )
+
+
+def test_ordered_ui_journey_accepts_distinct_final_return_evidence(tmp_path: Path) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results)
+    write_evidence(tmp_path, [
+        ui_scenario("login", width=64, height=32),
+        ui_scenario("lobby", width=64, height=32, interaction="login click"),
+        ui_scenario("settings", width=32, height=64, interaction="settings click"),
+        ui_scenario("lobby-returned", width=32, height=64, interaction="back click"),
+    ])
+
+    summary = validate_and_copy_unity_visual_evidence(
+        tmp_path,
+        results,
+        tmp_path / "packaged",
+        "로그인→로비→설정→로비 이동을 검증한다.",
+    )
+
+    assert summary.scenario_count == 4
 
 
 def test_combined_final_state_names_do_not_replace_distinct_surface_screenshots(

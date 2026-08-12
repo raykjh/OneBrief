@@ -111,6 +111,64 @@ def requested_ui_surfaces(text: str) -> set[str]:
     }
 
 
+def _normalized_ui_surface(value: str) -> str | None:
+    lowered = value.casefold()
+    aliases = {
+        "login": ("login", "sign in", "로그인"),
+        "lobby": ("lobby", "main menu", "로비"),
+        "settings": ("settings", "setting", "options", "설정"),
+    }
+    for surface, markers in aliases.items():
+        if any(marker in lowered for marker in markers):
+            return surface
+    return None
+
+
+def requested_ui_transition(text: str) -> list[str]:
+    """Return an explicitly arrow-delimited UI journey, including repeats.
+
+    Surface sets prove coverage, but they cannot distinguish login→lobby→settings
+    from login→lobby→settings→lobby.  Preserve duplicate destinations so a
+    requested return journey must produce a second, later observation.
+    """
+
+    parts = re.split(r"\s*(?:→|->)\s*", text)
+    if len(parts) < 2:
+        return []
+    transition: list[str] = []
+    for index, part in enumerate(parts):
+        mentions: list[tuple[int, str]] = []
+        for surface, markers in {
+            "login": ("login", "sign in", "로그인"),
+            "lobby": ("lobby", "main menu", "로비"),
+            "settings": ("settings", "setting", "options", "설정"),
+        }.items():
+            for marker in markers:
+                for match in re.finditer(re.escape(marker), part, re.IGNORECASE):
+                    mentions.append((match.start(), surface))
+        if not mentions:
+            return []
+        mentions.sort()
+        # The first segment may contain prose and earlier surface mentions;
+        # the one adjacent to the first arrow is the final mention.  Every
+        # later segment begins at its arrow-delimited state.
+        transition.append(mentions[-1][1] if index == 0 else mentions[0][1])
+    return transition
+
+
+def _contains_ordered_surface_journey(observed: list[str], requested: list[str]) -> bool:
+    if not requested:
+        return True
+    cursor = 0
+    for value in observed:
+        surface = _normalized_ui_surface(value)
+        if surface == requested[cursor]:
+            cursor += 1
+            if cursor == len(requested):
+                return True
+    return False
+
+
 def _test_count(results_path: Path) -> int:
     if not results_path.is_file():
         raise RuntimeError("Unity visual verification did not produce an XML test result")
@@ -169,6 +227,7 @@ def validate_and_copy_unity_visual_evidence(
 
     observed: set[str] = set()
     observed_states: set[str] = set()
+    observed_state_sequence: list[str] = []
     screenshot_sources: list[tuple[Path, str]] = []
     screenshot_digests: dict[str, str] = {}
     for scenario in manifest.scenarios:
@@ -209,6 +268,7 @@ def validate_and_copy_unity_visual_evidence(
                     f"Unity visual scenario {scenario.scenario_id} did not report a passing runtime assertion"
                 )
             observed_states.add(scenario.observed_state.casefold())
+            observed_state_sequence.append(scenario.observed_state)
         source = (evidence_root / Path(*PurePosixPath(scenario.screenshot_path).parts)).resolve()
         if not source.is_relative_to(evidence_root) or not source.is_file():
             raise RuntimeError(
@@ -269,6 +329,15 @@ def validate_and_copy_unity_visual_evidence(
                 "Unity visual evidence requires a distinct rendered scenario for every requested real UI surface: "
                 + ", ".join(missing_surfaces)
             )
+
+    requested_transition = requested_ui_transition(goal_text)
+    if requested_transition and not _contains_ordered_surface_journey(
+        observed_state_sequence, requested_transition
+    ):
+        raise RuntimeError(
+            "Unity visual evidence did not prove the requested ordered UI journey: "
+            + " -> ".join(requested_transition)
+        )
 
     responsive_requested = (
         ("mobile" in goal_text.casefold() or "모바일" in goal_text)
