@@ -1086,6 +1086,15 @@ class ExecutionPipeline:
             "an aria-label is not a verifiable language control."
             + (("\n\n" + developer.skill_context) if developer.skill_context else "")
         )
+        if prior_failure.is_file():
+            maker_instruction += (
+                "\n\nCOMPACT REPAIR CONTRACT: Return exactly one changed path and keep the entire JSON "
+                "response below 8,000 characters. This turn repairs only the first deterministic blocker in "
+                "repair_plan; do not attempt the whole product scope. If the blocker requires a missing Unity "
+                "PlayMode test, add one minimal test source below 6,000 characters that loads and interacts with "
+                "the real project scene. Do not echo previous_artifact, explanatory comments, helper frameworks, "
+                "or unrelated acceptance criteria. Later repair turns will address later blockers."
+            )
         verifier_instruction = (
             "You are OneBrief's independent software verifier. You did not author the code. Compare every "
             "deliverable and acceptance criterion against the changed source, isolated build and test commands, "
