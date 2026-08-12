@@ -713,6 +713,14 @@ class ExecutionPipeline:
                     "assertion_count, viewport_width, viewport_height, and screenshot_path. Do not invent nested "
                     "assertions or viewport objects."
                 )
+            if "captured png texture dimensions" in lowered or (
+                "viewport" in lowered and "does not match its png" in lowered
+            ):
+                return (
+                    "Do not add more frame delays or repeat Screen.SetResolution. Make the synchronous capture "
+                    "return the Texture2D/PNG width and height actually written, then serialize those measured "
+                    "values into viewport_width and viewport_height for that exact scenario."
+                )
             if "unity visual test contract" in lowered and "duplicate unitytest methods" in lowered:
                 return (
                     "Remove the duplicated UnityTest method or class created by the previous repair and keep one "

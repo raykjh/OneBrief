@@ -1175,6 +1175,14 @@ class ApprovedProjectDevelopmentToolPack:
                     "each general UI evidence scenario must contain scenario_id, observed_state, interaction, "
                     "assertion_count, viewport_width, viewport_height, and screenshot_path"
                 )
+            if re.search(
+                r'\\?"viewport_(?:width|height)\\?"\s*:\s*\d+', combined_source,
+                re.IGNORECASE,
+            ):
+                issues.append(
+                    "runtime evidence must record the actual captured PNG texture dimensions, not hard-code "
+                    "requested viewport values"
+                )
             unity_test_methods = re.findall(
                 r"\[\s*unitytest\s*\]\s*(?:public\s+)?(?:ienumerator|void)\s+([A-Za-z_][A-Za-z0-9_]*)",
                 structural,

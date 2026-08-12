@@ -719,6 +719,16 @@ def test_compact_repair_schema_allows_small_test_and_assembly_pair() -> None:
     assert len(repair.changes) == 2
 
 
+def test_png_viewport_mismatch_requests_measured_capture_dimensions() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "Unity visual scenario login_desktop viewport width does not match its PNG"
+    )
+
+    assert report.verdict.value == "REVISE"
+    assert "Do not add more frame delays" in report.revision_instructions[0]
+    assert "Texture2D/PNG width and height actually written" in report.revision_instructions[0]
+
+
 def test_adk_software_continuation_returns_bad_edit_anchor_to_same_maker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

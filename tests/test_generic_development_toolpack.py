@@ -933,6 +933,43 @@ def test_unity_visual_preflight_rejects_wait_for_end_of_frame_in_batchmode(
     assert any("does not evoke WaitForEndOfFrame" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_rejects_hard_coded_png_viewport_claims(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    tests = tmp_path / "unity-hardcoded-viewport" / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'UnityEngine.SceneManagement.SceneManager.LoadScene("Lobby"); '
+        'var languageDropdown = UnityEngine.GameObject.Find("LanguageDropdown")'
+        ".GetComponent<TMPro.TMP_Dropdown>(); "
+        "languageDropdown.value = 1; "
+        "languageDropdown.onValueChanged.Invoke(languageDropdown.value); "
+        "var glyph = TMPro.TMP_Settings.defaultFontAsset.HasCharacter('A'); "
+        "var json = \"{\\\"schema_version\\\":\\\"onebrief-unity-visual-evidence-v1\\\","
+        "\\\"scenarios\\\":[{\\\"scenario_id\\\":\\\"lobby\\\","
+        "\\\"observed_state\\\":\\\"Lobby\\\",\\\"interaction\\\":\\\"login_click\\\","
+        "\\\"assertion_count\\\":1,\\\"viewport_width\\\":1920,"
+        "\\\"viewport_height\\\":1080,\\\"screenshot_path\\\":\\\"lobby.png\\\"}]}\"; "
+        "var png = \"onebrief-evidence/lobby.png\"; } }\n",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile, tests.parents[2], "Unity responsive language UI"
+    )
+
+    assert any("actual captured PNG texture dimensions" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_rejects_overlay_ui_rendered_without_canvas_routing(
     tmp_path: Path,
 ) -> None:
