@@ -356,9 +356,36 @@ def test_reuse_carries_rejected_repairs_and_derives_readable_history(
         work, {development_change_fingerprint(candidate_payload)}
     )
 
+    best = tmp_path / "best-job"
+    best_work = best / "work"
+    best_evidence = (
+        best_work / "toolpacks" / "exchange_development" / "evidence"
+    )
+    best_evidence.mkdir(parents=True)
+    (best / "inputs").mkdir()
+    (best / "inputs" / "intake.json").write_text(
+        _intake().model_dump_json(), encoding="utf-8"
+    )
+    (best / "job.json").write_text(
+        json.dumps({"job_id": "best-job", "status": "failed"}), encoding="utf-8"
+    )
+    (best_evidence / "repository_inspection.json").write_text(
+        json.dumps({"head_sha": head}), encoding="utf-8"
+    )
+    (best_work / "code_change_set_r0.json").write_text(
+        json.dumps({"summary": "highest progress", "changes": []}), encoding="utf-8"
+    )
+    (best_work / "development_verification_failure_r0.txt").write_text(
+        "independent Unity semantic visual observation failed", encoding="utf-8"
+    )
+
     reuse = find_reuse_candidate(tmp_path, _intake(), _project(head))
     assert reuse is not None
-    assert "development_rejected_change_fingerprints.json" in reuse.reusable_artifacts
+    assert reuse.job_id == "best-job"
+    assert old.resolve() in reuse.rejected_memory_sources
+    assert "development_rejected_change_fingerprints.json" in (
+        reuse.public_summary()["reusable_artifacts"]
+    )
     target = tmp_path / "new-job"
     (target / "work").mkdir(parents=True)
     seed_reusable_artifacts(reuse, target)

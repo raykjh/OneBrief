@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +15,7 @@ from onebrief.development_change_tracking import (
     HISTORY_NAME,
     REGISTER_NAME,
     discover_rejected_change_history,
+    discover_rejected_change_fingerprints,
     write_rejected_change_history,
 )
 from onebrief.schemas import IntakeRequest, ToolPackId
@@ -64,12 +65,18 @@ class ReuseCandidate:
     reusable_artifacts: tuple[str, ...]
     project_head_sha: str | None
     development_quality: tuple[int, int] = (0, 0)
+    rejected_memory_sources: tuple[Path, ...] = ()
 
     def public_summary(self) -> dict[str, Any]:
+        artifacts = list(self.reusable_artifacts)
+        if self.rejected_memory_sources:
+            artifacts.extend(
+                name for name in (REGISTER_NAME, HISTORY_NAME) if name not in artifacts
+            )
         return {
             "job_id": self.job_id,
             "status": self.status,
-            "reusable_artifacts": list(self.reusable_artifacts),
+            "reusable_artifacts": artifacts,
             "message": (
                 "같은 요청의 이전 작업을 찾았습니다. 이미 완료된 조사·분석·호환 가능한 "
                 "코드 초안을 재사용하여 처음부터 반복하지 않습니다."
@@ -231,7 +238,18 @@ def find_reuse_candidate(
             int(not legacy_delta_risk),
             job_dir.stat().st_mtime, candidate,
         ))
-    return max(candidates, key=lambda item: item[:6])[6] if candidates else None
+    if not candidates:
+        return None
+    selected = max(candidates, key=lambda item: item[:6])[6]
+    memory_sources = tuple(sorted(
+        {
+            item[6].job_dir
+            for item in candidates
+            if discover_rejected_change_fingerprints(item[6].job_dir / "work")
+        },
+        key=lambda path: path.as_posix(),
+    ))
+    return replace(selected, rejected_memory_sources=memory_sources)
 
 
 def seed_reusable_artifacts(candidate: ReuseCandidate, new_job_dir: Path) -> Path:
@@ -255,16 +273,54 @@ def seed_reusable_artifacts(candidate: ReuseCandidate, new_job_dir: Path) -> Pat
         shutil.copy2(source, target)
         digest = hashlib.sha256(target.read_bytes()).hexdigest()
         copied.append({"source": name, "target": target_name, "sha256": digest})
-    # Older failed jobs can have the durable fingerprint register without the
-    # compact maker-readable history introduced later. Reconstruct that history
-    # from their rejected deltas while the source job is still locally
-    # available, instead of letting a continuation rediscover the same repair.
-    if (target_work / REGISTER_NAME).is_file() and not (target_work / HISTORY_NAME).is_file():
-        records = discover_rejected_change_history(source_work)
+    # The best candidate and the newest rejected strategies can live in
+    # different continuation jobs. Merge deterministic rejection memory from
+    # every exact-request, exact-revision source while preserving only the
+    # highest-progress executable candidate selected above.
+    memory_sources = {candidate.job_dir, *candidate.rejected_memory_sources}
+    rejected_fingerprints: set[str] = set()
+    rejected_history: dict[str, tuple[float, dict[str, Any]]] = {}
+    for memory_job in sorted(
+        memory_sources, key=lambda path: (path.stat().st_mtime, path.as_posix())
+    ):
+        memory_work = memory_job / "work"
+        rejected_fingerprints.update(discover_rejected_change_fingerprints(memory_work))
+        for item in discover_rejected_change_history(memory_work):
+            fingerprint = str(item.get("fingerprint", ""))
+            if fingerprint:
+                rejected_history[fingerprint] = (memory_job.stat().st_mtime, item)
+    if rejected_fingerprints:
+        register_path = target_work / REGISTER_NAME
+        register_path.write_text(
+            json.dumps({
+                "schema_version": "onebrief-rejected-change-fingerprints-v1",
+                "fingerprints": sorted(rejected_fingerprints),
+            }, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        copied.append({
+            "source": "merged_exact_request_rejection_memory",
+            "target": REGISTER_NAME,
+            "sha256": hashlib.sha256(register_path.read_bytes()).hexdigest(),
+        })
+        # Exact fingerprints remain complete in the machine gate. The maker
+        # receives only a compact recent strategy history, excluding attempts
+        # that touched verification files alone because those paths are never a
+        # legitimate visual-product repair target.
+        records = [
+            item
+            for _mtime, item in sorted(
+                rejected_history.values(), key=lambda value: value[0]
+            )
+            if any(
+                "/tests/" not in str(path).replace("\\", "/").casefold()
+                for path in item.get("changed_paths", [])
+            )
+        ][-12:]
         if records:
             history_path = write_rejected_change_history(target_work, records)
             copied.append({
-                "source": "derived_from_rejected_deltas",
+                "source": "merged_exact_request_rejection_memory",
                 "target": HISTORY_NAME,
                 "sha256": hashlib.sha256(history_path.read_bytes()).hexdigest(),
             })
