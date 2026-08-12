@@ -11,6 +11,7 @@ from onebrief.automatic_resume import (
     can_attempt_bounded_repair_resume,
     can_attempt_structural_resume,
     create_bounded_repair_resume,
+    _trusted_semantic_failure_receipt,
     create_structural_resume,
     seed_automatic_resume,
 )
@@ -546,6 +547,45 @@ def test_truncated_compact_repair_can_resume_from_preserved_candidate(tmp_path: 
     )
 
     assert can_attempt_bounded_repair_resume(job) is True
+
+
+def test_trusted_semantic_failure_skips_only_unchanged_candidate_preflight(
+    tmp_path: Path,
+) -> None:
+    work = tmp_path / "work"
+    development = work / "development"
+    evidence = development / "unity_visual_evidence"
+    observations = work / "independent_observations"
+    evidence.mkdir(parents=True)
+    observations.mkdir()
+    candidate = work / "code_change_set.json"
+    candidate.write_text('{"candidate":"verified"}', encoding="utf-8")
+    (development / "change_set.json").write_bytes(candidate.read_bytes())
+    (development / "development_run.json").write_text(json.dumps({
+        "status": "verified",
+        "base_head_sha": "a" * 40,
+    }), encoding="utf-8")
+    (evidence / "summary.json").write_text(
+        '{"screenshot_paths":["screenshots/lobby.png"]}', encoding="utf-8"
+    )
+    (observations / "unity_ui_observation.json").write_text(json.dumps({
+        "status": "failed",
+        "independent_from_maker": True,
+    }), encoding="utf-8")
+    failure = work / "development_verification_failure.txt"
+    failure.write_text(
+        "independent Unity semantic visual observation failed: lobby clipped",
+        encoding="utf-8",
+    )
+
+    receipt = _trusted_semantic_failure_receipt(work, candidate, failure)
+
+    assert receipt is not None
+    assert receipt["candidate_sha256"] == hashlib.sha256(candidate.read_bytes()).hexdigest()
+    (development / "change_set.json").write_text(
+        '{"candidate":"different"}', encoding="utf-8"
+    )
+    assert _trusted_semantic_failure_receipt(work, candidate, failure) is None
 
 
 def test_failed_semantic_observation_returns_verified_candidate_to_maker(

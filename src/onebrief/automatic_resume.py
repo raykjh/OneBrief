@@ -92,6 +92,70 @@ def _most_progressed_development_pair(work: Path) -> tuple[Path, Path]:
     )
 
 
+def _trusted_semantic_failure_receipt(
+    source_work: Path, candidate: Path, failure: Path
+) -> dict[str, object] | None:
+    """Bind a fresh semantic failure to the exact candidate Unity verified.
+
+    A bounded continuation does not need to spend four minutes reproducing an
+    unchanged local Unity import when the previous terminal job already holds a
+    verified development run and an independent failed observation for the same
+    serialized change set. Any new maker delta still runs the complete trusted
+    ToolPack before it can progress.
+    """
+
+    development_change = source_work / "development" / "change_set.json"
+    development_run = source_work / "development" / "development_run.json"
+    evidence_summary = (
+        source_work / "development" / "unity_visual_evidence" / "summary.json"
+    )
+    observation = (
+        source_work / "independent_observations" / "unity_ui_observation.json"
+    )
+    required = (
+        candidate,
+        failure,
+        development_change,
+        development_run,
+        evidence_summary,
+        observation,
+    )
+    if not all(path.is_file() for path in required):
+        return None
+    failure_text = failure.read_text(encoding="utf-8", errors="replace")
+    if not failure_text.casefold().startswith(
+        "independent unity semantic visual observation failed"
+    ):
+        return None
+    try:
+        run_payload = json.loads(development_run.read_text(encoding="utf-8"))
+        observation_payload = json.loads(observation.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return None
+    if run_payload.get("status") != "verified" or not run_payload.get("base_head_sha"):
+        return None
+    if (
+        observation_payload.get("status") != "failed"
+        or observation_payload.get("independent_from_maker") is not True
+    ):
+        return None
+    candidate_sha = _sha256(candidate)
+    if candidate_sha != _sha256(development_change):
+        return None
+    return {
+        "schema_version": "onebrief-trusted-semantic-failure-reuse-v1",
+        "validator_version": TRUSTED_REVALIDATION_VERSION,
+        "candidate_sha256": candidate_sha,
+        "development_run_sha256": _sha256(development_run),
+        "evidence_summary_sha256": _sha256(evidence_summary),
+        "observation_sha256": _sha256(observation),
+        "failure_sha256": _sha256(failure),
+        "base_head_sha": str(run_payload["base_head_sha"]),
+        "guarantee": (
+            "Only the unchanged rejected candidate skips duplicate preflight; "
+            "every new delta still requires complete ToolPack verification."
+        ),
+    }
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -450,6 +514,7 @@ def create_bounded_repair_resume(
         )
     )
     semantic_observation_failure = _failed_semantic_observation(source_work)
+    trusted_failure = None
     if semantic_observation_failure is not None:
         observation_path, observation_feedback = semantic_observation_failure
         candidate = source_work / "code_change_set.json"
@@ -458,6 +523,11 @@ def create_bounded_repair_resume(
             observation_feedback + "\n", encoding="utf-8"
         )
         reused.extend([candidate.name, observation_path.name, "semantic_observation_failure"])
+        source_failure = source_work / "development_verification_failure.txt"
+        if source_failure.is_file():
+            trusted_failure = _trusted_semantic_failure_receipt(
+                source_work, candidate, source_failure
+            )
     elif system_observation_capability_missing:
         candidate = source_work / "code_change_set.json"
         shutil.copy2(candidate, child_work / "code_change_set.json")
@@ -473,6 +543,9 @@ def create_bounded_repair_resume(
         shutil.copy2(candidate, child_work / "code_change_set.json")
         shutil.copy2(failure, child_work / "development_verification_failure.txt")
         reused.extend([candidate.name, failure.name])
+        trusted_failure = _trusted_semantic_failure_receipt(
+            source_work, candidate, failure
+        )
     rejected_fingerprints = discover_rejected_change_fingerprints(source_work)
     if rejected_fingerprints:
         write_rejected_change_fingerprints(child_work, rejected_fingerprints)
@@ -481,22 +554,27 @@ def create_bounded_repair_resume(
             child_work, discover_rejected_change_history(source_work)
         )
         reused.append("development_rejected_change_history.json")
-    # A continuation can run under newer trusted validators than its parent.
-    # Revalidate the preserved candidate before paying the same maker to edit
-    # it. If the failure remains, the normal convergence loop receives that
-    # fresh evidence on its next turn; if the validator was corrected, the
-    # candidate progresses without an unnecessary model call.
-    revalidation_marker = {
-        "schema_version": "onebrief-reverify-existing-candidate-v1",
-        "validator_version": TRUSTED_REVALIDATION_VERSION,
-        "source_job_id": source_record.job_id,
-        "candidate_sha256": _sha256(child_work / "code_change_set.json"),
-    }
-    (child_work / "reverify_existing_candidate.json").write_text(
-        json.dumps(revalidation_marker, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    reused.append("reverify_existing_candidate.json")
+    if trusted_failure is not None:
+        (child_work / "trusted_reused_verification.json").write_text(
+            json.dumps(trusted_failure, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        reused.append("trusted_reused_verification.json")
+    else:
+        # A continuation can run under newer trusted validators than its parent.
+        # Revalidate preserved candidates unless an exact, independent semantic
+        # failure receipt above proves the unchanged state was just verified.
+        revalidation_marker = {
+            "schema_version": "onebrief-reverify-existing-candidate-v1",
+            "validator_version": TRUSTED_REVALIDATION_VERSION,
+            "source_job_id": source_record.job_id,
+            "candidate_sha256": _sha256(child_work / "code_change_set.json"),
+        }
+        (child_work / "reverify_existing_candidate.json").write_text(
+            json.dumps(revalidation_marker, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        reused.append("reverify_existing_candidate.json")
     team_plans = sorted((source_work / "workspace" / "projects").glob(
         "*/02_plan_and_teams/team_plan.json"
     )) if (source_work / "workspace" / "projects").is_dir() else []
