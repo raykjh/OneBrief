@@ -15,6 +15,7 @@ from onebrief.generic_development_toolpack import (
     ProjectCodeChangeSet,
     ProjectFileChange,
     ProposedProjectCodeChangeSet,
+    _declared_unity_viewports,
 )
 from onebrief.development_toolpack import DevelopmentCommandResult
 from onebrief.project_import import ExternalProjectImporter, MANIFEST_NAME
@@ -968,6 +969,17 @@ def test_unity_visual_preflight_rejects_hard_coded_png_viewport_claims(
     )
 
     assert any("actual captured PNG texture dimensions" in issue for issue in issues)
+
+
+def test_declared_unity_viewports_reads_direct_screen_resolution_calls() -> None:
+    source = (
+        "Screen.SetResolution(1920, 1080, false);\n"
+        "var desktop = CaptureScreenshot(\"desktop.png\");\n"
+        "Screen.SetResolution(1080, 2340, false);\n"
+        "var mobile = CaptureScreenshot(\"mobile.png\");\n"
+    )
+
+    assert _declared_unity_viewports(source) == [(1920, 1080), (1080, 2340)]
 
 
 def test_unity_visual_preflight_rejects_overlay_ui_rendered_without_canvas_routing(
