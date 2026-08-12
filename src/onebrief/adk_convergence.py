@@ -53,7 +53,13 @@ class BudgetedAdkLlm(BaseLlm):
         )
         candidates = list(getattr(response, "candidates", None) or [])
         finish_reason = getattr(candidates[0], "finish_reason", None) if candidates else None
-        if "MAX_TOKENS" in str(finish_reason).upper():
+        invalid_structured_json = False
+        if getattr(llm_request.config, "response_mime_type", None) == "application/json":
+            try:
+                json.loads(getattr(response, "text", "") or "")
+            except (TypeError, json.JSONDecodeError):
+                invalid_structured_json = True
+        if "MAX_TOKENS" in str(finish_reason).upper() or invalid_structured_json:
             # A truncated structured response is not useful evidence and cannot be
             # parsed by ADK. Retry once as a deliberately small incremental edit.
             # Later convergence rounds can add the next increment after deterministic
@@ -61,7 +67,7 @@ class BudgetedAdkLlm(BaseLlm):
             compact_contents = list(llm_request.contents) + [types.Content(
                 role="user",
                 parts=[types.Part(text=(
-                    "The previous structured response exhausted its output limit and was discarded. "
+                    "The previous structured response was truncated or invalid JSON and was discarded. "
                     "Return a valid, much smaller response in the required schema. If the schema is a "
                     "code change set, return at most two changed files, use exact search/replace only "
                     "for existing files, and keep every search and replacement under 12000 characters; "
@@ -190,6 +196,7 @@ def build_text_convergence_agent(
     max_revision_rounds: int,
     maker_instruction: str,
     verifier_instruction: str,
+    maker_stage: str = "long_form_draft",
     maker_output_tokens: int = 6000,
     verifier_output_tokens: int = 2200,
     after_maker: MakerHook | None = None,
@@ -220,7 +227,7 @@ def build_text_convergence_agent(
         name="onebrief_maker",
         description="Accountable maker that creates and revises its own artifact.",
         model=BudgetedAdkLlm(
-            model=maker_model, gateway=gateway, stage="long_form_draft"
+            model=maker_model, gateway=gateway, stage=maker_stage
         ),
         instruction=contextual_maker_instruction,
         output_schema=maker_schema,

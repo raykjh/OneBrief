@@ -57,6 +57,11 @@ def test_producer_reprices_owner_model_choices_and_builds_policy() -> None:
     original = next(stage for stage in estimate.stages if stage.stage == "evidence_analysis")
     assert selected.recommended_cost_usd < original.recommended_cost_usd
     assert policy.stage_models["team_planning"] == ApprovedModel.GEMINI_3_1_PRO_PREVIEW
+    assert policy.stage_model_ladders["long_form_draft"] == [
+        ApprovedModel.GEMINI_3_5_FLASH,
+        ApprovedModel.GEMINI_3_1_PRO_PREVIEW,
+    ]
+    assert decision.maximum_cost_usd >= decision.recommended_cost_usd
 
 
 def test_price_card_reserves_pro_for_decision_critical_stages() -> None:
@@ -84,6 +89,10 @@ class RecordingGateway:
         self.calls.append((stage, model))
         return {"ok": True}
 
+    def generate_json_with_images(self, *, stage: str, model: str, **_: object):
+        self.calls.append((stage, model))
+        return {"vision": True}
+
     def generate_adk_response(self, *, stage: str, model: str, **_: object):
         self.calls.append((stage, model))
         return {"adk": True}
@@ -102,6 +111,60 @@ def _policy() -> ModelExecutionPolicy:
     )
 
 
+def _escalation_policy() -> ModelExecutionPolicy:
+    return _policy().model_copy(update={
+        "stage_models": {
+            **_policy().stage_models,
+            "long_form_draft": ApprovedModel.GEMINI_3_5_FLASH,
+        },
+        "stage_model_ladders": {
+            "long_form_draft": [
+                ApprovedModel.GEMINI_3_5_FLASH,
+                ApprovedModel.GEMINI_3_1_PRO_PREVIEW,
+            ]
+        },
+    })
+
+
+def test_complex_semantic_failure_escalates_same_maker_to_approved_pro_rung() -> None:
+    policy = _escalation_policy()
+
+    decision = policy.select_after_failure(
+        "long_form_draft",
+        failure_text=(
+            "Independent Unity semantic visual observation failed: rendered UI defect in mobile lobby"
+        ),
+        difficulty="complex",
+    )
+
+    assert decision.escalated is True
+    assert decision.base_model == ApprovedModel.GEMINI_3_5_FLASH
+    assert decision.selected_model == ApprovedModel.GEMINI_3_1_PRO_PREVIEW
+    assert decision.call_stage == "long_form_draft_reasoning_escalation_r1"
+    assert policy.model_for(decision.call_stage) == "gemini-3.1-pro-preview"
+    assert policy.model_for(decision.call_stage + "_compact_retry") == "gemini-3.1-pro-preview"
+
+
+@pytest.mark.parametrize("failure", [
+    "Invalid JSON: EOF while parsing",
+    "stale or missing base hash: web/app/page.tsx",
+    "provider returned status code 503",
+])
+def test_non_reasoning_failures_do_not_buy_a_stronger_model(failure: str) -> None:
+    decision = _escalation_policy().select_after_failure(
+        "long_form_draft", failure_text=failure, difficulty="complex"
+    )
+
+    assert decision.escalated is False
+    assert decision.selected_model == ApprovedModel.GEMINI_3_5_FLASH
+    assert decision.call_stage == "long_form_draft"
+
+
+def test_escalated_model_is_blocked_without_an_approved_ladder() -> None:
+    with pytest.raises(PermissionError, match="no approved reasoning escalation"):
+        _policy().model_for("team_planning_reasoning_escalation_r1")
+
+
 def test_gateway_allows_only_exact_stage_model_binding() -> None:
     raw = RecordingGateway()
     gateway = ModelPolicyGateway(raw, _policy())
@@ -113,6 +176,30 @@ def test_gateway_allows_only_exact_stage_model_binding() -> None:
             stage="evidence_analysis", model="gemini-3.5-flash", schema=dict
         )
     assert raw.calls == [("evidence_analysis", "gemini-3.5-flash-lite")]
+
+
+def test_gateway_applies_model_policy_to_multimodal_observation() -> None:
+    raw = RecordingGateway()
+    policy = _policy().model_copy(update={
+        "stage_models": {
+            **_policy().stage_models,
+            "independent_verification": ApprovedModel.GEMINI_3_1_PRO_PREVIEW,
+        }
+    })
+    gateway = ModelPolicyGateway(raw, policy)
+
+    assert gateway.generate_json_with_images(
+        stage="independent_verification",
+        model="gemini-3.1-pro-preview",
+        image_paths=[],
+    ) == {"vision": True}
+    with pytest.raises(PermissionError, match="blocked before provider call"):
+        gateway.generate_json_with_images(
+            stage="independent_verification",
+            model="gemini-3.5-flash",
+            image_paths=[],
+        )
+    assert raw.calls == [("independent_verification", "gemini-3.1-pro-preview")]
 
 
 def test_gateway_applies_the_same_model_policy_to_native_adk_turns() -> None:

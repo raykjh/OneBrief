@@ -431,3 +431,42 @@ def test_resume_derives_most_progressed_candidate_from_older_run(tmp_path: Path)
     assert (work / "development_verification_failure.txt").read_text("utf-8") == (
         "web observation failed: cjk leaked | labels identical"
     )
+
+
+def test_resume_replaces_stale_explicit_best_with_playmode_checkpoint(
+    tmp_path: Path,
+) -> None:
+    objects = {
+        "jobs/prior/work/development_best_candidate.json": b'{"summary":"static"}',
+        "jobs/prior/work/development_best_failure.txt": (
+            b"development verification failed: Unity visual test contract rejected"
+        ),
+        "jobs/prior/work/code_change_set_r3.json": b'{"summary":"playmode"}',
+        "jobs/prior/work/development_verification_failure_r3.txt": (
+            b"development verification failed: unity_playmode_visual_tests "
+            b"UNITY TEST FAILURES SettingsButton was null"
+        ),
+    }
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+        def download_to_filename(self, filename):
+            if self.name not in objects:
+                raise NotFound("missing")
+            Path(filename).write_bytes(objects[self.name])
+
+    class Client:
+        def bucket(self, _name):
+            return type("Bucket", (), {"blob": lambda _self, name: Blob(name)})()
+
+    work = tmp_path / "work"
+    GCSJobStore("gs://onebrief-test/jobs/prior", client=Client()).download_reusable_artifacts(work)
+
+    assert json.loads((work / "development_best_candidate.json").read_text("utf-8"))[
+        "summary"
+    ] == "playmode"
+    assert json.loads((work / "code_change_set.json").read_text("utf-8"))[
+        "summary"
+    ] == "playmode"

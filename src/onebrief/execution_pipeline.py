@@ -49,6 +49,7 @@ from onebrief.development_toolpack import (
 )
 from onebrief.development_progress import development_failure_quality
 from onebrief.generic_development_toolpack import (
+    AnchoredRangeRepairProjectCodeChangeSet,
     ApprovedProjectDevelopmentToolPack,
     CompactProposedProjectCodeChangeSet,
     ExactRepairProjectCodeChangeSet,
@@ -90,6 +91,7 @@ from onebrief.requirements_gate import require_ready_for_estimate
 from onebrief.schemas import IntakeRequest, InternalSource, OutputTarget, RequirementsAnalysis, ToolPackId
 from onebrief.public_research import PublicResearchResult
 from onebrief.toolpacks import execute_toolpacks
+from onebrief.unity_semantic_observation import observe_unity_visual_evidence
 from onebrief.workbook_export import export_workbook
 from onebrief.temperament import (
     VERIFIER_PROFILE,
@@ -98,6 +100,113 @@ from onebrief.temperament import (
 )
 
 T = TypeVar("T", bound=BaseModel)
+
+
+def visual_repair_production_target_allowed(path: str) -> bool:
+    """Fail closed when a rendered-product defect points at proof instead of product code."""
+
+    normalized = path.replace("\\", "/").strip("/").casefold()
+    if not normalized:
+        return False
+    parts = [part for part in normalized.split("/") if part]
+    blocked_parts = {
+        "test",
+        "tests",
+        "testing",
+        "testresults",
+        "evidence",
+        "screenshots",
+        "observations",
+        "independent_observations",
+        "reports",
+        "coverage",
+        "logs",
+    }
+    if any(part in blocked_parts for part in parts):
+        return False
+    filename = parts[-1]
+    stem = filename.rsplit(".", 1)[0]
+    if (
+        filename.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".log"))
+        or stem.endswith(("test", "tests", "spec"))
+        or filename.startswith(("test_", "spec_"))
+        or ".test." in filename
+        or ".spec." in filename
+        or any(marker in stem for marker in (
+            "runtime-evidence",
+            "runtime_evidence",
+            "screenshot",
+            "observation_receipt",
+        ))
+    ):
+        return False
+    return True
+
+
+def visual_repair_production_candidate(change_set):
+    """Return the candidate view a visual repair maker may inspect."""
+
+    return change_set.model_copy(update={
+        "changes": [
+            item
+            for item in change_set.changes
+            if visual_repair_production_target_allowed(
+                str(getattr(item, "path", ""))
+            )
+        ]
+    })
+
+
+def development_repair_difficulty(
+    intake: IntakeRequest,
+    requirements: RequirementsAnalysis,
+    repository_paths: list[str],
+) -> str:
+    """Predict only the amount of product reasoning a repair turn needs."""
+
+    score = 0
+    if intake.output_target == OutputTarget.EXISTING_PROJECT:
+        score += 1
+    normalized_paths = [path.replace("\\", "/").casefold() for path in repository_paths]
+    if (
+        intake.output_target == OutputTarget.UNITY_APP
+        or any(path.endswith(".cs") or path.startswith("assets/") for path in normalized_paths)
+    ):
+        score += 2
+    criteria = (
+        requirements.completion_contract.quality_criteria
+        if requirements.completion_contract is not None
+        else []
+    )
+    if len(criteria) >= 4:
+        score += 1
+    if len(normalized_paths) >= 8:
+        score += 1
+    goal = intake.goal.casefold()
+    protected_concerns = sum(
+        marker in goal
+        for marker in (
+            "protocol",
+            "preserve",
+            "login",
+            "lobby",
+            "settings",
+            "mobile",
+            "desktop",
+            "통신",
+            "보존",
+            "로그인",
+            "로비",
+            "설정",
+        )
+    )
+    if protected_concerns >= 3:
+        score += 1
+    if score >= 4:
+        return "complex"
+    if score >= 2:
+        return "moderate"
+    return "simple"
 
 
 class ExecutionPipeline:
@@ -254,8 +363,8 @@ class ExecutionPipeline:
             raise RuntimeError("approved project inspection is unavailable")
         return development_pack.bind_change_set_to_inspection(change_set, inspection)
 
-    @staticmethod
     def _apply_development_change_set(
+        self,
         intake: IntakeRequest,
         development_pack,
         change_set,
@@ -266,11 +375,27 @@ class ExecutionPipeline:
             ToolPackId.PROJECT_DEVELOPMENT,
             ToolPackId.GREENFIELD_WEB_DEVELOPMENT,
         )):
-            return development_pack.apply_and_verify(
+            run = development_pack.apply_and_verify(
                 change_set,
                 development_dir,
                 verification_goal=json.dumps(contract, ensure_ascii=False),
             )
+            unity_evidence = development_dir / "unity_visual_evidence"
+            if unity_evidence.is_dir():
+                observe_unity_visual_evidence(
+                    self.gateway,
+                    model=self.stage_models.get(
+                        "independent_verification", "gemini-3.5-flash"
+                    ),
+                    evidence_dir=unity_evidence,
+                    observation_path=(
+                        development_dir.parent
+                        / "independent_observations"
+                        / "unity_ui_observation.json"
+                    ),
+                    goal_text=json.dumps(contract, ensure_ascii=False),
+                )
+            return run
         return development_pack.apply_and_verify(change_set, development_dir)
     def _temperament_audit(self, output_dir: Path) -> list[dict[str, object]]:
         """Collect only APT-3 decisions that actually broke an equal-choice tie."""
@@ -338,8 +463,10 @@ class ExecutionPipeline:
             changed_files.append({"path": relative, "content": excerpt})
         runtime_evidence: list[dict[str, str]] = []
         for relative in run.evidence_paths:
-            evidence_root = (output_dir / Path(*relative.split("/"))).resolve()
-            if not evidence_root.is_relative_to(output_dir.resolve()) or not evidence_root.is_dir():
+            evidence_root = self._resolve_development_evidence_root(
+                output_dir, development_dir, relative
+            )
+            if evidence_root is None:
                 continue
             for path in sorted(evidence_root.rglob("*")):
                 if not path.is_file() or path.suffix.casefold() not in {".json", ".xml"}:
@@ -372,64 +499,230 @@ class ExecutionPipeline:
         }
 
     @staticmethod
+    def _resolve_development_evidence_root(
+        output_dir: Path, development_dir: Path, relative: str
+    ) -> Path | None:
+        """Resolve evidence after a trusted revalidation directory is remapped to development/."""
+        parts = tuple(part for part in relative.replace("\\", "/").split("/") if part)
+        candidates = [output_dir / Path(*parts), development_dir / Path(*parts)]
+        if len(parts) > 1:
+            candidates.append(development_dir / Path(*parts[1:]))
+        output_root = output_dir.resolve()
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            if resolved.is_relative_to(output_root) and resolved.is_dir():
+                return resolved
+        return None
+
+    def _observe_seeded_unity_evidence(
+        self, output_dir: Path, contract: dict[str, object]
+    ) -> None:
+        """Create the missing independent visual receipt for a digest-bound resumed result."""
+        observation_path = (
+            output_dir / "independent_observations" / "unity_ui_observation.json"
+        )
+        if observation_path.is_file():
+            return
+        development_dir = output_dir / "development"
+        run = self._load(development_dir / "development_run.json", DevelopmentRun)
+        if run is None or run.status != "verified":
+            return
+        for relative in run.evidence_paths:
+            evidence_dir = self._resolve_development_evidence_root(
+                output_dir, development_dir, relative
+            )
+            if evidence_dir is None or evidence_dir.name != "unity_visual_evidence":
+                continue
+            try:
+                observe_unity_visual_evidence(
+                    self.gateway,
+                    model=self.stage_models.get(
+                        "independent_verification", "gemini-3.5-flash"
+                    ),
+                    evidence_dir=evidence_dir,
+                    observation_path=observation_path,
+                    goal_text=json.dumps(contract, ensure_ascii=False),
+                )
+            except RuntimeError as exc:
+                self._write(
+                    output_dir / "development_verification_failure.txt", str(exc)
+                )
+                raise
+            return
+
+    @staticmethod
+    def _compact_development_feedback(feedback: str) -> str:
+        """Keep the trusted actionable failure while dropping verbose runner shutdown noise."""
+        prefix = "development verification failed: "
+        detail = feedback[len(prefix):] if feedback.casefold().startswith(prefix) else feedback
+        # Unity appends several thousand characters of shutdown, package-manager,
+        # and memory diagnostics after a PlayMode failure.  Returning that noise
+        # to the maker can bury the one actionable assertion and cause costly
+        # identical retries.  Preserve the trusted command identity, but reduce
+        # the repair evidence to Unity's explicit failure section when present.
+        unity_failure_marker = "UNITY TEST FAILURES"
+        marker_index = detail.find(unity_failure_marker)
+        if marker_index >= 0:
+            command_name = detail.split(" ", 1)[0].strip()
+            explicit_failure = " ".join(detail[marker_index:].split())[:4_000]
+            detail = f"{command_name}: {explicit_failure}"
+        elif "VERIFICATION SIGNALS" in detail:
+            command_name = detail.split(" ", 1)[0].strip()
+            explicit_failure = detail.split("VERIFICATION SIGNALS", 1)[1]
+            explicit_failure = explicit_failure.split("BEE COMPILER DIAGNOSTICS", 1)[0]
+            detail = f"{command_name}: " + " ".join(explicit_failure.split())[:4_000]
+        return detail
+
+    @staticmethod
     def _development_failure_report(feedback: str) -> VerificationReport:
         """Turn deterministic adapter blockers into one repair slice each."""
 
-        prefix = "development verification failed: "
-        detail = feedback[len(prefix):] if feedback.casefold().startswith(prefix) else feedback
+        detail = ExecutionPipeline._compact_development_feedback(feedback)
         blockers = [item.strip() for item in detail.split(" | ") if item.strip()][:12]
         if not blockers:
             blockers = [feedback]
-        first = blockers[0].casefold()
-        if (
-            "unity visual test contract" in first
-            and "namespace/full name begins" in first
-        ):
-            action = (
+        def blocker_action(blocker: str) -> str:
+            lowered = blocker.casefold()
+            if "unity test failures" in lowered:
+                return (
+                    "Repair the exact failing PlayMode assertion named in the trusted Unity result. Exercise the "
+                    "real requested screen transition before discovering its controls, and change production UI "
+                    "wiring when the requested control truly does not exist; never weaken or merely restate the test."
+                )
+            if "unity visual test contract" in lowered and "synthetic ui" in lowered:
+                return (
+                    "Delete the generated fallback GameObject/AddComponent UI block. Open or activate the real "
+                    "requested settings screen, then discover and interact with its existing scene controls; do not "
+                    "create any replacement control inside the test."
+                )
+            if "unity visual test contract" in lowered and "real ui interaction" in lowered:
+                return (
+                    "Operate the loaded scene's real navigation control (for example its Button.onClick) or activate "
+                    "the existing requested panel, then assert the destination state. Scene loading and object "
+                    "presence alone are not a transition test."
+                )
+            if "unity visual test contract" in lowered and "scenarios array" in lowered:
+                return (
+                    "Rewrite runtime-evidence.json with schema_version onebrief-unity-visual-evidence-v1 and a "
+                    "scenarios array measured from the executed real UI states, including screenshot path, "
+                    "interaction, assertions, and viewport dimensions."
+                )
+            if "distinct rendered scenario" in lowered and "real ui surface" in lowered:
+                return (
+                    "Capture each named real UI surface as its own executed state and PNG. For Login, capture "
+                    "before starting; for Lobby, capture after the real login/start transition and before opening "
+                    "Settings; for Settings, capture only after invoking the real Settings button. Write one "
+                    "runtime-evidence scenario per surface with a surface-specific scenario_id and observed_state. "
+                    "A combined final-state name such as LoginToLobbyToSettings is not distinct evidence."
+                )
+            if "reused an identical screenshot" in lowered:
+                return (
+                    "Replace the existing capture region so every scenario writes a unique PNG immediately while "
+                    "its named real UI state is visible. Capture Login before the start/login action, Lobby after "
+                    "that real transition and before opening Settings, and Settings after invoking the real Settings "
+                    "button. Do not duplicate scenario rows, paths, or bytes, and do not relabel one final-state PNG."
+                )
+            if "unity visual test contract" in lowered and "each general ui evidence scenario" in lowered:
+                return (
+                    "Use the exact OneBrief general UI scenario fields: scenario_id, observed_state, interaction, "
+                    "assertion_count, viewport_width, viewport_height, and screenshot_path. Do not invent nested "
+                    "assertions or viewport objects."
+                )
+            if "unity visual test contract" in lowered and "duplicate unitytest methods" in lowered:
+                return (
+                    "Remove the duplicated UnityTest method or class created by the previous repair and keep one "
+                    "coherent executable test implementation."
+                )
+            if (
+                "unity visual test contract" in lowered
+                and "must observe product text" in lowered
+            ):
+                return (
+                    "Remove the verification-code block that assigns or replaces TMP_Dropdown option text. "
+                    "The test must leave shipped labels unchanged and only inspect the real rendered text and "
+                    "font glyph coverage. Do not substitute a different test-side label repair."
+                )
+            if (
+                "unity visual test contract" in lowered
+                and "must observe the shipped responsive layout" in lowered
+            ):
+                return (
+                    "Remove the verification-code block that assigns CanvasScaler mode, reference resolution, "
+                    "screen match mode, match value, anchors, or scale. The test must capture the production "
+                    "layout unchanged; responsive behavior is repaired later in production UI source."
+                )
+            if "unity visual test contract" in lowered and "inert source file" in lowered:
+                return (
+                    "Connect the new production UI component to the real application: attach it through an approved "
+                    "scene/prefab change, invoke it from an already-running production component, or add a safe "
+                    "RuntimeInitializeOnLoadMethod entrypoint. Tests referencing the class do not make it execute."
+                )
+            if (
+                "unity visual test contract" in lowered
+                and "namespace/full name begins" in lowered
+            ):
+                return (
                 "Edit the generated PlayMode test source itself so its declared namespace begins exactly with "
                 "OneBrief.Visual. Do not change or re-emit the asmdef for this blocker."
             )
-        elif "unity visual test contract" in first and "png" in first:
-            action = (
+            if "unity visual test contract" in lowered and "png" in lowered:
+                return (
                 "Implement PNG evidence directly inside the OneBrief.Visual PlayMode test source; do not delegate "
                 "to a production helper. Use the loaded real scene, RenderTexture, ReadPixels, EncodeToPNG, "
                 "File.WriteAllBytes, and a literal .png path."
             )
-        elif "unity visual test contract" in first and "visible ui" in first:
-            action = (
+            if "unity visual test contract" in lowered and "visible ui" in lowered:
+                return (
                 "Inside the OneBrief.Visual test, load the real project scene and discover active or inactive scene "
                 "UI components with Unity object queries; interact with them directly and never construct synthetic UI."
             )
-        elif "unity visual test contract" in first and "language" in first:
-            action = (
+            if "unity visual test contract" in lowered and "language" in lowered:
+                return (
                 "Inside the OneBrief.Visual test, load the real scene and operate the real TMP_Dropdown found from "
                 "scene objects; do not construct synthetic UI or delegate to a production verification component."
             )
-        elif "unity visual test contract" in first and "glyph" in first:
-            action = (
+            if "unity visual test contract" in lowered and "glyph" in lowered:
+                return (
                 "Inside the OneBrief.Visual test, ForceMeshUpdate on real TMP_Text objects and inspect "
                 "textInfo.characterInfo with font.HasCharacter to compute missing_glyph_count."
             )
-        elif "unity visual test contract" in first and "directly reference" in first:
-            action = (
+            if "unity visual test contract" in lowered and "directly reference" in lowered:
+                return (
                 "Remove the production type name and Assembly-CSharp reference from the test. Interact only through "
                 "the loaded scene's public UI objects or generic reflection APIs."
             )
+            return "Resolve this deterministic blocker in the smallest independently verifiable change."
+
+        unity_contract = any(
+            "unity visual test contract" in blocker.casefold() for blocker in blockers
+        )
+        if unity_contract:
+            checks = [{
+                "criterion": "Coherent Unity product and runtime evidence contract",
+                "passed": False,
+                "evidence": " | ".join(blockers),
+            }]
+            instructions = list(dict.fromkeys(
+                [blocker_action(item) for item in blockers]
+                + [
+                    "Resolve the related Unity blockers as one coherent product-and-evidence repair; "
+                    "do not submit only tests or only an assembly wrapper."
+                ]
+            ))[:8]
         else:
-            action = (
-                "Resolve the first listed deterministic blocker in the smallest independently verifiable change."
-            )
-        return VerificationReport(
-            verdict=Verdict.REVISE,
-            criterion_checks=[{
+            checks = [{
                 "criterion": f"Isolated build and test blocker {index}",
                 "passed": False,
                 "evidence": blocker,
-            } for index, blocker in enumerate(blockers, start=1)],
+            } for index, blocker in enumerate(blockers, start=1)]
+            instructions = [
+                blocker_action(blockers[0]) + " Do not repeat unchanged repair files."
+            ]
+        return VerificationReport(
+            verdict=Verdict.REVISE,
+            criterion_checks=checks,
             blocking_issues=blockers,
-            revision_instructions=[
-                action + " Do not repeat unchanged repair files."
-            ],
+            revision_instructions=instructions,
             missing_information=[],
         )
 
@@ -749,10 +1042,18 @@ class ExecutionPipeline:
         prior_failure_text = (
             prior_failure.read_text("utf-8") if prior_failure.is_file() else ""
         )
-        exact_repair_required = (
+        multi_state_evidence_repair = "reused an identical screenshot" in prior_failure_text.casefold()
+        semantic_visual_repair = (
+            "independent unity semantic visual observation failed"
+            in prior_failure_text.casefold()
+        )
+        anchored_range_repair = multi_state_evidence_repair or semantic_visual_repair
+        raw_exact_repair_required = (
             "namespace/full name begins" in prior_failure_text.casefold()
             or "the onebrief.visual test must" in prior_failure_text.casefold()
             or "inside the onebrief.visual test" in prior_failure_text.casefold()
+            or "runtime evidence test must observe product text" in prior_failure_text.casefold()
+            or "runtime evidence test must observe the shipped responsive layout" in prior_failure_text.casefold()
         )
         if previous_change_set is not None:
             initial_state[MAKER_STATE_KEY] = previous_change_set.model_dump(mode="json")
@@ -775,8 +1076,25 @@ class ExecutionPipeline:
                         "Use an exact small repair against that candidate."
                     )
                 maker_sources.append(compact)
+        if semantic_visual_repair:
+            # Do not even offer tests, screenshots, receipts, or generated
+            # evidence as editable candidates for a shipped visual defect.
+            maker_sources = [
+                source
+                for source in maker_sources
+                if visual_repair_production_target_allowed(
+                    str(source.get("repository_path", ""))
+                )
+            ]
+            if previous_change_set is not None:
+                visible_candidate = visual_repair_production_candidate(
+                    previous_change_set
+                )
+                initial_state[MAKER_STATE_KEY] = visible_candidate.model_dump(mode="json")
         if previous_change_set is not None and prior_failure.is_file():
-            feedback = " ".join(prior_failure.read_text("utf-8").split())[:12_000]
+            feedback = self._compact_development_feedback(
+                prior_failure.read_text("utf-8")
+            )
             initial_state[VERIFICATION_STATE_KEY] = self._development_failure_report(
                 feedback
             ).model_dump(mode="json")
@@ -787,26 +1105,74 @@ class ExecutionPipeline:
             if continuation_plan is not None:
                 initial_state[REPAIR_PLAN_STATE_KEY] = continuation_plan.model_dump(mode="json")
         repair_feedback = (
-            " ".join(prior_failure.read_text("utf-8").split())[:12_000]
+            self._compact_development_feedback(prior_failure.read_text("utf-8"))
             if prior_failure.is_file()
             else None
         )
         exact_edit_anchors = developer.exact_edit_anchors(
             previous_change_set, repair_feedback
         )
-        if exact_repair_required:
-            exact_edit_anchors = []
+        if semantic_visual_repair:
+            exact_edit_anchors = [
+                anchor
+                for anchor in exact_edit_anchors
+                if visual_repair_production_target_allowed(
+                    str(anchor.get("path", ""))
+                )
+            ]
+        exact_repair_required = raw_exact_repair_required or bool(exact_edit_anchors)
         current_exact_edit_anchors = exact_edit_anchors
+        consecutive_identical_candidates = 0
 
         def after_maker(raw: object, _ctx, round_number: int) -> dict[str, object]:
             nonlocal previous_change_set, latest_run
             nonlocal best_failed_candidate, best_failure_message, best_failure_quality
             nonlocal current_exact_edit_anchors
+            nonlocal consecutive_identical_candidates
             reverify_existing = (
                 round_number == 0
                 and bool(_ctx.session.state.get(REVERIFY_EXISTING_STATE_KEY))
                 and previous_change_set is not None
             )
+            if semantic_visual_repair and not reverify_existing:
+                raw_paths = [
+                    str(getattr(item, "path", "")).replace("\\", "/")
+                    for item in getattr(raw, "changes", [])
+                ]
+                forbidden = [
+                    path for path in raw_paths
+                    if not visual_repair_production_target_allowed(path)
+                ]
+                if forbidden:
+                    feedback = (
+                        "Independent visual observation found a shipped UI defect, but the proposed "
+                        "repair edits tests or evidence instead of production UI: "
+                        + ", ".join(forbidden)
+                    )
+                    report = VerificationReport(
+                        verdict=Verdict.REVISE,
+                        criterion_checks=[{
+                            "criterion": "Repair the shipped UI rather than its proof",
+                            "passed": False,
+                            "evidence": feedback,
+                        }],
+                        blocking_issues=[feedback],
+                        revision_instructions=[
+                            "Choose one production UI source path from previous_artifact and repair its "
+                            "responsive layout or glyph handling; do not edit tests, evidence, or screenshots."
+                        ],
+                        missing_information=[],
+                    )
+                    repair_plan = prepare_repair(report, round_number)
+                    return {
+                        MAKER_STATE_KEY: previous_change_set.model_dump(mode="json"),
+                        VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
+                        **({
+                            REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
+                        } if repair_plan is not None else {}),
+                        EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
+                        SKIP_VERIFIER_STATE_KEY: True,
+                    }
             try:
                 delta = (
                     previous_change_set
@@ -899,11 +1265,27 @@ class ExecutionPipeline:
                 and not reverify_existing
                 and self._same_development_changes(prior_candidate, candidate)
             ):
-                feedback = (
+                consecutive_identical_candidates += 1
+                repeated_warning = (
                     "Rejected an identical repair candidate that already failed deterministic verification. "
                     "Do not repeat the same changed file content; diagnose the observed failure and choose a "
                     "different bounded edit against the current approved candidate."
                 )
+                preserved_failure_path = output_dir / "development_verification_failure.txt"
+                preserved_failure = (
+                    preserved_failure_path.read_text(encoding="utf-8").strip()
+                    if preserved_failure_path.is_file() else ""
+                )
+                feedback = (
+                    f"{preserved_failure} | Repair control: {repeated_warning}"
+                    if preserved_failure else repeated_warning
+                )
+                if consecutive_identical_candidates >= 2:
+                    raise RuntimeError(
+                        "development repair stalled after two identical candidates; "
+                        "the same maker must be resumed with a different repair strategy: "
+                        + feedback[:4_000]
+                    )
                 self._write(
                     output_dir / f"development_repeated_candidate_r{round_number}.txt",
                     feedback,
@@ -914,10 +1296,8 @@ class ExecutionPipeline:
                     report.model_dump_json(indent=2),
                 )
                 current_exact_edit_anchors = developer.exact_edit_anchors(
-                    prior_candidate, feedback
+                    prior_candidate, self._compact_development_feedback(feedback)
                 )
-                if exact_repair_required:
-                    current_exact_edit_anchors = []
                 repair_plan = prepare_repair(report, round_number)
                 return {
                     MAKER_STATE_KEY: prior_candidate.model_dump(mode="json"),
@@ -928,6 +1308,7 @@ class ExecutionPipeline:
                     EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
                     SKIP_VERIFIER_STATE_KEY: True,
                 }
+            consecutive_identical_candidates = 0
             previous_change_set = candidate
             self._write(
                 output_dir / f"code_change_set_r{round_number}.json",
@@ -945,10 +1326,19 @@ class ExecutionPipeline:
                 )
             except RuntimeError as exc:
                 latest_run = None
+                probe = self.recovery_policy.decide(
+                    exc, context="development_verification", attempt_number=1
+                )
+                same_failure_count = sum(
+                    item.context == probe.context
+                    and item.error_class == probe.error_class
+                    and item.error_summary == probe.error_summary
+                    for item in self.recovery_decisions
+                )
                 decision = self.recovery_policy.decide(
                     exc,
                     context="development_verification",
-                    attempt_number=round_number + 1,
+                    attempt_number=same_failure_count + 1,
                 )
                 self._append_recovery(decision)
                 self._persist_recoveries(output_dir)
@@ -992,10 +1382,8 @@ class ExecutionPipeline:
                     report.model_dump_json(indent=2),
                 )
                 current_exact_edit_anchors = developer.exact_edit_anchors(
-                    previous_change_set, feedback
+                    previous_change_set, self._compact_development_feedback(feedback)
                 )
-                if exact_repair_required:
-                    current_exact_edit_anchors = []
                 repair_plan = prepare_repair(report, round_number)
                 return {
                     MAKER_STATE_KEY: previous_change_set.model_dump(mode="json"),
@@ -1089,7 +1477,11 @@ class ExecutionPipeline:
             "When exact_edit_anchors are supplied, prefer its anchor_id and return the complete replacement for "
             "that displayed source window; OneBrief resolves the ID deterministically. Otherwise copy search text "
             "only from those verbatim windows and keep each edit to the smallest unique anchor. "
-            "On revision, repair every build, test, runtime, or independent-review failure while preserving all "
+            "For a UI goal, the initial result must include actual production UI source changes; test-only output "
+            "is never a complete implementation. A verification test may interact with and capture the product, "
+            "but it must never rewrite visible labels, dropdown option text, fonts, CanvasScaler, anchors, colors, "
+            "or other product UI state merely to make evidence pass; repair production source instead. On revision, "
+            "repair every build, test, runtime, or independent-review failure while preserving all "
             "previously passing behavior. New files may use complete content; existing files must use exact edits. "
             "A compact repair may add a bounded new text file with complete content and a null base hash when the "
             "verification evidence explicitly requires a missing test, manifest, configuration, or sidecar file. "
@@ -1120,7 +1512,35 @@ class ExecutionPipeline:
                 "the real project scene. Do not echo previous_artifact, explanatory comments, helper frameworks, "
                 "or unrelated acceptance criteria. Later repair turns will address later blockers."
             )
-        if exact_repair_required:
+        if (
+            "runtime evidence test must observe product text" in prior_failure_text.casefold()
+            or "runtime evidence test must observe the shipped responsive layout" in prior_failure_text.casefold()
+        ):
+            maker_instruction += (
+                "\nEVIDENCE-INTEGRITY REPAIR: The current PlayMode test already contains forbidden product "
+                "mutations. Make one exact replacement in that test which removes both the dropdown option-text "
+                "rewrite block and the CanvasScaler assignment block. Keep the real UI discovery, interaction, "
+                "screenshot capture, and glyph observation. Do not add any replacement mutation and do not try "
+                "to solve the underlying visual defect in this cleanup turn; trusted verification will expose "
+                "that production defect again on the next turn."
+            )
+        if exact_repair_required and multi_state_evidence_repair:
+            maker_instruction += (
+                "\nANCHORED-RANGE REPAIR: This evidence fix spans an existing capture region in one generated "
+                "PlayMode test. Return one change with start_anchor and end_anchor copied verbatim from the current "
+                "previous_artifact and replace that one range. Do not use search, anchor_id, or full-file content. "
+                "The replacement must execute and write each unique screenshot at the moment Login, Lobby, and "
+                "Settings is actually visible, then write matching scenario metadata."
+            )
+        elif exact_repair_required and semantic_visual_repair:
+            maker_instruction += (
+                "\nANCHORED-RANGE PRODUCTION REPAIR: The independent observer found a real rendered UI "
+                "defect. Return one change with start_anchor and end_anchor copied verbatim from one "
+                "production UI file in previous_artifact, and replace that coherent range. Fix the "
+                "highest-priority observed defect in shipped UI code. Do not edit tests, screenshots, "
+                "evidence metadata, or assertions. Preserve server protocol and existing behavior."
+            )
+        elif exact_repair_required:
             maker_instruction += (
                 "\nEXACT-EDIT ONLY: Use one exact search/replace copied verbatim from previous_artifact. "
                 "Do not return anchor_id or full-file content."
@@ -1136,18 +1556,50 @@ class ExecutionPipeline:
             "Return exact, actionable revision instructions and only the schema. "
             + VERIFIER_PROFILE.instruction()
         )
+        maker_model = self.stage_models.get("long_form_draft", "gemini-3.5-flash")
+        maker_stage = "long_form_draft"
+        if prior_failure.is_file():
+            selector = getattr(self.gateway, "select_model_after_failure", None)
+            if callable(selector):
+                difficulty = development_repair_difficulty(
+                    intake,
+                    requirements,
+                    [
+                        str(source.get("repository_path", ""))
+                        for source in prepared_sources
+                        if source.get("repository_path")
+                    ],
+                )
+                selection = selector(
+                    "long_form_draft",
+                    failure_text=prior_failure_text,
+                    difficulty=difficulty,
+                    attempt=len(list(output_dir.glob("model_selection_r*.json"))) + 1,
+                )
+                maker_model = selection.selected_model.value
+                maker_stage = selection.call_stage
+                self._write(
+                    output_dir
+                    / f"model_selection_r{len(list(output_dir.glob('model_selection_r*.json'))) + 1}.json",
+                    selection.model_dump_json(indent=2),
+                )
         agent = build_text_convergence_agent(
             gateway=self.gateway,
-            maker_model=self.stage_models.get("long_form_draft", "gemini-3.5-flash"),
+            maker_model=maker_model,
+            maker_stage=maker_stage,
             verifier_model=self.stage_models.get(
                 "independent_verification", "gemini-3.5-flash"
             ),
             maker_schema=(
                 (
                     (
-                        ExactRepairProjectCodeChangeSet
-                        if exact_repair_required
-                        else CompactProposedProjectCodeChangeSet
+                        AnchoredRangeRepairProjectCodeChangeSet
+                        if anchored_range_repair
+                        else (
+                            ExactRepairProjectCodeChangeSet
+                            if exact_repair_required
+                            else CompactProposedProjectCodeChangeSet
+                        )
                     )
                     if prior_failure.is_file()
                     else ProposedProjectCodeChangeSet
@@ -1159,7 +1611,12 @@ class ExecutionPipeline:
             maker_instruction=maker_instruction,
             verifier_instruction=verifier_instruction,
             maker_output_tokens=(
-                min(DEVELOPER_OUTPUT_CAP, 8_000)
+                min(
+                    DEVELOPER_OUTPUT_CAP,
+                    5_000 if anchored_range_repair else (
+                        3_000 if exact_repair_required else 8_000
+                    ),
+                )
                 if prior_failure.is_file()
                 else DEVELOPER_OUTPUT_CAP
             ),
@@ -1569,6 +2026,7 @@ class ExecutionPipeline:
                 and (output_dir / "automatic_resume.json").is_file()
                 and self._development_evidence(output_dir) is not None
             ):
+                self._observe_seeded_unity_evidence(output_dir, contract)
                 use_adk_convergence = False
             if use_adk_convergence and (output_dir / "adk_convergence_trace.json").is_file():
                 completed_rounds = sorted(

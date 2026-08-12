@@ -28,7 +28,10 @@ from onebrief.development_toolpack import (
     RepositoryInspection,
     _default_runner,
 )
-from onebrief.unity_runtime_evidence import validate_and_copy_unity_visual_evidence
+from onebrief.unity_runtime_evidence import (
+    requested_ui_surfaces,
+    validate_and_copy_unity_visual_evidence,
+)
 from onebrief.web_runtime_evidence import (
     observe_web_application,
     validate_preserved_language_states,
@@ -262,6 +265,7 @@ class ExactRepairProjectFileChange(BaseModel):
     content: str | None = Field(default=None, max_length=8000)
     search: str | None = Field(default=None, min_length=1, max_length=3000)
     replace: str | None = Field(default=None, max_length=8000)
+    anchor_id: str | None = Field(default=None, pattern=r"^A[0-9a-f]{12}$")
     start_anchor: str | None = Field(default=None, min_length=1, max_length=1000)
     end_anchor: str | None = Field(default=None, min_length=1, max_length=1000)
     reason: str = Field(min_length=3, max_length=500)
@@ -280,20 +284,44 @@ class ExactRepairProjectFileChange(BaseModel):
     def validate_edit_mode(self) -> "ExactRepairProjectFileChange":
         # Prefer the most deterministic selector if a provider redundantly
         # fills several optional selector fields in structured output.
-        if self.search is not None:
+        if self.anchor_id is not None:
+            self.content = None
+            self.search = None
             self.start_anchor = None
             self.end_anchor = None
-        full = self.content is not None and self.search is None and self.replace is None
-        exact = self.content is None and self.search is not None and self.replace is not None
+        elif self.search is not None:
+            self.start_anchor = None
+            self.end_anchor = None
+        full = (
+            self.content is not None
+            and self.search is None
+            and self.replace is None
+            and self.anchor_id is None
+        )
+        catalog = (
+            self.content is None
+            and self.anchor_id is not None
+            and self.search is None
+            and self.replace is not None
+        )
+        exact = (
+            self.content is None
+            and self.anchor_id is None
+            and self.search is not None
+            and self.replace is not None
+        )
         anchored = (
             self.content is None
+            and self.anchor_id is None
             and self.search is None
             and self.start_anchor is not None
             and self.end_anchor is not None
             and self.replace is not None
         )
-        if sum((full, exact, anchored)) != 1:
-            raise ValueError("provide exactly one bounded candidate-file, exact, or anchored repair edit")
+        if sum((full, catalog, exact, anchored)) != 1:
+            raise ValueError(
+                "provide exactly one bounded candidate-file, catalog, exact, or anchored repair edit"
+            )
         if full and self.base_sha256 is not None:
             raise ValueError("a full candidate-file repair must retain a null base hash")
         return self
@@ -303,6 +331,33 @@ class ExactRepairProjectCodeChangeSet(BaseModel):
     schema_version: str = "onebrief-project-code-change-set-v1"
     summary: str = Field(min_length=3, max_length=500)
     changes: list[ExactRepairProjectFileChange] = Field(min_length=1, max_length=1)
+
+
+class AnchoredRangeRepairProjectFileChange(BaseModel):
+    """One unambiguous range replacement for a larger coherent repair slice."""
+
+    path: str
+    base_sha256: str | None = None
+    start_anchor: str = Field(min_length=1, max_length=1000)
+    end_anchor: str = Field(min_length=1, max_length=1000)
+    replace: str = Field(max_length=12_000)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        return generic_safe_relative(value).as_posix()
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def bound_explanatory_reason(cls, value: object) -> str:
+        return str(value)[:500]
+
+
+class AnchoredRangeRepairProjectCodeChangeSet(BaseModel):
+    schema_version: str = "onebrief-project-code-change-set-v1"
+    summary: str = Field(min_length=3, max_length=500)
+    changes: list[AnchoredRangeRepairProjectFileChange] = Field(min_length=1, max_length=1)
 
 
 class ApprovedProjectDevelopmentToolPack:
@@ -428,7 +483,25 @@ class ApprovedProjectDevelopmentToolPack:
             if re.match(r"^\s*using\s+(?:static\s+)?[A-Za-z_][A-Za-z0-9_.]*(?:\s*=\s*[A-Za-z_][A-Za-z0-9_.]*)?;[ \t]+$", body):
                 body = body.rstrip(" \t")
             normalized.append(body + newline)
-        return "".join(normalized).replace("\r\n", "\n").replace("\r", "\n")
+        result = "".join(normalized).replace("\r\n", "\n").replace("\r", "\n")
+        if (
+            generated_test_source
+            and re.search(r"\[(?:UnityTest|Test)\]", result)
+            and not re.search(r"\bnamespace\s+OneBrief\.Visual(?:\b|\.)", result)
+            and not re.search(r"\bnamespace\s+[A-Za-z_]", result)
+        ):
+            # The namespace is part of OneBrief's fixed discovery contract, not
+            # product behavior. Normalize a newly generated, namespace-free
+            # PlayMode test deterministically so the repair loop can address the
+            # substantive runtime evidence instead of repeating this wrapper fix.
+            using_end = 0
+            for match in re.finditer(r"(?m)^using\s+[^;]+;\s*$", result):
+                using_end = match.end()
+            prefix = result[:using_end].rstrip()
+            body = result[using_end:].strip()
+            if prefix and body:
+                result = f"{prefix}\n\nnamespace OneBrief.Visual\n{{\n{body}\n}}\n"
+        return result
 
     def _blob(self, head: str, relative: str) -> bytes:
         completed = subprocess.run(
@@ -439,6 +512,68 @@ class ApprovedProjectDevelopmentToolPack:
             raise RuntimeError(completed.stderr.decode("utf-8", errors="replace")[:1000])
         return completed.stdout
 
+    def _unity_scene_catalog(
+        self,
+        head: str,
+        tracked: list[str],
+        read_prefixes: tuple[str, ...],
+        focus_text: str,
+    ) -> bytes | None:
+        """Return a bounded, read-only map of real Unity scenes and object names.
+
+        Unity scene YAML is commonly hundreds of kilobytes or several
+        megabytes and is intentionally outside the editable text context. The
+        maker still needs exact scene names and real object anchors to avoid
+        inventing a synthetic canvas. This catalog exposes only committed
+        names and never grants scene write authority.
+        """
+        scene_paths = [
+            item for item in tracked
+            if item.casefold().endswith(".unity")
+            and any(item.startswith(prefix) for prefix in read_prefixes)
+        ]
+        if not scene_paths:
+            return None
+        focus = focus_text.casefold()
+        surface_terms = {
+            term for term in (
+                "login", "lobby", "settings", "setting", "option", "audio",
+                "sound", "language", "menu", "popup", "canvas", "panel",
+            ) if term in focus
+        }
+
+        def scene_rank(path: str) -> tuple[int, str]:
+            lowered = path.casefold()
+            return (-sum(term in lowered for term in surface_terms), lowered)
+
+        scenes: list[dict[str, object]] = []
+        for relative in sorted(scene_paths, key=scene_rank)[:12]:
+            text = self._blob(head, relative).decode("utf-8", errors="replace")
+            names: list[str] = []
+            seen: set[str] = set()
+            for raw_name in re.findall(r"(?m)^\s*m_Name:\s*(.*?)\s*$", text):
+                name = raw_name.strip().strip('"')
+                if not name or name in seen or len(name) > 120:
+                    continue
+                seen.add(name)
+                names.append(name)
+            names.sort(key=lambda name: (
+                -sum(term in name.casefold() for term in surface_terms),
+                name.casefold(),
+            ))
+            scenes.append({
+                "scene_path": relative,
+                "scene_name": PurePosixPath(relative).stem,
+                "object_names": names[:30],
+            })
+        payload = {
+            "schema_version": "onebrief-unity-scene-catalog-v1",
+            "source_revision": head,
+            "authority": "read_only_committed_scene_metadata",
+            "scenes": scenes,
+        }
+        return (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+
     def inspect(
         self, output_dir: Path, focus_text: str = ""
     ) -> tuple[RepositoryInspection, list[InternalSource]]:
@@ -447,6 +582,9 @@ class ApprovedProjectDevelopmentToolPack:
         read_prefixes = tuple(profile.allowed_read_prefixes)
         write_prefixes = tuple(profile.allowed_write_prefixes)
         tracked = [item for item in self._git("ls-files", "-z").split("\0") if item]
+        unity_scene_catalog = self._unity_scene_catalog(
+            head, tracked, read_prefixes, focus_text
+        )
 
         focus_terms = {
             item for item in re.findall(r"[a-z0-9가-힣][a-z0-9가-힣_-]{1,}", focus_text.casefold())
@@ -531,32 +669,133 @@ class ApprovedProjectDevelopmentToolPack:
                 continue
             eligible.append(relative)
         if active_concepts:
-            covered: set[int] = set()
+            # Reserve one compact source slot for every independently requested
+            # surface before globally ranking the remainder. A broad Unity goal
+            # must not spend the complete context allowance on visual or
+            # localization files while omitting login, settings, audio, or
+            # navigation entirely.
             diversified: list[str] = []
             remaining = list(eligible)
-            while remaining:
-                def coverage_key(relative: str) -> tuple[int, int, tuple[int, int, int, int, int, int, str]]:
-                    tokens = path_terms(relative)
-                    matches = {
-                        index for index, terms in enumerate(active_concepts)
-                        if tokens & terms
-                    }
-                    return (-len(matches - covered), -len(matches), rank(relative))
+            compact_seed_limit = min(
+                MAX_CONTEXT_FILE_BYTES,
+                max(24_000, MAX_CONTEXT_BYTES // max(len(active_concepts), 4)),
+            )
+            primary_surface_roles = {"controller", "layout", "manager", "router"}
+            secondary_surface_roles = {"service", "settings", "audio", "language"}
+            for terms in active_concepts:
+                candidates = [
+                    relative for relative in remaining
+                    if path_terms(relative) & terms
+                ]
+                if not candidates:
+                    continue
+                non_vendor = [
+                    relative for relative in candidates
+                    if not (path_terms(relative) & vendor_markers)
+                ]
+                candidates = non_vendor or candidates
+                compact_candidates = [
+                    relative for relative in candidates
+                    if (self.root / Path(*PurePosixPath(relative).parts)).stat().st_size
+                    <= compact_seed_limit
+                ]
+                # A huge monolithic controller can consume the entire context
+                # before later requested surfaces receive even one source.
+                # Prefer a compact adapter/binder for this surface and leave
+                # the large file untouched; exact committed scene metadata and
+                # additive production files remain available to the maker.
+                if compact_candidates:
+                    candidates = compact_candidates
+                else:
+                    continue
+                if "localization" in terms:
+                    preferred_surface_terms = {"language", "localization", "dropdown"}
+                elif "login" in terms:
+                    preferred_surface_terms = {"login", "controller"}
+                elif "lobby" in terms:
+                    preferred_surface_terms = {"lobby", "controller", "layout"}
+                elif "settings" in terms:
+                    preferred_surface_terms = {"settings", "controller"}
+                elif "audio" in terms:
+                    preferred_surface_terms = {"audio", "manager"}
+                elif "scene" in terms:
+                    preferred_surface_terms = {"scene", "router", "navigation"}
+                else:
+                    preferred_surface_terms = {"ui", "layout", "controller"}
 
-                best = min(remaining, key=coverage_key)
-                remaining.remove(best)
-                diversified.append(best)
-                tokens = path_terms(best)
-                covered.update(
-                    index for index, terms in enumerate(active_concepts)
-                    if tokens & terms
+                def domain_fit(relative: str) -> int:
+                    tokens = path_terms(relative)
+                    lowered = "/" + relative.casefold().strip("/") + "/"
+                    if "localization" in terms:
+                        return 0 if "/localization/" in lowered and tokens & {
+                            "language", "localization", "dropdown", "settings",
+                        } else 1
+                    if "login" in terms:
+                        if "login" in tokens and "scene" in tokens:
+                            return 0
+                        if "/login/" in lowered:
+                            return 1
+                        return 2 if "login" in tokens else 3
+                    if "lobby" in terms:
+                        if "lobby" in tokens and tokens & {"layout", "responsive"}:
+                            return 0
+                        if "lobby" in tokens and tokens & {"mobile", "menu", "home"}:
+                            return 1
+                        return 2
+                    if "settings" in terms:
+                        return 0 if "settings" in tokens else 1
+                    if "audio" in terms:
+                        return 0 if "audio" in tokens else 1
+                    if "scene" in terms:
+                        return 0 if tokens & {"scene", "router", "navigation"} else 1
+                    return 0 if tokens & {"ui", "layout", "responsive", "screen"} else 1
+
+                best = min(
+                    candidates,
+                    key=lambda relative: (
+                        0 if PurePosixPath(relative).suffix.casefold() in code_suffixes else 1,
+                        0 if any(relative.startswith(prefix) for prefix in write_prefixes) else 1,
+                        domain_fit(relative),
+                        0 if path_terms(relative) & preferred_surface_terms else 1,
+                        (
+                            0 if path_terms(relative) & primary_surface_roles else
+                            1 if path_terms(relative) & secondary_surface_roles else 2
+                        ),
+                        -len(path_terms(relative) & terms),
+                        0 if (self.root / Path(*PurePosixPath(relative).parts)).stat().st_size
+                        <= compact_seed_limit else 1,
+                        (self.root / Path(*PurePosixPath(relative).parts)).stat().st_size,
+                        rank(relative),
+                    ),
                 )
-            tracked = diversified
+                diversified.append(best)
+                remaining.remove(best)
+            remaining.sort(key=lambda relative: (
+                1 if path_terms(relative) & vendor_markers else 0,
+                rank(relative),
+            ))
+            tracked = diversified + remaining
         else:
             tracked = eligible
         records: list[RepositoryContextFile] = []
         sources: list[InternalSource] = []
         total = 0
+        if unity_scene_catalog is not None:
+            digest = hashlib.sha256(unity_scene_catalog).hexdigest()
+            sources.append(InternalSource(
+                name="project-source/unity-scene-catalog.json",
+                priority=SourcePriority.MANDATORY,
+                requirement_keys=["project_development"],
+                summary=(
+                    "Read-only committed Unity scene names and GameObject anchors. "
+                    "Use these exact real scenes for runtime tests; this catalog is not editable authority."
+                ),
+                content=unity_scene_catalog.decode("utf-8"),
+                media_type="application/json",
+                size_bytes=len(unity_scene_catalog),
+                sha256=digest,
+            ))
+            total += len(unity_scene_catalog)
         for relative in tracked:
             pure = generic_safe_relative(relative)
             normalized = pure.as_posix()
@@ -759,7 +998,13 @@ class ApprovedProjectDevelopmentToolPack:
             re.IGNORECASE,
         ))
 
-    def _unity_visual_contract_issues(self, profile, clone: Path, goal_text: str) -> list[str]:
+    def _unity_visual_contract_issues(
+        self,
+        profile,
+        clone: Path,
+        goal_text: str,
+        changed_paths: list[str] | None = None,
+    ) -> list[str]:
         if not self._requires_unity_visual_runtime(goal_text):
             return []
         if not any(
@@ -780,6 +1025,58 @@ class ApprovedProjectDevelopmentToolPack:
                 test_sources.append(content)
 
         issues: list[str] = []
+        if changed_paths and re.search(
+            r"(?:\bui\b|screen|visual|layout|responsive|로그인|로비|설정|화면)",
+            goal_text,
+            re.IGNORECASE,
+        ):
+            production_paths = [
+                path for path in changed_paths
+                if "/tests/" not in f"/{path.casefold()}/"
+                and not path.casefold().endswith(".asmdef")
+            ]
+            if not production_paths:
+                issues.append(
+                    "the change set contains only verification code; add an actual production UI implementation "
+                    "under the approved project source before claiming UI modernization"
+                )
+            else:
+                changed_scene_assets = any(
+                    Path(path).suffix.casefold() in {".unity", ".prefab"}
+                    for path in production_paths
+                )
+                changed_production_source = "\n".join(
+                    path.read_text(encoding="utf-8", errors="replace")
+                    for relative in production_paths
+                    if Path(relative).suffix.casefold() == ".cs"
+                    and (path := clone / Path(*PurePosixPath(relative).parts)).is_file()
+                )
+                for relative in production_paths:
+                    if Path(relative).suffix.casefold() != ".cs":
+                        continue
+                    source = clone / Path(*PurePosixPath(relative).parts)
+                    original = self.root / Path(*PurePosixPath(relative).parts)
+                    if original.is_file() or not source.is_file():
+                        continue
+                    content = source.read_text(encoding="utf-8", errors="replace")
+                    class_match = re.search(
+                        r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*[^\n{]*\bMonoBehaviour\b",
+                        content,
+                    )
+                    if not class_match:
+                        continue
+                    class_name = class_match.group(1)
+                    runtime_entry = any(marker in content for marker in (
+                        "RuntimeInitializeOnLoadMethod", "InitializeOnLoadMethod", "ExecuteAlways",
+                    ))
+                    referenced_by_other_production = changed_production_source.count(class_name) > 1
+                    if not (
+                        runtime_entry or changed_scene_assets or referenced_by_other_production
+                    ):
+                        issues.append(
+                            f"new Unity UI MonoBehaviour {class_name} is not attached to a changed scene/prefab and "
+                            "has no runtime initialization entrypoint; an inert source file does not implement the UI"
+                        )
         if not test_sources:
             issues.append(
                 "add a discoverable Unity PlayMode test whose namespace/full name begins "
@@ -793,6 +1090,34 @@ class ApprovedProjectDevelopmentToolPack:
                 issues.append("use valid C# interpolation ($\"...\"), never JavaScript-style ${...}")
             if "runtime-evidence.json" not in combined:
                 issues.append("the OneBrief.Visual test must write onebrief-evidence/runtime-evidence.json")
+            elif (
+                "onebrief-unity-visual-evidence-v1" not in combined
+                or "scenarios" not in combined
+            ):
+                issues.append(
+                    "runtime-evidence.json must use schema_version onebrief-unity-visual-evidence-v1 and contain "
+                    "a scenarios array derived from the executed UI states"
+                )
+            elif not all(field in combined for field in (
+                "scenario_id", "observed_state", "interaction", "assertion_count",
+                "viewport_width", "viewport_height", "screenshot_path",
+            )):
+                issues.append(
+                    "each general UI evidence scenario must contain scenario_id, observed_state, interaction, "
+                    "assertion_count, viewport_width, viewport_height, and screenshot_path"
+                )
+            unity_test_methods = re.findall(
+                r"\[\s*unitytest\s*\]\s*(?:public\s+)?(?:ienumerator|void)\s+([A-Za-z_][A-Za-z0-9_]*)",
+                structural,
+            )
+            duplicate_test_methods = sorted({
+                name for name in unity_test_methods if unity_test_methods.count(name) > 1
+            })
+            if duplicate_test_methods:
+                issues.append(
+                    "the OneBrief.Visual source contains duplicate UnityTest methods after repair: "
+                    + ", ".join(duplicate_test_methods)
+                )
             if ".png" not in combined and "capturescreenshot" not in combined:
                 issues.append("the OneBrief.Visual test must capture PNG runtime evidence")
             if "screencapture.capturescreenshot" in structural and not all(
@@ -803,9 +1128,70 @@ class ApprovedProjectDevelopmentToolPack:
                     "render the real scene UI to a RenderTexture, read pixels, EncodeToPNG, and "
                     "File.WriteAllBytes synchronously"
                 )
+            if (
+                "rendertexture" in structural
+                and ".render()" in structural
+                and not (
+                    "screenspacecamera" in structural
+                    and "worldcamera" in structural
+                    and "rendermode" in structural
+                )
+            ):
+                issues.append(
+                    "a camera RenderTexture does not capture ScreenSpaceOverlay UI; temporarily route the real "
+                    "active Canvas through ScreenSpaceCamera/worldCamera, render it, then restore its prior state"
+                )
+            responsive_requested = (
+                ("mobile" in goal_text.casefold() or "모바일" in goal_text)
+                and ("desktop" in goal_text.casefold() or "데스크톱" in goal_text)
+            )
+            if responsive_requested:
+                measured = [
+                    (int(width), int(height))
+                    for width, height in re.findall(
+                        r"viewport_width[^0-9]{0,32}(\d{2,5})[^\n]{0,120}?"
+                        r"viewport_height[^0-9]{0,32}(\d{2,5})",
+                        combined_source,
+                        re.IGNORECASE,
+                    )
+                ]
+                if not any(width < height for width, height in measured) or not any(
+                    width >= height for width, height in measured
+                ):
+                    issues.append(
+                        "responsive Unity visual evidence must define and capture both a measured "
+                        "mobile/portrait viewport and a desktop/landscape viewport before PlayMode execution"
+                    )
             if "scenemanager.loadscene" not in structural and "scenemanager.loadsceneasync" not in structural:
                 issues.append(
                     "the OneBrief.Visual test must load and exercise an actual project scene, not an empty test scene"
+                )
+            broad_named_button_fallbacks = re.findall(
+                r"([a-z][a-z0-9_]*button)\s*=\s*[^;]*getcomponentinchildren\s*<\s*"
+                r"(?:[a-z0-9_.]+\.)?button\s*>\s*\(\s*true\s*\)",
+                structural,
+            )
+            if broad_named_button_fallbacks:
+                issues.append(
+                    "a named UI action must not fall back to the first arbitrary child Button; rediscover "
+                    "the real control by exact hierarchy or a semantic name match: "
+                    + ", ".join(sorted(set(broad_named_button_fallbacks)))
+                )
+            if re.search(
+                r"(?:\.text|\.options\s*\[[^\]]+\]\s*\.text)\s*=",
+                structural,
+            ):
+                issues.append(
+                    "a runtime evidence test must observe product text, not rewrite visible labels or "
+                    "dropdown option text to hide a localization or glyph defect"
+                )
+            if re.search(
+                r"\.(?:uiscalemode|referenceresolution|matchwidthorheight)\s*=",
+                structural,
+            ):
+                issues.append(
+                    "a runtime evidence test must observe the shipped responsive layout, not configure "
+                    "CanvasScaler properties during verification; repair the production UI instead"
                 )
             requested_scenes = re.findall(
                 r"SceneManager\.LoadScene(?:Async)?\s*\(\s*\"([^\"]+)\"",
@@ -832,15 +1218,25 @@ class ApprovedProjectDevelopmentToolPack:
                         "the OneBrief.Visual test must load a scene containing the real LanguageDropdown: "
                         + ", ".join(sorted(settings_scenes))
                     )
+            requested_surfaces = requested_ui_surfaces(goal_text)
+            if len(requested_surfaces) >= 2 and not any(token in structural for token in (
+                ".onclick.invoke", "executeevents.execute", ".setactive(true)",
+                "pointerclickevent", "submitEvent",
+            )):
+                issues.append(
+                    "the OneBrief.Visual test must perform a real UI interaction to move between requested "
+                    "screens; loading scenes and asserting object presence alone does not prove the transition"
+                )
             if re.search(r"new\s+(?:unityengine\.)?gameobject", structural) and re.search(
-                r"addcomponent<[^>]*(?:canvas|tmp_|text|image|button|recttransform)\s*>",
+                r"addcomponent\s*<[^>]*(?:canvas|tmp_|text|image|button|recttransform)[^>]*>",
                 structural,
             ):
                 issues.append(
                     "the OneBrief.Visual test must not construct synthetic UI; find and interact with the real scene UI"
                 )
             if not any(token in structural for token in (
-                "findobjectsbytype", "findobjectsoftype", "findobjectoftype", "gameobject.find", "getcomponent<tmp_",
+                "findobjectsbytype", "findobjectsoftype", "findfirstobjectbytype",
+                "findanyobjectbytype", "findobjectoftype", "gameobject.find", "getcomponent<tmp_",
             )):
                 issues.append(
                     "the OneBrief.Visual test must inspect and interact with visible UI objects from the loaded scene"
@@ -850,6 +1246,11 @@ class ApprovedProjectDevelopmentToolPack:
                 and not re.search(r"GameObject\.Find\s*\(\s*\"LanguageDropdown\"", combined_source)
                 and "getcomponent<tmp_dropdown" not in structural
                 and "findobjectsoftypeall<tmp_dropdown" not in structural
+                and not re.search(
+                    r"(?:findfirstobjectbytype|findanyobjectbytype|findobjectsbytype)\s*"
+                    r"<\s*(?:tmpro\.)?tmp_dropdown",
+                    structural,
+                )
             ):
                 issues.append(
                     "the OneBrief.Visual test must find and operate the real LanguageDropdown control"
@@ -1038,7 +1439,9 @@ class ApprovedProjectDevelopmentToolPack:
                 self._git("diff", "--check", "--", *approved_paths, cwd=clone)
             except RuntimeError as exc:
                 hygiene_failure = exc
-            visual_issues = self._unity_visual_contract_issues(profile, clone, goal_text)
+            visual_issues = self._unity_visual_contract_issues(
+                profile, clone, goal_text, approved_paths
+            )
             if visual_issues:
                 details = [f"Unity visual test contract: {item}" for item in visual_issues]
                 if hygiene_failure is not None:

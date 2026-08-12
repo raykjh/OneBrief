@@ -136,6 +136,7 @@ class RecoveryPolicy:
             "development verification failed:",
             "development patch hygiene failed:",
             "web observation failed:",
+            "independent unity semantic visual observation failed:",
         )) or message.startswith((
             "unity visual scenario ",
             "unity visual evidence ",

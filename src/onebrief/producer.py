@@ -99,7 +99,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
         _stage(
             "team_planning", "gemini-3.1-pro-preview",
             contract_tokens + 4500, TEAM_PLANNING_OUTPUT_CAP,
-            (1, 1, 1), 2,
+            (1, 1, 2), 2,
         )
     ]
     if intake.public_research_allowed:

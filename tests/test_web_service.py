@@ -383,6 +383,61 @@ def test_stopped_run_returns_to_stage_one_for_amendment(
     assert restored.json()["parent_session_id"] == "stopped-run"
 
 
+def test_failed_repair_can_request_fresh_budget_without_discarding_candidate(
+    tmp_path, monkeypatch
+) -> None:
+    store = InMemoryWebSessionStore()
+    intake = IntakeRequest(goal="Complete the approved project.")
+    analysis = requirements(True)
+    budget = estimate_budget(intake, analysis)
+    store.create(WebSession(
+        session_id="failed-repair",
+        created_at="2026-08-09T00:00:00+00:00",
+        intake=intake,
+        requirements=analysis,
+        budget=budget,
+        preparation=build_preparation_plan(intake, analysis, budget),
+    ))
+    job_dir = tmp_path / "failed-job"
+    job_dir.mkdir()
+    record = JobRecord(
+        job_id="failed-job",
+        status=JobStatus.FAILED,
+        created_at="2026-08-09T00:00:00+00:00",
+        updated_at="2026-08-09T00:01:00+00:00",
+        attempts=1,
+        current_stage="failed",
+        message="development verification failed: Unity PlayMode assertion",
+        run_id="run",
+    )
+    (job_dir / "job.json").write_text(record.model_dump_json(), encoding="utf-8")
+    store.save_execution(ExecutionLink(
+        session_id="failed-repair",
+        job_uri=str(job_dir),
+        operation_name="local",
+        created_at="2026-08-09T00:00:00+00:00",
+    ))
+    candidate = SimpleNamespace(reusable_artifacts=(
+        "development_best_candidate.json", "development_best_failure.txt"
+    ))
+    monkeypatch.setattr(
+        "onebrief.web_service.find_reuse_candidate", lambda *_args, **_kwargs: candidate
+    )
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).post("/api/sessions/failed-repair/amend")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["amendment_kind"] == "needs_budget"
+    assert payload["budget"] is not None
+    assert payload["previous_attempt"]["reusable_artifacts"] == [
+        "development_best_candidate.json", "development_best_failure.txt"
+    ]
+
+
 
 
 def test_upload_limit_accepts_a_file_larger_than_the_previous_cap(monkeypatch) -> None:

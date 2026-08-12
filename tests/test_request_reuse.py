@@ -173,3 +173,53 @@ def test_unverified_code_proposal_is_never_reused(tmp_path: Path) -> None:
 
     assert candidate is not None
     assert candidate.reusable_artifacts == ("analysis.json",)
+
+
+def test_reuse_prefers_playmode_checkpoint_over_newer_static_failure(
+    tmp_path: Path,
+) -> None:
+    head = "e" * 40
+    for name, failure in (
+        (
+            "playmode-job",
+            "development verification failed: unity_playmode_visual_tests UNITY TEST FAILURES",
+        ),
+        (
+            "newer-static-job",
+            "development verification failed: Unity visual test contract rejected",
+        ),
+    ):
+        job = tmp_path / name
+        (job / "inputs").mkdir(parents=True)
+        evidence = job / "work" / "toolpacks" / "exchange_development" / "evidence"
+        evidence.mkdir(parents=True)
+        (job / "inputs" / "intake.json").write_text(
+            _intake().model_dump_json(), encoding="utf-8"
+        )
+        (job / "job.json").write_text(
+            json.dumps({"job_id": name, "status": "failed"}), encoding="utf-8"
+        )
+        (evidence / "repository_inspection.json").write_text(
+            json.dumps({"head_sha": head}), encoding="utf-8"
+        )
+        (job / "work" / "development_best_candidate.json").write_text(
+            json.dumps({"summary": name}), encoding="utf-8"
+        )
+        (job / "work" / "development_best_failure.txt").write_text(
+            failure, encoding="utf-8"
+        )
+        (job / "job.json").touch()
+
+    candidate = find_reuse_candidate(tmp_path, _intake(), _project(head))
+
+    assert candidate is not None
+    assert candidate.job_id == "playmode-job"
+    target = tmp_path / "new-job"
+    (target / "work").mkdir(parents=True)
+    seed_reusable_artifacts(candidate, target)
+    assert json.loads((target / "work" / "code_change_set.json").read_text("utf-8"))[
+        "summary"
+    ] == "playmode-job"
+    assert "unity_playmode_visual_tests" in (
+        target / "work" / "development_verification_failure.txt"
+    ).read_text("utf-8")

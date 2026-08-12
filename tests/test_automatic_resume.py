@@ -2,6 +2,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from onebrief.automatic_resume import (
     AutomaticResumePlan,
     can_attempt_automatic_resume,
@@ -106,6 +108,77 @@ def test_partial_semantic_observation_hold_is_resume_candidate(tmp_path: Path) -
         "message": "A required independent observation capability was unavailable; the result was not accepted as complete.",
     })
     (job / "job.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+
+    assert can_attempt_automatic_resume(job) is True
+
+
+def test_truncated_verifier_can_reuse_digest_bound_verified_development(
+    tmp_path: Path,
+) -> None:
+    job = tmp_path / "job-verifier-json"
+    _failed_job(job)
+    record = JobRecord.model_validate_json((job / "job.json").read_text(encoding="utf-8"))
+    record = record.model_copy(update={
+        "message": "ValidationError: VerificationReport Invalid JSON: EOF while parsing"
+    })
+    (job / "job.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    change_path = job / "work" / "code_change_set.json"
+    development = job / "work" / "development"
+    development.mkdir()
+    run = {
+        "status": "verified",
+        "repository_name": "sample",
+        "base_head_sha": "a" * 40,
+        "summary": "Verified candidate",
+        "changed_paths": ["Assets/Test.cs"],
+        "commands": [],
+        "patch_path": "candidate.patch",
+        "evidence_paths": [],
+        "safety_boundary": ["isolated"],
+    }
+    (development / "development_run.json").write_text(
+        json.dumps(run), encoding="utf-8"
+    )
+    (job / "work" / "automatic_resume.json").write_text(json.dumps({
+        "revalidated_change_sha256": hashlib.sha256(change_path.read_bytes()).hexdigest(),
+    }), encoding="utf-8")
+
+    assert can_attempt_automatic_resume(job) is True
+
+    (job / "work" / "automatic_resume.json").write_text(json.dumps({
+        "revalidated_change_sha256": "0" * 64,
+    }), encoding="utf-8")
+    assert can_attempt_automatic_resume(job) is False
+
+
+def test_missing_observation_for_verified_seed_is_automatic_not_user_information(
+    tmp_path: Path,
+) -> None:
+    job = tmp_path / "job-missing-observer"
+    _failed_job(job)
+    record = JobRecord.model_validate_json((job / "job.json").read_text(encoding="utf-8"))
+    record = record.model_copy(update={
+        "status": JobStatus.NEEDS_INFORMATION,
+        "message": "Policy guard: no independent semantic observer and no visual evidence.",
+    })
+    (job / "job.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    change_path = job / "work" / "code_change_set.json"
+    development = job / "work" / "development"
+    development.mkdir()
+    (development / "development_run.json").write_text(json.dumps({
+        "status": "verified",
+        "repository_name": "sample",
+        "base_head_sha": "a" * 40,
+        "summary": "Verified candidate",
+        "changed_paths": [],
+        "commands": [],
+        "patch_path": "candidate.patch",
+        "evidence_paths": ["old_revalidation/unity_visual_evidence"],
+        "safety_boundary": ["isolated"],
+    }), encoding="utf-8")
+    (job / "work" / "automatic_resume.json").write_text(json.dumps({
+        "revalidated_change_sha256": hashlib.sha256(change_path.read_bytes()).hexdigest(),
+    }), encoding="utf-8")
 
     assert can_attempt_automatic_resume(job) is True
 
@@ -264,6 +337,174 @@ def test_rejected_candidate_resumes_without_repeating_completed_context(tmp_path
     assert plan.remaining_approved_usd == 0.01
     assert plan.cumulative_actual_usd == 0.002
     assert plan.aggregate_approval_ceiling_usd == 0.012
+    assert can_attempt_bounded_repair_resume(source) is False
+    with pytest.raises(RuntimeError, match="not eligible"):
+        create_bounded_repair_resume(source, tmp_path / "jobs")
+
+
+def test_bounded_resume_prefers_playmode_checkpoint_over_stale_static_best(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "source-progressed"
+    source.mkdir()
+    ledger = BudgetStore(source / "run").approve(_estimate(), 0.01)
+    BudgetStore(source / "run").fail("development verification failed")
+    record = JobRecord(
+        job_id=source.name,
+        status=JobStatus.FAILED,
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:01+00:00",
+        attempts=1,
+        current_stage="failed",
+        message="RuntimeError: development verification failed",
+        run_id=ledger.run_id,
+    )
+    (source / "job.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    inputs = source / "inputs"
+    inputs.mkdir()
+    intake = IntakeRequest(goal="Improve Unity UI.", public_research_allowed=False)
+    requirements = RequirementsAnalysis(
+        supported=True,
+        support_reason="Ready.",
+        normalized_goal=intake.goal,
+        deliverables=["Result"],
+        mandatory_information=[],
+        optional_information=[],
+        acceptance_criteria=["PlayMode passes."],
+        assumptions=[],
+        consolidated_questions=[],
+        ready_for_estimate=True,
+    )
+    (inputs / "intake.json").write_text(intake.model_dump_json(), encoding="utf-8")
+    (inputs / "requirements.json").write_text(requirements.model_dump_json(), encoding="utf-8")
+    (inputs / "sources.json").write_text("[]", encoding="utf-8")
+    (inputs / "budget_estimate.json").write_text(_estimate().model_dump_json(), encoding="utf-8")
+    work = source / "work"
+    work.mkdir()
+    (work / "development_best_candidate.json").write_text('{"candidate":"static"}', encoding="utf-8")
+    (work / "development_best_failure.txt").write_text(
+        "development verification failed: Unity visual test contract rejected",
+        encoding="utf-8",
+    )
+    (work / "code_change_set.json").write_text('{"candidate":"static"}', encoding="utf-8")
+    (work / "development_verification_failure.txt").write_text(
+        "development verification failed: Unity visual test contract rejected",
+        encoding="utf-8",
+    )
+    (work / "code_change_set_r3.json").write_text('{"candidate":"playmode"}', encoding="utf-8")
+    (work / "development_verification_failure_r3.txt").write_text(
+        "development verification failed: unity_playmode_visual_tests UNITY TEST FAILURES",
+        encoding="utf-8",
+    )
+    child = tmp_path / "jobs" / "child-progressed"
+
+    def fake_create_job(**kwargs):
+        child.mkdir(parents=True)
+        (child / "work").mkdir()
+        (child / "job.json").write_text(
+            JobRecord(
+                job_id=child.name,
+                status=JobStatus.QUEUED,
+                created_at="2026-01-01T00:00:02+00:00",
+                updated_at="2026-01-01T00:00:02+00:00",
+                attempts=0,
+                run_id="child-run",
+            ).model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+        return child
+
+    monkeypatch.setattr("onebrief.automatic_resume.create_job", fake_create_job)
+    created, _plan = create_bounded_repair_resume(source, tmp_path / "jobs")
+
+    assert created == child
+    assert json.loads((child / "work" / "code_change_set.json").read_text("utf-8")) == {
+        "candidate": "playmode"
+    }
+    assert "unity_playmode_visual_tests" in (
+        child / "work" / "development_verification_failure.txt"
+    ).read_text("utf-8")
+
+
+def test_missing_system_visual_observer_resumes_latest_runtime_candidate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "source-observer"
+    source.mkdir()
+    ledger = BudgetStore(source / "run").approve(_estimate(), 0.01)
+    record = JobRecord(
+        job_id=source.name,
+        status=JobStatus.NEEDS_INFORMATION,
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:01+00:00",
+        attempts=1,
+        current_stage="finished",
+        message=(
+            "The visual and layout criteria require independent review which has not been performed."
+        ),
+        run_id=ledger.run_id,
+    )
+    (source / "job.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    inputs = source / "inputs"
+    inputs.mkdir()
+    intake = IntakeRequest(goal="Modernize Unity UI on mobile and desktop.")
+    required = RequirementsAnalysis(
+        supported=True,
+        support_reason="Ready.",
+        normalized_goal=intake.goal,
+        deliverables=["Unity result"],
+        mandatory_information=[],
+        optional_information=[],
+        acceptance_criteria=["Rendered UI passes independent review."],
+        assumptions=[],
+        consolidated_questions=[],
+        ready_for_estimate=True,
+    )
+    (inputs / "intake.json").write_text(intake.model_dump_json(), encoding="utf-8")
+    (inputs / "requirements.json").write_text(required.model_dump_json(), encoding="utf-8")
+    (inputs / "sources.json").write_text("[]", encoding="utf-8")
+    (inputs / "budget_estimate.json").write_text(_estimate().model_dump_json(), encoding="utf-8")
+    work = source / "work"
+    (work / "development" / "unity_visual_evidence").mkdir(parents=True)
+    (work / "development" / "unity_visual_evidence" / "summary.json").write_text(
+        '{"screenshot_paths":["screenshots/desktop.png"]}', encoding="utf-8"
+    )
+    (work / "code_change_set.json").write_text('{"candidate":"latest"}', encoding="utf-8")
+    (work / "development_best_candidate.json").write_text(
+        '{"candidate":"stale"}', encoding="utf-8"
+    )
+    (work / "development_best_failure.txt").write_text("old static failure", encoding="utf-8")
+    child = tmp_path / "jobs" / "observer-child"
+
+    def fake_create_job(**kwargs):
+        child.mkdir(parents=True)
+        (child / "work").mkdir()
+        (child / "job.json").write_text(
+            JobRecord(
+                job_id=child.name,
+                status=JobStatus.QUEUED,
+                created_at="2026-01-01T00:00:02+00:00",
+                updated_at="2026-01-01T00:00:02+00:00",
+                attempts=0,
+                run_id="child-run",
+            ).model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+        return child
+
+    monkeypatch.setattr("onebrief.automatic_resume.create_job", fake_create_job)
+
+    assert can_attempt_bounded_repair_resume(source) is True
+    created, plan = create_bounded_repair_resume(source, tmp_path / "jobs")
+
+    assert created == child
+    assert json.loads((child / "work" / "code_change_set.json").read_text("utf-8")) == {
+        "candidate": "latest"
+    }
+    assert "semantic visual PASS" in (
+        child / "work" / "development_verification_failure.txt"
+    ).read_text("utf-8")
+    assert "system_observation_failure" in plan.reused_artifacts
 
 
 def test_truncated_compact_repair_can_resume_from_preserved_candidate(tmp_path: Path) -> None:
@@ -280,6 +521,26 @@ def test_truncated_compact_repair_can_resume_from_preserved_candidate(tmp_path: 
     (job / "work" / "development_verification_failure.txt").write_text(
         "missing Unity test assembly", encoding="utf-8"
     )
+
+    assert can_attempt_bounded_repair_resume(job) is True
+
+
+def test_failed_semantic_observation_returns_verified_candidate_to_maker(
+    tmp_path: Path,
+) -> None:
+    job = tmp_path / "semantic-failure"
+    _failed_job(job)
+    record = JobRecord.model_validate_json((job / "job.json").read_text("utf-8"))
+    record = record.model_copy(update={
+        "message": "RuntimeError: independent Unity semantic visual observation failed"
+    })
+    (job / "job.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    observations = job / "work" / "independent_observations"
+    observations.mkdir()
+    (observations / "unity_ui_observation.json").write_text(json.dumps({
+        "status": "failed",
+        "findings": ["Mobile lobby controls overlap.", "Espa□ol has a missing glyph."],
+    }), encoding="utf-8")
 
     assert can_attempt_bounded_repair_resume(job) is True
 
@@ -301,6 +562,42 @@ def test_partial_identical_repair_candidate_can_resume_with_unused_budget(tmp_pa
     )
 
     assert can_attempt_bounded_repair_resume(job) is True
+
+
+def test_stalled_distinct_unity_surface_evidence_can_resume(tmp_path: Path) -> None:
+    job = tmp_path / "stalled-unity-surface"
+    _failed_job(job)
+    record = JobRecord.model_validate_json((job / "job.json").read_text("utf-8"))
+    record = record.model_copy(update={
+        "message": (
+            "RuntimeError: development repair stalled after two identical candidates; "
+            "the same maker must be resumed with a different repair strategy"
+        ),
+    })
+    (job / "job.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    (job / "work" / "development_verification_failure.txt").write_text(
+        "Unity visual evidence requires a distinct rendered scenario for every requested real UI surface: settings",
+        encoding="utf-8",
+    )
+
+    assert can_attempt_bounded_repair_resume(job) is True
+
+
+def test_interrupted_unity_process_revalidates_candidate_without_maker_repair(tmp_path: Path) -> None:
+    job = tmp_path / "interrupted-unity"
+    _failed_job(job)
+    record = JobRecord.model_validate_json((job / "job.json").read_text("utf-8"))
+    record = record.model_copy(update={
+        "message": "RuntimeError: development verification failed: unity_playmode_visual_tests (exit_code=4294967295)",
+    })
+    (job / "job.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    (job / "work" / "development_verification_failure.txt").write_text(
+        "development verification failed: unity_playmode_visual_tests (exit_code=4294967295) package manager stopped",
+        encoding="utf-8",
+    )
+
+    assert can_attempt_automatic_resume(job) is True
+    assert can_attempt_bounded_repair_resume(job) is False
 
 
 def test_false_context_authorization_gate_can_resume_after_hash_fix(tmp_path: Path) -> None:

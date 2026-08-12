@@ -66,7 +66,7 @@ class BudgetedGeminiClient:
         *,
         stage: str,
         model: str,
-        contents: str,
+        contents: Any,
         max_output_tokens: int,
         system_instruction: str | None,
         temperature: float,
@@ -189,6 +189,51 @@ class BudgetedGeminiClient:
             return schema.model_validate(parsed)
         if not response.text:
             raise ValueError(f"{stage} returned no structured response")
+        return schema.model_validate_json(response.text)
+
+    def generate_json_with_images(
+        self,
+        *,
+        stage: str,
+        model: str,
+        contents: str,
+        image_paths: list[Path],
+        schema: type[T],
+        max_output_tokens: int,
+        system_instruction: str,
+        temperature: float = 0.0,
+    ) -> T:
+        """Run a budgeted structured multimodal observation.
+
+        Images are accepted only from explicit local paths supplied by the
+        pipeline. The same immutable reservation and settlement path used by
+        every text call remains authoritative.
+        """
+
+        if not image_paths:
+            raise ValueError("multimodal observation requires at least one image")
+        if len(image_paths) > 6:
+            raise ValueError("multimodal observation accepts at most six images")
+        parts: list[types.Part] = [types.Part.from_text(text=contents)]
+        for path in image_paths:
+            resolved = path.resolve()
+            if not resolved.is_file() or resolved.suffix.casefold() != ".png":
+                raise ValueError(f"multimodal observation requires a PNG file: {path}")
+            parts.append(types.Part.from_bytes(data=resolved.read_bytes(), mime_type="image/png"))
+        response = self._generate(
+            stage=stage,
+            model=model,
+            contents=parts,
+            max_output_tokens=max_output_tokens,
+            system_instruction=system_instruction,
+            temperature=temperature,
+            response_schema=schema,
+        )
+        if response.parsed is not None:
+            parsed = restore_nullable_values(schema, response.parsed)
+            return schema.model_validate(parsed)
+        if not response.text:
+            raise ValueError(f"{stage} returned no structured multimodal response")
         return schema.model_validate_json(response.text)
 
     def generate_adk_response(

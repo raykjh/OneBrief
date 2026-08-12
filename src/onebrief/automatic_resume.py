@@ -10,6 +10,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from onebrief.budget_guard import BudgetStore, micros_to_dollars
+from onebrief.development_progress import development_failure_quality
 from onebrief.development_toolpack import DevelopmentRun
 from onebrief.generic_development_toolpack import (
     ApprovedProjectDevelopmentToolPack,
@@ -18,7 +19,7 @@ from onebrief.generic_development_toolpack import (
 from onebrief.jobs import JobStatus, JobStore, create_job
 from onebrief.schemas import BudgetEnvelope, IntakeRequest, InternalSource, RequirementsAnalysis
 
-TRUSTED_REVALIDATION_VERSION = "web-observer-v7"
+TRUSTED_REVALIDATION_VERSION = "web-observer-v8"
 
 class AutomaticResumePlan(BaseModel):
     source_job_id: str
@@ -45,6 +46,46 @@ class BoundedRepairResumePlan(BaseModel):
     reused_artifacts: list[str]
 
 
+def _most_progressed_development_pair(work: Path) -> tuple[Path, Path]:
+    """Choose the verifier-demonstrated checkpoint, including newer rounds.
+
+    An explicit best checkpoint can become stale when the progress rank itself
+    is corrected.  Comparing it with every complete candidate/failure pair
+    makes continuation self-healing without trusting model-authored claims.
+    """
+    pairs: list[tuple[tuple[int, int], int, Path, Path]] = []
+    best_candidate = work / "development_best_candidate.json"
+    best_failure = work / "development_best_failure.txt"
+    if best_candidate.is_file() and best_failure.is_file():
+        pairs.append((
+            development_failure_quality(best_failure.read_text("utf-8")),
+            -1,
+            best_candidate,
+            best_failure,
+        ))
+    for candidate in work.glob("code_change_set_r*.json"):
+        suffix = candidate.stem.removeprefix("code_change_set_r")
+        if not suffix.isdigit():
+            continue
+        failure = work / f"development_verification_failure_r{suffix}.txt"
+        if failure.is_file():
+            pairs.append((
+                development_failure_quality(failure.read_text("utf-8")),
+                int(suffix),
+                candidate,
+                failure,
+            ))
+    if pairs:
+        _quality, _round, candidate, failure = max(
+            pairs, key=lambda item: (item[0], item[1])
+        )
+        return candidate, failure
+    return (
+        work / "code_change_set.json",
+        work / "development_verification_failure.txt",
+    )
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -56,6 +97,44 @@ def _remaining_approval(job_dir: Path) -> tuple[float, float]:
     return micros_to_dollars(max(remaining, 0)), micros_to_dollars(ledger.actual_usd_micros)
 
 
+def _trusted_seeded_development_dir(job_dir: Path) -> Path | None:
+    """Return already-revalidated evidence only when its receipt still binds the candidate."""
+    work = job_dir / "work"
+    manifest_path = work / "automatic_resume.json"
+    change_path = work / "code_change_set.json"
+    run_path = work / "development" / "development_run.json"
+    if not (manifest_path.is_file() and change_path.is_file() and run_path.is_file()):
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        run = DevelopmentRun.model_validate_json(run_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    if run.status != "verified":
+        return None
+    if manifest.get("revalidated_change_sha256") != _sha256(change_path):
+        return None
+    return run_path.parent
+
+
+def _failed_semantic_observation(work: Path) -> tuple[Path, str] | None:
+    path = work / "independent_observations" / "unity_ui_observation.json"
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("status") != "failed":
+        return None
+    findings = [str(item) for item in payload.get("findings", []) if str(item).strip()]
+    return path, (
+        "Independent Unity semantic visual observation failed. Repair the production UI, "
+        "then regenerate and re-observe all requested desktop and mobile states.\n- "
+        + "\n- ".join(findings)
+    )
+
+
 def can_attempt_automatic_resume(job_dir: Path) -> bool:
     """Return true for a rejected development result that retains budget and work."""
     try:
@@ -63,17 +142,45 @@ def can_attempt_automatic_resume(job_dir: Path) -> bool:
         remaining, _ = _remaining_approval(job_dir)
     except (OSError, ValueError):
         return False
-    if record.status not in {JobStatus.FAILED, JobStatus.PARTIAL} or remaining <= 0:
+    if record.status not in {
+        JobStatus.FAILED,
+        JobStatus.PARTIAL,
+        JobStatus.NEEDS_INFORMATION,
+    } or remaining <= 0:
         return False
     message = record.message.casefold()
+    failure_path = job_dir / "work" / "development_verification_failure.txt"
+    try:
+        preserved_failure = failure_path.read_text(encoding="utf-8").casefold()
+    except OSError:
+        preserved_failure = ""
     validation_failure = any(token in message for token in (
         "web observation failed",
         "development verification failed",
         "development patch hygiene failed",
         "approved web observation",
         "independent observation capability was unavailable",
+    )) or any(token in preserved_failure for token in (
+        "web observation failed",
+        "development verification failed",
+        "development patch hygiene failed",
     ))
-    return validation_failure and (job_dir / "work" / "code_change_set.json").is_file()
+    verifier_transport_failure = (
+        "verificationreport" in message
+        and "invalid json" in message
+        and _trusted_seeded_development_dir(job_dir) is not None
+    )
+    missing_seeded_observation = (
+        _trusted_seeded_development_dir(job_dir) is not None
+        and any(token in message for token in (
+            "no independent semantic observer",
+            "lacks visual evidence",
+            "no visual evidence",
+        ))
+    )
+    return (validation_failure or verifier_transport_failure or missing_seeded_observation) and (
+        job_dir / "work" / "code_change_set.json"
+    ).is_file()
 
 
 def can_attempt_structural_resume(job_dir: Path) -> bool:
@@ -157,12 +264,52 @@ def can_attempt_bounded_repair_resume(job_dir: Path) -> bool:
         return False
     work = job_dir / "work"
     message = record.message.casefold()
+    preserved_failure_path = work / "development_verification_failure.txt"
+    try:
+        preserved_failure = preserved_failure_path.read_text(encoding="utf-8").casefold()
+    except OSError:
+        preserved_failure = ""
+    missing_system_observer = (
+        record.status in {JobStatus.NEEDS_INFORMATION, JobStatus.FAILED}
+        and (work / "development" / "unity_visual_evidence" / "summary.json").is_file()
+        and (
+            (
+                any(marker in message for marker in (
+                    "independent review",
+                    "independent semantic observer",
+                    "visual and layout criteria",
+                ))
+                and any(marker in message for marker in (
+                    "not been performed",
+                    "has not been performed",
+                    "unavailable",
+                    "missing",
+                ))
+            )
+            or "generate_json_with_images" in message
+            or "unitysemanticobservation" in message
+        )
+    )
+    semantic_observation_failed = _failed_semantic_observation(work) is not None
+    interrupted_unity_runtime = (
+        "unity_playmode_visual_tests (exit_code=4294967295)" in preserved_failure
+        and "test run completed" not in preserved_failure
+    )
     repairable_failure = (
         "development verification failed:" in message
+        or "development verification failed:" in preserved_failure
+        or "development repair stalled" in message
         or "repeating an identical repair candidate" in message
         or "existing file was not included in approved model context" in message
         or "exactrepairprojectcodechangeset" in message
         or "catalog anchor is not approved" in message
+        or "edit anchors could not rediscover" in message
+        or "independent unity semantic visual observation failed" in message
+        or "independent unity semantic visual observation failed" in preserved_failure
+        or "unity visual evidence requires" in message
+        or "unity visual evidence requires" in preserved_failure
+        or missing_system_observer
+        or semantic_observation_failed
         or (
             "compactproposedprojectcodechangeset" in message
             and (
@@ -175,11 +322,22 @@ def can_attempt_bounded_repair_resume(job_dir: Path) -> bool:
         )
     )
     return (
-        record.status in {JobStatus.FAILED, JobStatus.PARTIAL, JobStatus.NEEDS_AUTHORIZATION}
+        record.status in {
+            JobStatus.FAILED,
+            JobStatus.PARTIAL,
+            JobStatus.NEEDS_AUTHORIZATION,
+            JobStatus.NEEDS_INFORMATION,
+        }
         and remaining > 0
+        and not (job_dir / ".bounded-repair-resume-claim.json").exists()
+        and not interrupted_unity_runtime
         and repairable_failure
         and (work / "code_change_set.json").is_file()
-        and (work / "development_verification_failure.txt").is_file()
+        and (
+            missing_system_observer
+            or semantic_observation_failed
+            or (work / "development_verification_failure.txt").is_file()
+        )
     )
 
 
@@ -204,19 +362,35 @@ def create_bounded_repair_resume(
     estimate = BudgetEnvelope.model_validate_json(
         (inputs / "budget_estimate.json").read_text("utf-8")
     )
-    if remaining < estimate.minimum_cost_usd:
-        raise RuntimeError("the unused original approval is below the minimum resumable budget")
+    # Planning, context collection and the first candidate already completed.
+    # Comparing a bounded repair with the whole-pipeline minimum incorrectly
+    # blocks useful final repairs.  The per-call budget gateway still returns
+    # NEEDS_BUDGET before any provider call that does not fit.
     source_record = JobStore(source_job).read()
-    child = create_job(
-        jobs_dir=jobs_dir,
-        intake=intake,
-        requirements=requirements,
-        sources=sources,
-        estimate=estimate,
-        approved_usd=remaining,
-        benchmark_variant=source_record.benchmark_variant,
-        embed_project_snapshot=False,
-    )
+    claim_path = source_job / ".bounded-repair-resume-claim.json"
+    try:
+        with claim_path.open("x", encoding="utf-8") as stream:
+            json.dump({
+                "schema_version": "onebrief-bounded-repair-resume-claim-v1",
+                "status": "claimed",
+            }, stream)
+    except FileExistsError as exc:
+        raise RuntimeError("this failed job already produced a bounded repair continuation") from exc
+    try:
+        child = create_job(
+            jobs_dir=jobs_dir,
+            intake=intake,
+            requirements=requirements,
+            sources=sources,
+            estimate=estimate,
+            approved_usd=remaining,
+            benchmark_variant=source_record.benchmark_variant,
+            embed_project_snapshot=False,
+        )
+    except Exception:
+        # No child exists, so the idempotency claim can safely be retried.
+        claim_path.unlink(missing_ok=True)
+        raise
     child_record = JobStore(child).read()
     source_work = source_job / "work"
     child_work = child / "work"
@@ -233,19 +407,39 @@ def create_bounded_repair_resume(
         if source.is_file():
             shutil.copy2(source, child_work / name)
             reused.append(name)
-    candidate = (
-        source_work / "development_best_candidate.json"
-        if (source_work / "development_best_candidate.json").is_file()
-        else source_work / "code_change_set.json"
+    system_observation_capability_missing = (
+        source_record.status in {JobStatus.NEEDS_INFORMATION, JobStatus.FAILED}
+        and (source_work / "development" / "unity_visual_evidence" / "summary.json").is_file()
+        and (
+            source_record.status == JobStatus.NEEDS_INFORMATION
+            or "generate_json_with_images" in source_record.message.casefold()
+            or "unitysemanticobservation" in source_record.message.casefold()
+        )
     )
-    failure = (
-        source_work / "development_best_failure.txt"
-        if (source_work / "development_best_failure.txt").is_file()
-        else source_work / "development_verification_failure.txt"
-    )
-    shutil.copy2(candidate, child_work / "code_change_set.json")
-    shutil.copy2(failure, child_work / "development_verification_failure.txt")
-    reused.extend([candidate.name, failure.name])
+    semantic_observation_failure = _failed_semantic_observation(source_work)
+    if semantic_observation_failure is not None:
+        observation_path, observation_feedback = semantic_observation_failure
+        candidate = source_work / "code_change_set.json"
+        shutil.copy2(candidate, child_work / "code_change_set.json")
+        (child_work / "development_verification_failure.txt").write_text(
+            observation_feedback + "\n", encoding="utf-8"
+        )
+        reused.extend([candidate.name, observation_path.name, "semantic_observation_failure"])
+    elif system_observation_capability_missing:
+        candidate = source_work / "code_change_set.json"
+        shutil.copy2(candidate, child_work / "code_change_set.json")
+        (child_work / "development_verification_failure.txt").write_text(
+            "The latest runtime candidate reached Unity PlayMode but lacks an independent semantic "
+            "visual PASS. Re-run it through the current trusted visual preflight and observer; repair "
+            "any blank, clipped, unreadable, or non-responsive rendered UI evidence.\n",
+            encoding="utf-8",
+        )
+        reused.extend([candidate.name, "system_observation_failure"])
+    else:
+        candidate, failure = _most_progressed_development_pair(source_work)
+        shutil.copy2(candidate, child_work / "code_change_set.json")
+        shutil.copy2(failure, child_work / "development_verification_failure.txt")
+        reused.extend([candidate.name, failure.name])
     team_plans = sorted((source_work / "workspace" / "projects").glob(
         "*/02_plan_and_teams/team_plan.json"
     )) if (source_work / "workspace" / "projects").is_dir() else []
@@ -299,6 +493,11 @@ def create_bounded_repair_resume(
     (child_work / "continuation_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+    claim_path.write_text(json.dumps({
+        "schema_version": "onebrief-bounded-repair-resume-claim-v1",
+        "status": "created",
+        "child_job_id": child_record.job_id,
+    }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return child, plan
 
 
@@ -309,12 +508,12 @@ def revalidate_failed_development(job_dir: Path, project_id: str) -> AutomaticRe
         raise RuntimeError("the failed job is not eligible for trusted automatic resume")
     change_path = job_dir / "work" / "code_change_set.json"
     change_set = ProjectCodeChangeSet.model_validate_json(change_path.read_text(encoding="utf-8"))
+    intake = IntakeRequest.model_validate_json(
+        (job_dir / "inputs" / "intake.json").read_text(encoding="utf-8")
+    )
     registry_root = job_dir / "work" / "project_snapshot" / "registry"
-    if not registry_root.is_dir():
-        raise RuntimeError("the approved project snapshot registry is unavailable")
-    output_dir = (
-        job_dir / "work"
-        / f"development_revalidation_{TRUSTED_REVALIDATION_VERSION}"
+    output_dir = _trusted_seeded_development_dir(job_dir) or (
+        job_dir / "work" / f"development_revalidation_{TRUSTED_REVALIDATION_VERSION}"
     )
     existing = output_dir / "development_run.json"
     if existing.is_file():
@@ -322,7 +521,14 @@ def revalidate_failed_development(job_dir: Path, project_id: str) -> AutomaticRe
         if run.status != "verified":
             raise RuntimeError("the existing trusted revalidation did not pass")
     else:
-        pack = ApprovedProjectDevelopmentToolPack(project_id, registry_root)
+        # Older bounded continuations retain the cryptographic restore receipt
+        # but not a second copy of the registry. In that case the coordinator
+        # has already verified the current approved ToolPack hash and source
+        # revision before entering this function; the pack itself rechecks a
+        # clean root and exact approved HEAD before any disposable clone runs.
+        pack = ApprovedProjectDevelopmentToolPack(
+            project_id, registry_root if registry_root.is_dir() else None
+        )
         inspection, _ = pack.inspect(
             job_dir / "work" / "automatic_resume_inspection",
             focus_text="Trusted revalidation of the preserved development candidate.",
@@ -331,7 +537,10 @@ def revalidate_failed_development(job_dir: Path, project_id: str) -> AutomaticRe
         run = pack.apply_and_verify(
             change_set,
             output_dir,
-            verification_goal="Revalidate the preserved candidate with the current trusted adapters.",
+            verification_goal=(
+                "Revalidate the preserved candidate with the current trusted adapters. "
+                + intake.goal
+            ),
         )
     remaining, actual = _remaining_approval(job_dir)
     return AutomaticResumePlan(

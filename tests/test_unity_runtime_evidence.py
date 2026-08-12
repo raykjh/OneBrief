@@ -31,7 +31,10 @@ def write_evidence(root: Path, scenarios: list[dict[str, object]]) -> None:
     (evidence / "captures").mkdir(parents=True)
     for scenario in scenarios:
         (evidence / str(scenario["screenshot_path"])).write_bytes(
-            png() + str(scenario["scenario_id"]).encode("utf-8")
+            png(
+                int(scenario.get("viewport_width", 32)),
+                int(scenario.get("viewport_height", 32)),
+            ) + str(scenario["scenario_id"]).encode("utf-8")
         )
     (evidence / "runtime-evidence.json").write_text(
         json.dumps({
@@ -50,6 +53,20 @@ def scenario(locale: str, *, missing: int = 0) -> dict[str, object]:
         "changed_visible_text_count": 3,
         "missing_glyph_count": missing,
         "screenshot_path": f"captures/{locale}.png",
+    }
+
+
+def ui_scenario(
+    state: str, *, width: int, height: int, interaction: str = "open real screen"
+) -> dict[str, object]:
+    return {
+        "scenario_id": state,
+        "observed_state": state,
+        "interaction": interaction,
+        "assertion_count": 2,
+        "viewport_width": width,
+        "viewport_height": height,
+        "screenshot_path": f"captures/{state}-{width}x{height}.png",
     }
 
 
@@ -136,3 +153,69 @@ def test_known_evidence_root_prefix_is_normalized_without_widening_path_access(t
     )
 
     assert summary.screenshot_paths == ["screenshots/captures/ja.png"]
+
+
+def test_general_unity_ui_evidence_does_not_require_fake_locale_fields(tmp_path: Path) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results)
+    scenarios = [
+        ui_scenario("login-mobile", width=32, height=64),
+        ui_scenario("lobby-desktop", width=64, height=32, interaction="login to lobby"),
+        ui_scenario("settings-desktop", width=64, height=32, interaction="open settings and return to lobby"),
+    ]
+    write_evidence(tmp_path, scenarios)
+
+    summary = validate_and_copy_unity_visual_evidence(
+        tmp_path,
+        results,
+        tmp_path / "packaged",
+        "Modernize login, lobby, and settings UI for mobile and desktop.",
+    )
+
+    assert summary.observed_locales == []
+    assert summary.observed_states == ["lobby-desktop", "login-mobile", "settings-desktop"]
+
+
+def test_general_unity_ui_evidence_requires_every_requested_surface(tmp_path: Path) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results)
+    write_evidence(tmp_path, [ui_scenario("login", width=32, height=32)])
+
+    with pytest.raises(RuntimeError, match="lobby, settings"):
+        validate_and_copy_unity_visual_evidence(
+            tmp_path, results, tmp_path / "packaged", "Login, lobby, settings UI"
+        )
+
+
+def test_combined_final_state_names_do_not_replace_distinct_surface_screenshots(
+    tmp_path: Path,
+) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results)
+    write_evidence(tmp_path, [
+        ui_scenario("LoginToLobbyToSettingsDesktop", width=64, height=32),
+        ui_scenario("LoginToLobbyToSettingsMobile", width=32, height=64),
+    ])
+
+    with pytest.raises(RuntimeError, match="distinct rendered scenario"):
+        validate_and_copy_unity_visual_evidence(
+            tmp_path,
+            results,
+            tmp_path / "packaged",
+            "Modernize Login, Lobby, and Settings UI for mobile and desktop.",
+        )
+
+
+def test_invalid_manifest_exposes_actionable_schema_failure(tmp_path: Path) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results)
+    evidence = tmp_path / "onebrief-evidence"
+    evidence.mkdir()
+    (evidence / "runtime-evidence.json").write_text(
+        '{"status":"passed","screenshot_captured":true}', encoding="utf-8"
+    )
+
+    with pytest.raises(RuntimeError, match="scenarios"):
+        validate_and_copy_unity_visual_evidence(
+            tmp_path, results, tmp_path / "packaged", "Login UI"
+        )

@@ -102,6 +102,15 @@ class FakeGateway:
         return self.plan
 
 
+class TruncatedThenValidGateway(FakeGateway):
+    def generate_json(self, *, schema: type, model: str, **kwargs: object):
+        self.calls += 1
+        self.models.append(model)
+        if self.calls == 1:
+            return TeamPlanDraft.model_validate_json('{"schema_version":')
+        return self.plan
+
+
 def test_project_owner_selects_and_validates_minimal_team() -> None:
     gateway = FakeGateway(_plan())
     result = ProjectOwnerAgent(gateway).run(
@@ -121,6 +130,20 @@ def test_project_owner_selects_and_validates_minimal_team() -> None:
     assert by_type[AgentType.CRITIC].model.value == "gemini-3.1-pro-preview"
     assert by_type[AgentType.ANALYST].model.value == "gemini-3.5-flash"
     assert by_type[AgentType.MAKER].model.value == "gemini-3.5-flash"
+
+
+def test_project_owner_retries_one_truncated_structured_plan() -> None:
+    gateway = TruncatedThenValidGateway(_plan())
+
+    result = ProjectOwnerAgent(gateway).run(
+        project_id="job-123",
+        intake=IntakeRequest(goal="Create a grounded guide."),
+        requirements=_requirements(),
+        sources=[_source()],
+    )
+
+    assert result.project_id == "job-123"
+    assert gateway.calls == 2
 
 
 def test_decision_policy_downgrades_pro_from_routine_roles() -> None:

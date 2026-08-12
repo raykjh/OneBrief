@@ -139,6 +139,21 @@ def test_failed_web_interaction_observation_returns_to_maker() -> None:
     assert decision.retry_allowed is True
 
 
+def test_failed_unity_semantic_observation_returns_to_same_maker() -> None:
+    decision = RecoveryPolicy().decide(
+        RuntimeError(
+            "independent Unity semantic visual observation failed: mobile UI is clipped"
+        ),
+        context="development_verification",
+        attempt_number=1,
+    )
+
+    assert decision.error_class == ErrorClass.ARTIFACT_VALIDATION
+    assert decision.action == RecoveryAction.RETURN_TO_AGENT
+    assert decision.responsible_party == "maker"
+    assert decision.retry_allowed is True
+
+
 def test_budget_failure_is_returned_to_the_user() -> None:
     decision = RecoveryPolicy().decide(
         BudgetExceeded("approval is insufficient"), context="budget_gate"

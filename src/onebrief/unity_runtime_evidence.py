@@ -14,10 +14,18 @@ from pydantic import BaseModel, Field, field_validator
 
 class UnityVisualScenario(BaseModel):
     scenario_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{1,79}$")
-    expected_locale: str = Field(min_length=2, max_length=20)
-    observed_locale: str = Field(min_length=2, max_length=20)
-    changed_visible_text_count: int = Field(ge=0)
-    missing_glyph_count: int = Field(ge=0)
+    # Locale measurements remain available for localization work, but a
+    # general Unity UI task must not be forced to pretend that every screen is
+    # a language-switch scenario.
+    expected_locale: str | None = Field(default=None, min_length=2, max_length=20)
+    observed_locale: str | None = Field(default=None, min_length=2, max_length=20)
+    changed_visible_text_count: int | None = Field(default=None, ge=0)
+    missing_glyph_count: int | None = Field(default=None, ge=0)
+    observed_state: str | None = Field(default=None, min_length=2, max_length=120)
+    interaction: str | None = Field(default=None, min_length=2, max_length=240)
+    assertion_count: int | None = Field(default=None, ge=0)
+    viewport_width: int | None = Field(default=None, ge=16, le=16384)
+    viewport_height: int | None = Field(default=None, ge=16, le=16384)
     screenshot_path: str
 
     @field_validator("screenshot_path")
@@ -50,6 +58,7 @@ class UnityVisualEvidenceSummary(BaseModel):
     test_count: int = Field(gt=0)
     scenario_count: int = Field(gt=0)
     observed_locales: list[str]
+    observed_states: list[str] = Field(default_factory=list)
     screenshot_paths: list[str]
 
 
@@ -86,6 +95,20 @@ def requested_locales(text: str) -> set[str]:
     for token in re.findall(r"(?<![a-z])(?:zh-hans|zh-cn|ja|es|ko|en)(?![a-z])", lowered):
         found.add("zh-hans" if token == "zh-cn" else token)
     return found
+
+
+def requested_ui_surfaces(text: str) -> set[str]:
+    lowered = text.casefold()
+    aliases = {
+        "login": ("login", "sign in", "로그인"),
+        "lobby": ("lobby", "main menu", "로비"),
+        "settings": ("settings", "setting", "options", "설정"),
+    }
+    return {
+        surface
+        for surface, markers in aliases.items()
+        if any(marker in lowered for marker in markers)
+    }
 
 
 def _test_count(results_path: Path) -> int:
@@ -139,49 +162,130 @@ def validate_and_copy_unity_visual_evidence(
             manifest_path.read_text(encoding="utf-8")
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
-        raise RuntimeError("Unity visual evidence manifest is invalid") from exc
+        detail = " ".join(str(exc).split())[:2_000]
+        raise RuntimeError(
+            "Unity visual evidence manifest is invalid: " + detail
+        ) from exc
 
     observed: set[str] = set()
+    observed_states: set[str] = set()
     screenshot_sources: list[tuple[Path, str]] = []
     screenshot_digests: dict[str, str] = {}
     for scenario in manifest.scenarios:
-        expected = normalize_locale(scenario.expected_locale)
-        actual = normalize_locale(scenario.observed_locale)
-        if expected != actual:
-            raise RuntimeError(
-                f"Unity visual scenario {scenario.scenario_id} observed {actual}, expected {expected}"
-            )
-        if scenario.changed_visible_text_count < 1:
-            raise RuntimeError(
-                f"Unity visual scenario {scenario.scenario_id} did not visibly change any text"
-            )
-        if scenario.missing_glyph_count:
-            raise RuntimeError(
-                f"Unity visual scenario {scenario.scenario_id} found "
-                f"{scenario.missing_glyph_count} missing glyph(s)"
-            )
+        has_locale_measurement = any(value is not None for value in (
+            scenario.expected_locale,
+            scenario.observed_locale,
+            scenario.changed_visible_text_count,
+            scenario.missing_glyph_count,
+        ))
+        if has_locale_measurement:
+            if not scenario.expected_locale or not scenario.observed_locale:
+                raise RuntimeError(
+                    f"Unity visual scenario {scenario.scenario_id} has an incomplete locale measurement"
+                )
+            expected = normalize_locale(scenario.expected_locale)
+            actual = normalize_locale(scenario.observed_locale)
+            if expected != actual:
+                raise RuntimeError(
+                    f"Unity visual scenario {scenario.scenario_id} observed {actual}, expected {expected}"
+                )
+            if (scenario.changed_visible_text_count or 0) < 1:
+                raise RuntimeError(
+                    f"Unity visual scenario {scenario.scenario_id} did not visibly change any text"
+                )
+            if scenario.missing_glyph_count:
+                raise RuntimeError(
+                    f"Unity visual scenario {scenario.scenario_id} found "
+                    f"{scenario.missing_glyph_count} missing glyph(s)"
+                )
+            observed.add(actual)
+        else:
+            if not scenario.observed_state or not scenario.interaction:
+                raise RuntimeError(
+                    f"Unity visual scenario {scenario.scenario_id} must report the observed real UI state and interaction"
+                )
+            if (scenario.assertion_count or 0) < 1:
+                raise RuntimeError(
+                    f"Unity visual scenario {scenario.scenario_id} did not report a passing runtime assertion"
+                )
+            observed_states.add(scenario.observed_state.casefold())
         source = (evidence_root / Path(*PurePosixPath(scenario.screenshot_path).parts)).resolve()
         if not source.is_relative_to(evidence_root) or not source.is_file():
             raise RuntimeError(
                 f"Unity visual scenario {scenario.scenario_id} screenshot is unavailable"
             )
-        _png_dimensions(source)
+        width, height = _png_dimensions(source)
+        if scenario.viewport_width is not None and scenario.viewport_width != width:
+            raise RuntimeError(
+                f"Unity visual scenario {scenario.scenario_id} viewport width does not match its PNG"
+            )
+        if scenario.viewport_height is not None and scenario.viewport_height != height:
+            raise RuntimeError(
+                f"Unity visual scenario {scenario.scenario_id} viewport height does not match its PNG"
+            )
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
         previous_scenario = screenshot_digests.get(digest)
         if previous_scenario is not None:
             raise RuntimeError(
                 "Unity visual evidence reused an identical screenshot for "
                 f"{previous_scenario} and {scenario.scenario_id}; the capture does not prove "
-                "the visible UI changed between locales"
+                "the visible UI changed between scenarios"
             )
         screenshot_digests[digest] = scenario.scenario_id
-        observed.add(actual)
         screenshot_sources.append((source, scenario.screenshot_path))
 
     required = requested_locales(goal_text)
     if required and not required.issubset(observed):
         missing = ", ".join(sorted(required - observed))
         raise RuntimeError(f"Unity visual evidence did not exercise requested locale(s): {missing}")
+
+    requested_surfaces = requested_ui_surfaces(goal_text)
+    if requested_surfaces:
+        scenario_texts = [
+            f"{item.scenario_id} {item.observed_state or ''} {item.interaction or ''} "
+            f"{item.screenshot_path}".casefold()
+            for item in manifest.scenarios
+        ]
+        # One final-state screenshot named LoginToLobbyToSettings cannot prove
+        # three distinct rendered surfaces. Bind each requested surface to a
+        # different scenario/screenshot so navigation claims remain observable.
+        candidates = {
+            surface: [
+                index for index, text in enumerate(scenario_texts) if surface in text
+            ]
+            for surface in requested_surfaces
+        }
+        assigned: set[int] = set()
+        missing_surfaces: list[str] = []
+        for surface in sorted(requested_surfaces, key=lambda item: len(candidates[item])):
+            available = [index for index in candidates[surface] if index not in assigned]
+            if not available:
+                missing_surfaces.append(surface)
+            else:
+                assigned.add(available[0])
+        missing_surfaces.sort()
+        if missing_surfaces:
+            raise RuntimeError(
+                "Unity visual evidence requires a distinct rendered scenario for every requested real UI surface: "
+                + ", ".join(missing_surfaces)
+            )
+
+    responsive_requested = (
+        ("mobile" in goal_text.casefold() or "모바일" in goal_text)
+        and ("desktop" in goal_text.casefold() or "데스크톱" in goal_text)
+    )
+    if responsive_requested:
+        measured = [
+            (item.viewport_width, item.viewport_height)
+            for item in manifest.scenarios
+            if item.viewport_width is not None and item.viewport_height is not None
+        ]
+        if not any(width < height for width, height in measured) or not any(
+            width >= height for width, height in measured
+        ):
+            raise RuntimeError(
+                "Unity visual evidence must include measured mobile/portrait and desktop/landscape captures"
+            )
 
     destination.mkdir(parents=True, exist_ok=True)
     shutil.copy2(results_path, destination / "test-results.xml")
@@ -196,6 +300,7 @@ def validate_and_copy_unity_visual_evidence(
         test_count=test_count,
         scenario_count=len(manifest.scenarios),
         observed_locales=sorted(observed),
+        observed_states=sorted(observed_states),
         screenshot_paths=copied,
     )
     (destination / "summary.json").write_text(

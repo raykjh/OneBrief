@@ -977,14 +977,23 @@ async def amend_session(
         raise HTTPException(502, f"Service operation failed: {type(exc).__name__}") from exc
 
     status = record.status.value
-    if status not in AMENDABLE_JOB_STATUSES:
+    bounded_failed = bool(
+        status == "failed"
+        and link.operation_name == "local"
+        and find_reuse_candidate(
+            _local_jobs_root(), previous.intake, previous.selected_project
+        ) is not None
+    )
+    if status not in AMENDABLE_JOB_STATUSES and not bounded_failed:
         raise HTTPException(409, "This run does not require a stage-one amendment.")
+
+    effective_status = "needs_budget" if bounded_failed else status
 
     reason = (record.message or record.current_stage or status).strip()[:4000]
     requirements = previous.requirements
     budget = previous.budget
-    if status in {"needs_information", "needs_authorization"}:
-        key = "runtime_information" if status == "needs_information" else "runtime_authorization"
+    if effective_status in {"needs_information", "needs_authorization"}:
+        key = "runtime_information" if effective_status == "needs_information" else "runtime_authorization"
         request = (
             "Provide the authoritative information identified during verification."
             if status == "needs_information"
@@ -1027,7 +1036,7 @@ async def amend_session(
         amendment_reason=reason,
     )
     reusable_artifacts: list[str] = []
-    if status in {"needs_budget", "needs_authorization"} and link.operation_name == "local":
+    if effective_status in {"needs_budget", "needs_authorization"} and link.operation_name == "local":
         candidate = find_reuse_candidate(
             _local_jobs_root(), previous.intake, selected_project
         )
@@ -1043,11 +1052,11 @@ async def amend_session(
         selected_project=selected_project,
         continuation_context=previous.continuation_context,
         reuse_source_job_uri=(
-            link.job_uri if status in {"needs_budget", "needs_authorization"} else None
+            link.job_uri if effective_status in {"needs_budget", "needs_authorization"} else None
         ),
         previous_attempt={
             "job_id": record.job_id,
-            "status": status,
+            "status": effective_status,
             "reusable_artifacts": reusable_artifacts,
             "message": (
                 "The previous run was preserved. OneBrief will reuse only artifacts "
@@ -1056,7 +1065,7 @@ async def amend_session(
         },
         preparation=preparation,
         parent_session_id=session_id,
-        amendment_kind=status,
+        amendment_kind=effective_status,
         amendment_reason=reason,
     )
     store.create(amended)
@@ -1328,7 +1337,7 @@ async def session_status(
                 decision.model_dump(mode="json") if decision else None
             )
             if (
-                record.status.value in {"failed", "partial"}
+                record.status.value in {"failed", "partial", "needs_information"}
                 and session.budget is not None
                 and session.intake.existing_project_id
             ):
@@ -1518,6 +1527,11 @@ async def automatically_resume_session(
             sources=previous.intake.internal_sources,
             estimate=previous.budget,
             approved_usd=plan.remaining_approved_usd,
+            # Trusted revalidation already bound the exact approved HEAD and
+            # per-file hashes. Re-embedding a full Unity source snapshot here
+            # is redundant and can fail on large binary font/assets that are
+            # intentionally outside the model context.
+            embed_project_snapshot=False,
         )
         seed_automatic_resume(source_job, child_job, plan)
         child = previous.model_copy(update={

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, TypeVar
@@ -41,25 +42,72 @@ class ModelBudgetDecision(BaseModel):
     explanation: str
 
 
+class ModelSelectionCategory(StrEnum):
+    BASELINE = "baseline"
+    REASONING_INSUFFICIENCY = "reasoning_insufficiency"
+    NON_REASONING_FAILURE = "non_reasoning_failure"
+
+
+class ModelSelectionDecision(BaseModel):
+    """Immutable explanation for keeping or escalating one agent's model."""
+
+    schema_version: str = "onebrief-model-selection-decision-v1"
+    decision_id: str = Field(default_factory=lambda: str(uuid4()))
+    selected_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    stage: str
+    call_stage: str
+    base_model: ApprovedModel
+    selected_model: ApprovedModel
+    difficulty: str
+    category: ModelSelectionCategory
+    escalated: bool
+    failure_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    explanation: str
+
+
 class ModelExecutionPolicy(BaseModel):
-    schema_version: str = "onebrief-model-execution-policy-v1"
+    schema_version: str = "onebrief-model-execution-policy-v2"
     project_id: str
     team_plan_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     price_card_version: str
     approved_usd: float = Field(gt=0)
     stage_models: dict[str, ApprovedModel]
+    stage_model_ladders: dict[str, list[ApprovedModel]] = Field(default_factory=dict)
 
-    def model_for(self, stage: str) -> str:
+    @staticmethod
+    def _base_stage(stage: str) -> tuple[str, bool]:
         base_stage = stage
+        terminal_retry = re.compile(r"(?:_compact_retry|_verification_retry)$")
+        while terminal_retry.search(base_stage):
+            base_stage = terminal_retry.sub("", base_stage)
+        escalation_requested = bool(
+            re.search(r"_reasoning_escalation_r\d+$", base_stage)
+        )
+        if escalation_requested:
+            return (
+                re.sub(r"_reasoning_escalation_r\d+$", "", base_stage),
+                True,
+            )
         retry_suffix = re.compile(
             r"(?:_revision_r\d+|_repair_r\d+|_refinement_r\d+|_r\d+|"
             r"_compact_retry|_verification_retry)$"
         )
         while retry_suffix.search(base_stage):
             base_stage = retry_suffix.sub("", base_stage)
+        return base_stage, False
+
+    def model_for(self, stage: str) -> str:
+        base_stage, escalation_requested = self._base_stage(stage)
         selected = self.stage_models.get(base_stage)
         if selected is None:
             raise PermissionError(f"stage has no approved model binding: {stage}")
+        if escalation_requested:
+            ladder = self.stage_model_ladders.get(base_stage, [])
+            if len(ladder) < 2 or ladder[0] != selected:
+                raise PermissionError(
+                    f"stage has no approved reasoning escalation: {stage}"
+                )
+            return ladder[-1].value
         return selected.value
 
     def enforce(self, stage: str, model: str) -> None:
@@ -68,6 +116,106 @@ class ModelExecutionPolicy(BaseModel):
             raise PermissionError(
                 f"model blocked before provider call: {stage} requires {approved}, received {model}"
             )
+
+    def select_after_failure(
+        self,
+        stage: str,
+        *,
+        failure_text: str,
+        difficulty: str,
+        attempt: int = 1,
+    ) -> ModelSelectionDecision:
+        """Select from a pre-approved ladder without changing the agent identity."""
+
+        base_stage, _ = self._base_stage(stage)
+        base_model = self.stage_models.get(base_stage)
+        if base_model is None:
+            raise PermissionError(f"stage has no approved model binding: {stage}")
+        ladder = self.stage_model_ladders.get(base_stage, [base_model])
+        normalized = " ".join(failure_text.casefold().split())
+        failure_sha256 = (
+            hashlib.sha256(failure_text.encode("utf-8")).hexdigest()
+            if failure_text
+            else None
+        )
+        non_reasoning_markers = (
+            "invalid json",
+            "eof while parsing",
+            "max_tokens",
+            "max tokens",
+            "deadline exceeded",
+            "service unavailable",
+            "status code 502",
+            "status code 503",
+            "stale or missing base hash",
+            "permissionerror",
+            "budget exceeded",
+            "needs_information",
+        )
+        reasoning_markers = (
+            "independent unity semantic visual observation failed",
+            "edits tests or evidence instead of production ui",
+            "stalled after two identical candidates",
+            "identical candidate",
+            "wrong repair strategy",
+            "failed acceptance criterion",
+        )
+        non_reasoning = any(marker in normalized for marker in non_reasoning_markers)
+        explicit_reasoning = any(marker in normalized for marker in reasoning_markers)
+        complex_product_failure = (
+            difficulty.casefold() == "complex"
+            and any(marker in normalized for marker in (
+                "verification failed",
+                "semantic visual",
+                "rendered ui defect",
+                "responsive layout",
+                "glyph",
+            ))
+        )
+        can_escalate = len(ladder) >= 2 and ladder[0] == base_model
+        escalate = bool(
+            failure_text
+            and can_escalate
+            and not non_reasoning
+            and (explicit_reasoning or complex_product_failure)
+        )
+        selected_model = ladder[-1] if escalate else base_model
+        call_stage = (
+            f"{base_stage}_reasoning_escalation_r{max(1, attempt)}"
+            if escalate
+            else base_stage
+        )
+        category = (
+            ModelSelectionCategory.REASONING_INSUFFICIENCY
+            if escalate
+            else (
+                ModelSelectionCategory.NON_REASONING_FAILURE
+                if failure_text and non_reasoning
+                else ModelSelectionCategory.BASELINE
+            )
+        )
+        explanation = (
+            "The same maker keeps its role, memory, and repair context but uses the approved Pro rung "
+            "because a complex semantic/reasoning failure was observed."
+            if escalate
+            else (
+                "The failure is structural, transient, budgetary, or malformed-output related; a stronger "
+                "reasoning model would not address its cause, so the approved base model is retained."
+                if non_reasoning
+                else "No approved reasoning escalation condition was met; retain the base model."
+            )
+        )
+        return ModelSelectionDecision(
+            stage=base_stage,
+            call_stage=call_stage,
+            base_model=base_model,
+            selected_model=selected_model,
+            difficulty=difficulty,
+            category=category,
+            escalated=escalate,
+            failure_sha256=failure_sha256,
+            explanation=explanation,
+        )
 
 
 def _plan_hash(plan: TeamPlan) -> str:
@@ -108,6 +256,17 @@ def evaluate_model_budget(
         for stage in STAGE_BY_AGENT[member.agent_type]:
             stage_models[stage] = member.model
 
+    stage_model_ladders: dict[str, list[ApprovedModel]] = {}
+    maker_model = stage_models.get("long_form_draft")
+    if maker_model == ApprovedModel.GEMINI_3_5_FLASH:
+        # The Pro rung is approved up front but remains inaccessible unless a
+        # deterministic failure classifier selects it. The hard cost ledger is
+        # still authoritative for every provider call.
+        stage_model_ladders["long_form_draft"] = [
+            ApprovedModel.GEMINI_3_5_FLASH,
+            ApprovedModel.GEMINI_3_1_PRO_PREVIEW,
+        ]
+
     selected: list[StageEstimate] = []
     for stage in estimate.stages:
         chosen = stage_models.get(stage.stage)
@@ -117,9 +276,39 @@ def evaluate_model_budget(
             raise ValueError(f"budget stage has no TeamPlan model owner: {stage.stage}")
         selected.append(_repriced_stage(stage, chosen.value))
 
+    escalation_recommended_reserve = 0.0
+    escalation_maximum_reserve = 0.0
+    for stage in selected:
+        ladder = stage_model_ladders.get(stage.stage)
+        if not ladder:
+            continue
+        elevated = _repriced_stage(stage, ladder[-1].value)
+        base_per_call = (
+            stage.recommended_cost_usd / stage.recommended_calls
+            if stage.recommended_calls
+            else 0.0
+        )
+        elevated_per_call = (
+            elevated.recommended_cost_usd / elevated.recommended_calls
+            if elevated.recommended_calls
+            else 0.0
+        )
+        escalation_recommended_reserve += max(0.0, elevated_per_call - base_per_call)
+        escalation_maximum_reserve += max(
+            0.0, elevated.maximum_cost_usd - stage.maximum_cost_usd
+        )
+
     minimum = round(sum(item.minimum_cost_usd for item in selected) * 1.10, 4)
-    recommended = round(sum(item.recommended_cost_usd for item in selected) * 1.20, 4)
-    maximum = round(sum(item.maximum_cost_usd for item in selected) * 1.25, 4)
+    recommended = round(
+        (sum(item.recommended_cost_usd for item in selected) + escalation_recommended_reserve)
+        * 1.20,
+        4,
+    )
+    maximum = round(
+        (sum(item.maximum_cost_usd for item in selected) + escalation_maximum_reserve)
+        * 1.25,
+        4,
+    )
     status = (
         ModelBudgetStatus.APPROVED
         if approved_usd >= minimum
@@ -148,6 +337,7 @@ def evaluate_model_budget(
         price_card_version=estimate.price_card_version,
         approved_usd=round(approved_usd, 6),
         stage_models=stage_models,
+        stage_model_ladders=stage_model_ladders,
     )
     if status == ModelBudgetStatus.NEEDS_BUDGET:
         raise BudgetExceeded(
@@ -205,9 +395,44 @@ class ModelPolicyGateway:
     def model_for(self, stage: str) -> str:
         return self.policy.model_for(stage)
 
+    def select_model_after_failure(
+        self,
+        stage: str,
+        *,
+        failure_text: str,
+        difficulty: str,
+        attempt: int = 1,
+    ) -> ModelSelectionDecision:
+        decision = self.policy.select_after_failure(
+            stage,
+            failure_text=failure_text,
+            difficulty=difficulty,
+            attempt=attempt,
+        )
+        store = getattr(self.gateway, "store", None)
+        run_dir = getattr(store, "run_dir", None)
+        if isinstance(run_dir, Path):
+            _atomic_model(
+                run_dir
+                / "model_selection_receipts"
+                / f"{decision.decision_id}.json",
+                decision,
+            )
+        return decision
+
     def generate_json(self, *, stage: str, model: str, **kwargs: Any) -> Any:
         self.policy.enforce(stage, model)
         return self.gateway.generate_json(stage=stage, model=model, **kwargs)
+
+    def generate_json_with_images(
+        self, *, stage: str, model: str, **kwargs: Any
+    ) -> Any:
+        """Keep multimodal observation behind the same stage/model allowlist."""
+        self.policy.enforce(stage, model)
+        operation = getattr(self.gateway, "generate_json_with_images", None)
+        if not callable(operation):
+            raise AttributeError("the approved gateway does not support multimodal observation")
+        return operation(stage=stage, model=model, **kwargs)
 
     def generate_text(self, *, stage: str, model: str, **kwargs: Any) -> str:
         self.policy.enforce(stage, model)

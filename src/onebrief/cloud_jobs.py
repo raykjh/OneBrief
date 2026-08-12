@@ -28,15 +28,8 @@ REUSABLE_WORK_ARTIFACTS = (
     *(f"draft_r{index}.json" for index in range(13)),
     "code_change_set.json",
     "code_change_set_retry_r1.json",
-    "code_change_set_r1.json",
-    "code_change_set_r2.json",
-    "code_change_set_r3.json",
-    "code_change_set_r4.json",
-    "code_change_set_r5.json",
-    "code_change_set_r6.json",
-    "development_verification_failure_r0.txt",
-    "development_verification_failure_r1.txt",
-    "development_verification_failure_r2.txt",
+    *(f"code_change_set_r{index}.json" for index in range(13)),
+    *(f"development_verification_failure_r{index}.txt" for index in range(13)),
     "development_verification_failure.txt",
     "development_best_candidate.json",
     "development_best_failure.txt",
@@ -300,33 +293,54 @@ class GCSJobStore:
                 "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
                 "selection": "most_progressed_narrative_candidate",
             })
-        # Older runs predate explicit best-candidate checkpoints.  Derive the
-        # most progressed paired candidate deterministically instead of blindly
-        # resuming from the final (possibly regressed) revision.
-        if "development_best_candidate.json" not in downloaded:
-            paired: list[tuple[tuple[int, int], str, str]] = []
-            for index in range(7):
-                candidate_name = f"code_change_set_r{index}.json"
-                failure_name = f"development_verification_failure_r{index}.txt"
-                if candidate_name in downloaded and failure_name in downloaded:
-                    message = downloaded[failure_name].decode("utf-8", errors="replace")
-                    paired.append((development_failure_quality(message), candidate_name, failure_name))
-            if paired:
-                _quality, candidate_name, failure_name = max(paired, key=lambda item: item[0])
-                candidate_target = destination_work / "code_change_set.json"
-                failure_target = destination_work / "development_verification_failure.txt"
-                candidate_target.write_bytes(downloaded[candidate_name])
-                failure_target.write_bytes(downloaded[failure_name])
-                for source_name, target in (
-                    (candidate_name, candidate_target), (failure_name, failure_target)
-                ):
-                    digest = hashlib.sha256(target.read_bytes()).hexdigest()
-                    copied.append({
-                        "source": source_name,
-                        "target": target.name,
-                        "sha256": digest,
-                        "selection": "derived_best_progress",
-                    })
+        # Re-rank every verifier-paired checkpoint even when an explicit best
+        # file exists.  The rank can be improved after a run (for example,
+        # distinguishing static Unity validation from real PlayMode), so an old
+        # explicit checkpoint is advisory rather than permanently authoritative.
+        paired: list[tuple[tuple[int, int], int, str, str]] = []
+        if (
+            "development_best_candidate.json" in downloaded
+            and "development_best_failure.txt" in downloaded
+        ):
+            message = downloaded["development_best_failure.txt"].decode(
+                "utf-8", errors="replace"
+            )
+            paired.append((
+                development_failure_quality(message),
+                -1,
+                "development_best_candidate.json",
+                "development_best_failure.txt",
+            ))
+        for index in range(13):
+            candidate_name = f"code_change_set_r{index}.json"
+            failure_name = f"development_verification_failure_r{index}.txt"
+            if candidate_name in downloaded and failure_name in downloaded:
+                message = downloaded[failure_name].decode("utf-8", errors="replace")
+                paired.append((
+                    development_failure_quality(message),
+                    index,
+                    candidate_name,
+                    failure_name,
+                ))
+        if paired:
+            _quality, _round, candidate_name, failure_name = max(
+                paired, key=lambda item: (item[0], item[1])
+            )
+            for target_name, source_name in (
+                ("development_best_candidate.json", candidate_name),
+                ("development_best_failure.txt", failure_name),
+                ("code_change_set.json", candidate_name),
+                ("development_verification_failure.txt", failure_name),
+            ):
+                target = destination_work / target_name
+                target.write_bytes(downloaded[source_name])
+                digest = hashlib.sha256(target.read_bytes()).hexdigest()
+                copied.append({
+                    "source": source_name,
+                    "target": target.name,
+                    "sha256": digest,
+                    "selection": "derived_best_progress",
+                })
         if copied:
             (destination_work / "reuse_manifest.json").write_text(
                 json.dumps({

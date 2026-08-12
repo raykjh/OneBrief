@@ -6,10 +6,16 @@ from google.genai import types
 
 from onebrief.development_toolpack import CodeChangeSet, DevelopmentCommandResult, DevelopmentRun
 from onebrief.generic_development_toolpack import (
+    AnchoredRangeRepairProjectCodeChangeSet,
     CompactProposedProjectCodeChangeSet, ProjectCodeChangeSet, ProposedProjectCodeChangeSet,
 )
 from onebrief.budget_guard import BudgetExceeded, BudgetStore, RunStatus
-from onebrief.execution_pipeline import ExecutionPipeline
+from onebrief.execution_pipeline import (
+    ExecutionPipeline,
+    development_repair_difficulty,
+    visual_repair_production_candidate,
+    visual_repair_production_target_allowed,
+)
 from onebrief.execution_agents import DeveloperAgent
 from onebrief.execution_limits import DEVELOPER_OUTPUT_CAP
 from onebrief.guarded_gemini import BudgetedGeminiClient
@@ -67,6 +73,114 @@ class FakeBudgetedGateway(BudgetedGeminiClient):
         assert isinstance(value, schema)
         return value
 
+
+@pytest.mark.parametrize("path", [
+    "Assets/JULPAE/Tests/PlayMode/Flow.cs",
+    "independent_observations/unity_ui_observation.json",
+    "evidence/screenshots/LobbyMobile.png",
+    "web/src/page.test.tsx",
+])
+def test_visual_product_repair_cannot_target_tests_or_evidence(path: str) -> None:
+    assert visual_repair_production_target_allowed(path) is False
+
+
+@pytest.mark.parametrize("path", [
+    "Assets/JULPAE/Scripts/Localization/JulpaeLanguageDropdown.cs",
+    "Assets/JULPAE/Scenes/Main.unity",
+    "web/src/app/page.tsx",
+])
+def test_visual_product_repair_allows_shipped_product_sources(path: str) -> None:
+    assert visual_repair_production_target_allowed(path) is True
+
+
+def test_visual_repair_maker_candidate_hides_proof_and_retains_product_code() -> None:
+    candidate = ProjectCodeChangeSet(
+        summary="Mixed prior candidate.",
+        changes=[
+            {
+                "path": "Assets/JULPAE/Tests/PlayMode/Flow.cs",
+                "base_sha256": None,
+                "content": "assert layout",
+                "reason": "Proof only.",
+            },
+            {
+                "path": "Assets/JULPAE/Scripts/LobbyLayout.cs",
+                "base_sha256": None,
+                "content": "repair layout",
+                "reason": "Shipped product.",
+            },
+        ],
+    )
+
+    visible = visual_repair_production_candidate(candidate)
+
+    assert [change.path for change in visible.changes] == [
+        "Assets/JULPAE/Scripts/LobbyLayout.cs"
+    ]
+    assert len(candidate.changes) == 2
+
+
+def test_existing_unity_multi_surface_repair_is_classified_complex() -> None:
+    requirements = _requirements().model_copy(update={
+        "acceptance_criteria": [
+            "Login works.", "Lobby works.", "Settings works.", "Mobile works."
+        ],
+        "completion_contract": None,
+    })
+    # Re-validate so the derived completion contract reflects the four criteria.
+    requirements = RequirementsAnalysis.model_validate(
+        requirements.model_dump(mode="json")
+    )
+    intake = IntakeRequest(
+        goal=(
+            "Preserve the server protocol while modernizing login, lobby, settings, mobile and desktop UI."
+        ),
+        output_target=OutputTarget.EXISTING_PROJECT,
+    )
+
+    assert development_repair_difficulty(
+        intake,
+        requirements,
+        ["Assets/JULPAE/Scripts/Login.cs", "Assets/JULPAE/Scripts/Lobby.cs"],
+    ) == "complex"
+
+
+def test_resumed_development_resolves_revalidation_evidence_under_development(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "output"
+    evidence_dir = output_dir / "development" / "unity_visual_evidence"
+    evidence_dir.mkdir(parents=True)
+    (evidence_dir / "runtime.json").write_text(
+        '{"scenario":"LoginDesktop"}', encoding="utf-8"
+    )
+    run = DevelopmentRun(
+        status="verified",
+        repository_name="julpae",
+        base_head_sha="a" * 40,
+        summary="Verified",
+        changed_paths=[],
+        commands=[],
+        patch_path="development_revalidation_v8/changes.patch",
+        evidence_paths=["development_revalidation_v8/unity_visual_evidence"],
+        safety_boundary=["isolated"],
+    )
+    (output_dir / "development" / "development_run.json").write_text(
+        run.model_dump_json(), encoding="utf-8"
+    )
+    (output_dir / "code_change_set.json").write_text(
+        '{"summary":"candidate","changes":[]}', encoding="utf-8"
+    )
+
+    evidence = ExecutionPipeline(tmp_path / "run", gateway=object())._development_evidence(
+        output_dir
+    )
+
+    assert evidence is not None
+    assert evidence["runtime_evidence"] == [{
+        "path": "development/unity_visual_evidence/runtime.json",
+        "content": '{"scenario":"LoginDesktop"}',
+    }]
 
 def _requirements() -> RequirementsAnalysis:
     return RequirementsAnalysis(
@@ -502,6 +616,7 @@ def test_adk_software_failure_keeps_most_progressed_candidate(
                 initial.model_dump(mode="json"),
                 improved.model_dump(mode="json"),
                 regressed.model_dump(mode="json"),
+                regressed.model_dump(mode="json"),
             ]
 
         def generate_adk_response(self, **_kwargs: object) -> types.GenerateContentResponse:
@@ -517,6 +632,7 @@ def test_adk_software_failure_keeps_most_progressed_candidate(
     failures = iter([
         "web observation failed: no control | text same | lang same | one state",
         "web observation failed: cjk leaked | labels identical",
+        "web observation failed: no control | text same | lang same | one state",
         "web observation failed: no control | text same | lang same | one state",
     ])
 
@@ -1011,6 +1127,109 @@ def test_developer_supplies_exact_small_anchors_for_language_repair() -> None:
     assert direct == payload["exact_edit_anchors"]
 
 
+def test_synthetic_unity_feedback_targets_generated_fallback_block() -> None:
+    previous = ProjectCodeChangeSet(
+        summary="Candidate with an unsafe test fallback.",
+        changes=[{
+            "path": "Assets/Tests/PlayMode/Flow.cs", "base_sha256": None,
+            "content": (
+                "if (dropdown == null) {\n"
+                "  GameObject fallbackGo = new GameObject(\"FallbackLanguageDropdown\");\n"
+                "  fallbackGo.AddComponent<TMP_Dropdown>();\n"
+                "}\n"
+            ),
+            "reason": "Prior candidate.",
+        }],
+    )
+
+    anchors = DeveloperAgent.exact_edit_anchors(
+        previous,
+        "Unity visual test contract: the test must not construct synthetic UI",
+    )
+
+    assert anchors
+    assert "FallbackLanguageDropdown" in anchors[0]["anchors"][0]["text"]
+    report = ExecutionPipeline._development_failure_report(
+        "development verification failed: Unity visual test contract: "
+        "the test must not construct synthetic UI"
+    )
+    assert "Delete the generated fallback" in report.revision_instructions[0]
+
+
+def test_unity_evidence_mutation_feedback_demands_removal_not_replacement() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "development verification failed: "
+        "Unity visual test contract: a runtime evidence test must observe product text, "
+        "not rewrite visible labels or dropdown option text to hide a localization or glyph defect | "
+        "Unity visual test contract: a runtime evidence test must observe the shipped responsive layout, "
+        "not configure CanvasScaler properties during verification; repair the production UI instead"
+    )
+
+    instructions = " ".join(report.revision_instructions)
+    assert "Remove the verification-code block" in instructions
+    assert "assigns or replaces TMP_Dropdown option text" in instructions
+    assert "assigns CanvasScaler" in instructions
+    assert "Do not substitute a different test-side label repair" in instructions
+
+
+def test_unity_missing_surface_feedback_requires_separate_executed_captures() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "Unity visual evidence requires a distinct rendered scenario for every requested real UI surface: settings"
+    )
+
+    instruction = " ".join(report.revision_instructions)
+    assert "For Login, capture before starting" in instruction
+    assert "for Lobby, capture after the real login/start transition" in instruction
+    assert "for Settings, capture only after invoking the real Settings button" in instruction
+    assert "LoginToLobbyToSettings is not distinct evidence" in instruction
+
+
+def test_duplicate_unity_screenshot_feedback_requires_capture_at_each_real_state() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "Unity visual evidence reused an identical screenshot for LoginDesktop and LobbyDesktop; "
+        "the capture does not prove the visible UI changed between scenarios"
+    )
+
+    instruction = " ".join(report.revision_instructions)
+    assert "writes a unique PNG immediately" in instruction
+    assert "Capture Login before" in instruction
+    assert "Lobby after" in instruction
+    assert "Settings after" in instruction
+    assert "do not relabel one final-state PNG" in instruction
+
+
+def test_project_developer_promotes_dedicated_anchored_range_repair() -> None:
+    previous = ProjectCodeChangeSet(
+        summary="Existing generated verification source.",
+        changes=[{
+            "path": "Assets/JULPAE/Tests/PlayMode/Flow.cs",
+            "base_sha256": None,
+            "content": "before\nBEGIN CAPTURE\nold rows\nEND CAPTURE\nafter\n",
+            "reason": "Prior candidate.",
+        }],
+    )
+    proposal = AnchoredRangeRepairProjectCodeChangeSet(
+        summary="Capture unique real states.",
+        changes=[{
+            "path": "Assets/JULPAE/Tests/PlayMode/Flow.cs",
+            "base_sha256": None,
+            "start_anchor": "BEGIN CAPTURE",
+            "end_anchor": "END CAPTURE",
+            "replace": "BEGIN CAPTURE\nlogin.png\nlobby.png\nsettings.png\nEND CAPTURE",
+            "reason": "Replace one coherent capture region.",
+        }],
+    )
+    developer = DeveloperAgent(
+        object(), change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/", path_approver=lambda path: path,
+    )
+
+    result = developer.promote_candidate(proposal, [], previous, [])
+
+    assert "login.png" in result.changes[0].content
+    assert "old rows" not in result.changes[0].content
+
+
 def test_project_developer_compact_retry_keeps_existing_files_as_exact_edits() -> None:
     previous = ProjectCodeChangeSet(
         summary="Existing candidate.",
@@ -1178,6 +1397,19 @@ def test_unity_png_failure_explains_direct_test_evidence_contract() -> None:
     assert "OneBrief.Visual" in instruction
     assert "RenderTexture" in instruction
     assert "EncodeToPNG" in instruction
+
+
+def test_related_unity_contract_failures_remain_one_coherent_repair_scope() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "development verification failed: "
+        "Unity visual test contract: must capture PNG runtime evidence | "
+        "Unity visual test contract: must find visible UI | "
+        "Unity visual test contract: add a test asmdef"
+    )
+
+    assert len(report.criterion_checks) == 1
+    assert len(report.revision_instructions) >= 2
+    assert "product-and-evidence" in report.revision_instructions[-1]
 
 
 def test_unity_discovery_failure_targets_test_namespace_not_asmdef() -> None:
@@ -1776,6 +2008,86 @@ def test_development_change_comparison_ignores_only_narrative_metadata(tmp_path:
 
     assert pipeline._same_development_changes(previous, repeated) is True
     assert pipeline._same_development_changes(previous, changed) is False
+
+
+def test_unity_playmode_failure_report_removes_shutdown_noise(tmp_path: Path) -> None:
+    feedback = (
+        "development verification failed: unity_playmode_visual_tests (exit_code=2) "
+        + "package shutdown noise " * 500
+        + "UNITY TEST FAILURES OneBrief.Visual.Flow: LanguageDropdown Expected: not null But was: null"
+    )
+
+    report = ExecutionPipeline._development_failure_report(feedback)
+
+    assert report.verdict == Verdict.REVISE
+    assert "LanguageDropdown" in report.blocking_issues[0]
+    assert "package shutdown noise" not in report.blocking_issues[0]
+    assert len(report.blocking_issues[0]) < 4_200
+    assert "real requested screen transition" in report.revision_instructions[0]
+
+
+def test_unity_compile_failure_report_keeps_only_compiler_signals() -> None:
+    feedback = (
+        "development verification failed: unity_compile (exit_code=1) "
+        + "warning CS0414 noisy warning " * 200
+        + "VERIFICATION SIGNALS Assets/Test.cs(109,1): error CS1529: using clause misplaced "
+        + "BEE COMPILER DIAGNOSTICS enormous backend json"
+    )
+
+    report = ExecutionPipeline._development_failure_report(feedback)
+
+    assert "error CS1529" in report.blocking_issues[0]
+    assert "noisy warning" not in report.blocking_issues[0]
+    assert "backend json" not in report.blocking_issues[0]
+
+
+def test_two_identical_development_repairs_stop_without_more_verification_spend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = CodeChangeSet(summary="same", changes=[{
+        "path": "web/src/status.ts", "base_sha256": None,
+        "content": "export const status = 'same';\n", "reason": "same",
+    }])
+
+    class RepeatingGateway(BudgetedGeminiClient):
+        def __init__(self) -> None:
+            self.outputs = [candidate.model_dump(mode="json") for _ in range(3)]
+
+        def generate_adk_response(self, **_kwargs: object) -> types.GenerateContentResponse:
+            payload = self.outputs.pop(0)
+            return types.GenerateContentResponse(candidates=[types.Candidate(
+                content=types.Content(role="model", parts=[types.Part(text=json.dumps(payload))]),
+                finish_reason=types.FinishReason.STOP,
+            )])
+
+    apply_count = 0
+
+    def fail_once(*_args: object, **_kwargs: object) -> DevelopmentRun:
+        nonlocal apply_count
+        apply_count += 1
+        raise RuntimeError("development verification failed: node_tests assertion failed")
+
+    monkeypatch.setattr(ExecutionPipeline, "_apply_development_change_set", fail_once)
+    intake = IntakeRequest(
+        goal="Repair the executable.", output_target=OutputTarget.EXISTING_PROJECT,
+        toolpack_ids=[ToolPackId.EXCHANGE_DEVELOPMENT],
+    )
+    output_dir = tmp_path / "identical-output"
+    output_dir.mkdir()
+
+    with pytest.raises(RuntimeError, match="stalled after two identical candidates"):
+        ExecutionPipeline(tmp_path / "run", gateway=RepeatingGateway())._run_adk_development_convergence(
+            intake=intake, requirements=_requirements(), sources=[_source()],
+            source_payload=[{
+                "name": "exchange-source/web/src/status.ts", "priority": "mandatory",
+                "requirement_keys": ["repair"], "content": "export const status = 'old';",
+                "sha256": "b" * 64,
+            }],
+            contract={"goal": intake.goal, "acceptance_criteria": ["Executable passes tests."]},
+            analysis=_analysis(), output_dir=output_dir,
+        )
+
+    assert apply_count == 1
 
 
 def test_retry_summary_can_remove_named_new_duplicate_without_dropping_scope(tmp_path: Path) -> None:

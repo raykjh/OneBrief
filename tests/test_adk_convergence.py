@@ -162,6 +162,49 @@ def test_adk_llm_retries_max_token_response_as_compact_increment() -> None:
     assert "under 8000 characters" in retry_text
 
 
+def test_adk_llm_retries_invalid_structured_json_even_when_model_reports_stop() -> None:
+    class Gateway:
+        def __init__(self):
+            self.calls = []
+
+        def generate_adk_response(self, *, stage, contents, **_kwargs):
+            self.calls.append((stage, contents))
+            text = '{"verdict":"PASS"' if len(self.calls) == 1 else '{"verdict":"PASS"}'
+            return types.GenerateContentResponse(
+                candidates=[types.Candidate(
+                    finish_reason=types.FinishReason.STOP,
+                    content=types.Content(role="model", parts=[types.Part(text=text)]),
+                )]
+            )
+
+    async def collect():
+        gateway = Gateway()
+        model = BudgetedAdkLlm(
+            model="gemini-3.5-flash",
+            gateway=gateway,
+            stage="independent_verification",
+        )
+        request = LlmRequest(
+            model="gemini-3.5-flash",
+            contents=[types.Content(role="user", parts=[types.Part(text="verify")])],
+            config=types.GenerateContentConfig(
+                max_output_tokens=20_000,
+                response_mime_type="application/json",
+            ),
+        )
+        responses = [item async for item in model.generate_content_async(request)]
+        return gateway, responses
+
+    gateway, responses = asyncio.run(collect())
+    assert len(responses) == 1
+    assert responses[0].content.parts[0].text == '{"verdict":"PASS"}'
+    assert [item[0] for item in gateway.calls] == [
+        "independent_verification",
+        "independent_verification_compact_retry",
+    ]
+    assert "truncated or invalid JSON" in gateway.calls[1][1][-1].parts[0].text
+
+
 def test_contextual_maker_receives_current_exact_edit_anchors() -> None:
     agent = build_text_convergence_agent(
         gateway=object(),

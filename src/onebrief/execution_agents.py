@@ -10,6 +10,7 @@ from typing import Any, Callable, Protocol, TypeVar
 from pydantic import BaseModel, ValidationError
 from onebrief.development_toolpack import CodeChangeSet, approved_edit_path
 from onebrief.generic_development_toolpack import (
+    AnchoredRangeRepairProjectCodeChangeSet,
     CompactProposedProjectCodeChangeSet,
     ExactRepairProjectCodeChangeSet,
     ProjectCodeChangeSet,
@@ -170,7 +171,11 @@ class DeveloperAgent:
         """Promote an untrusted proposal through the exact approved path boundary."""
         if self.change_set_schema is ProjectCodeChangeSet:
             compact_repair = isinstance(
-                raw, (CompactProposedProjectCodeChangeSet, ExactRepairProjectCodeChangeSet)
+                raw, (
+                    CompactProposedProjectCodeChangeSet,
+                    ExactRepairProjectCodeChangeSet,
+                    AnchoredRangeRepairProjectCodeChangeSet,
+                )
             )
             proposed = ProposedProjectCodeChangeSet.model_validate(
                 raw.model_dump(mode="json") if isinstance(raw, BaseModel) else raw
@@ -315,6 +320,12 @@ class DeveloperAgent:
             term.casefold()
             for term in re.findall(r"[A-Za-z가-힣]{4,}", verification_feedback)
         }
+        if re.search(r"synthetic\s+ui|construct\s+synthetic", verification_feedback, re.IGNORECASE):
+            # Static validators describe the policy violation, while generated
+            # code commonly calls the offending block "fallback" and uses the
+            # concrete Unity construction APIs. Bridge those vocabularies so a
+            # bounded repair receives the exact unsafe source window.
+            feedback_terms.update({"fallback", "gameobject", "addcomponent"})
         language_failure = bool(
             re.search(
                 r"cjk|language|locale|translation|한글|한국어|영어|번역|언어",
@@ -410,7 +421,11 @@ class DeveloperAgent:
             "Never touch secrets, dependencies, generated data, Git metadata, deployment, accounts, or trading. "
             "Files marked immutable_acceptance_contract are binding regression contracts: do not edit them and "
             "preserve every behavior, marker, control, and data contract they assert. Prefer additive, localized "
-            "changes over redesigning or replacing a mature implementation. If verification_feedback is present, "
+            "changes over redesigning or replacing a mature implementation. A UI implementation request must change "
+            "or add actual production UI source; a test-only change set is incomplete even if the tests compile. "
+            "A product test may operate controls and capture evidence, but must not rewrite visible product text, "
+            "fonts, CanvasScaler, anchors, colors, or layout during verification to conceal a product defect. "
+            "If verification_feedback is present, "
             "correct every reported failure while retaining all previously passing behavior. Do not return a report "
             "When exact_edit_anchors contains a matching verified source window, prefer its anchor_id and return "
             "the complete replacement for that displayed window; never invent or retype the anchor text. "
@@ -436,10 +451,13 @@ class DeveloperAgent:
             "The resulting PNG must visibly contain the measured UI, and every locale screenshot must have different image "
             "bytes; a blank, background-only, or duplicated capture is invalid. Never write the JSON manifest before every "
             "referenced PNG has been durably created. "
-            "onebrief-unity-visual-evidence-v1. Each scenario must contain scenario_id, expected_locale, observed_locale, "
-            "changed_visible_text_count, missing_glyph_count, and an evidence-relative screenshot_path. Derive "
-            "observed_locale, changed text count, and missing glyph count from the running UI; do not hard-code a passing "
-            "claim. For every locale scenario, first switch the real UI to a deliberately different supported reference "
+            "onebrief-unity-visual-evidence-v1. Every scenario contains scenario_id and an evidence-relative "
+            "screenshot_path. A localization scenario additionally contains expected_locale, observed_locale, "
+            "changed_visible_text_count, and missing_glyph_count. A general UI scenario instead contains observed_state, "
+            "interaction, assertion_count, viewport_width, and viewport_height. The state and interaction must name the "
+            "real requested screen or transition (for example login, lobby, or settings), and responsive work must capture "
+            "both a mobile/portrait and desktop/landscape viewport. Derive all measurements from the running UI; do not "
+            "hard-code a passing claim. For every locale scenario, first switch the real UI to a deliberately different supported reference "
             "locale and capture that scenario's own baseline, then operate the dropdown to select the target locale and "
             "measure the target UI against that baseline. Never reuse one startup snapshot for all locales: the startup "
             "locale may equal the first target and falsely report zero visible changes. The ToolPack independently rejects "

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from onebrief.agent_registry import (
     APPROVED_MODEL_CATALOG,
@@ -24,7 +24,7 @@ from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis
 from onebrief.workspaces import WorkspaceManager
 
 
-TEAM_PLANNING_OUTPUT_CAP = 3000
+TEAM_PLANNING_OUTPUT_CAP = 4500
 
 DECISION_CRITICAL_AGENT_TYPES = frozenset({
     AgentType.PROJECT_OWNER,
@@ -453,14 +453,7 @@ class ProjectOwnerAgent:
             },
             ensure_ascii=False,
         )
-        plan = self.gateway.generate_json(
-            stage="team_planning",
-            model="gemini-3.1-pro-preview",
-            contents=contents,
-            schema=TeamPlanDraft,
-            max_output_tokens=TEAM_PLANNING_OUTPUT_CAP,
-            temperature=0.1,
-            system_instruction=(
+        instruction = (
                 "You are the OneBrief Project Owner. Select the smallest sufficient team from the "
                 "nine supplied agent cards. Never select all types by default. Exactly one project_owner "
                 "must supervise the project. The current executable workflow always needs an analyst for "
@@ -484,11 +477,42 @@ class ProjectOwnerAgent:
                 "use gemini-3.5-flash for the investigator that owns public_research and complex "
                 "production work; use gemini-3.5-flash-lite only for bounded simpler work. Model "
                 "selection never changes role "
-                "authority. Use short safe lowercase IDs with hyphens and map every executable stage to "
+                "authority. Keep every explanation concise so the complete JSON stays inside the output cap. "
+                "Use short safe lowercase IDs with hyphens and map every executable stage to "
                 "one selected instance. List every unselected type in "
                 "omitted_agent_types. Do not grant permissions; code derives authority from the registry."
-            ),
         )
+        try:
+            plan = self.gateway.generate_json(
+                stage="team_planning",
+                model="gemini-3.1-pro-preview",
+                contents=contents,
+                schema=TeamPlanDraft,
+                max_output_tokens=TEAM_PLANNING_OUTPUT_CAP,
+                temperature=0.1,
+                system_instruction=instruction,
+            )
+        except ValidationError as exc:
+            message = str(exc).casefold()
+            if not any(marker in message for marker in (
+                "eof while parsing", "json_invalid", "unterminated string"
+            )):
+                raise
+            # A truncated owner plan is transport/schema failure, not a reason
+            # to abort the approved project. Retry once with the same model,
+            # authority and goal; the budget estimate reserves this maximum.
+            plan = self.gateway.generate_json(
+                stage="team_planning",
+                model="gemini-3.1-pro-preview",
+                contents=contents,
+                schema=TeamPlanDraft,
+                max_output_tokens=TEAM_PLANNING_OUTPUT_CAP,
+                temperature=0.0,
+                system_instruction=(
+                    instruction
+                    + " Previous structured output was truncated. Return the same minimal plan with shorter text."
+                ),
+            )
         if not isinstance(plan, (TeamPlanDraft, TeamPlan)):
             raise TypeError("project owner returned an invalid TeamPlan type")
         plan = normalize_team_plan(

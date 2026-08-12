@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from onebrief.project_catalog import RegisteredProject
+from onebrief.development_progress import development_failure_quality
 from onebrief.schemas import IntakeRequest, ToolPackId
 
 
@@ -56,6 +57,7 @@ class ReuseCandidate:
     status: str
     reusable_artifacts: tuple[str, ...]
     project_head_sha: str | None
+    development_quality: tuple[int, int] = (0, 0)
 
     def public_summary(self) -> dict[str, Any]:
         return {
@@ -87,7 +89,39 @@ def _inspection_head(job_dir: Path) -> str | None:
     return None
 
 
-def _artifact_names(job_dir: Path, *, code_compatible: bool) -> tuple[str, ...]:
+def _failed_development_pair(job_dir: Path) -> tuple[str, str, tuple[int, int]] | None:
+    work = job_dir / "work"
+    pairs: list[tuple[tuple[int, int], int, str, str]] = []
+    if (
+        (work / "development_best_candidate.json").is_file()
+        and (work / "development_best_failure.txt").is_file()
+    ):
+        message = (work / "development_best_failure.txt").read_text(
+            encoding="utf-8", errors="replace"
+        )
+        pairs.append((
+            development_failure_quality(message),
+            -1,
+            "development_best_candidate.json",
+            "development_best_failure.txt",
+        ))
+    for index in range(13):
+        candidate = f"code_change_set_r{index}.json"
+        failure = f"development_verification_failure_r{index}.txt"
+        if (work / candidate).is_file() and (work / failure).is_file():
+            message = (work / failure).read_text(encoding="utf-8", errors="replace")
+            pairs.append((development_failure_quality(message), index, candidate, failure))
+    if not pairs:
+        return None
+    quality, _round, candidate, failure = max(
+        pairs, key=lambda item: (item[0], item[1])
+    )
+    return candidate, failure, quality
+
+
+def _artifact_names(
+    job_dir: Path, *, code_compatible: bool
+) -> tuple[tuple[str, ...], tuple[int, int]]:
     work = job_dir / "work"
     names: list[str] = []
     for name in ("project_architecture.json", "public_research.json", "public_research.md", "analysis.json"):
@@ -106,7 +140,13 @@ def _artifact_names(job_dir: Path, *, code_compatible: bool) -> tuple[str, ...]:
             names.append("code_change_set_retry_r1.json")
         elif (work / "code_change_set.json").is_file():
             names.append("code_change_set.json")
-    return tuple(names)
+    quality = (0, 0)
+    if code_compatible and not verified_development:
+        failed_pair = _failed_development_pair(job_dir)
+        if failed_pair is not None:
+            candidate, failure, quality = failed_pair
+            names.extend([candidate, failure])
+    return tuple(names), quality
 
 
 def find_reuse_candidate(
@@ -117,7 +157,9 @@ def find_reuse_candidate(
     if not jobs_root.is_dir():
         return None
     wanted = request_fingerprint(intake)
-    candidates: list[tuple[int, int, float, ReuseCandidate]] = []
+    candidates: list[
+        tuple[int, int, int, int, float, ReuseCandidate]
+    ] = []
     for job_dir in jobs_root.iterdir():
         if not job_dir.is_dir() or job_dir.name.startswith("."):
             continue
@@ -143,7 +185,7 @@ def find_reuse_candidate(
             and project.head_sha
             and project.head_sha == inspected_head
         )
-        names = _artifact_names(job_dir, code_compatible=code_compatible)
+        names, quality = _artifact_names(job_dir, code_compatible=code_compatible)
         if not names:
             continue
         candidate = ReuseCandidate(
@@ -152,6 +194,7 @@ def find_reuse_candidate(
             status=status,
             reusable_artifacts=names,
             project_head_sha=inspected_head,
+            development_quality=quality,
         )
         has_code = any(name.startswith("code_change_set") for name in names)
         legacy_delta_risk = bool(
@@ -159,8 +202,11 @@ def find_reuse_candidate(
             and (job_dir / "work" / "code_change_set_retry_r1.json").is_file()
             and not (job_dir / "work" / "code_change_set_retry_delta_r1.json").is_file()
         )
-        candidates.append((int(has_code), int(not legacy_delta_risk), job_dir.stat().st_mtime, candidate))
-    return max(candidates, key=lambda item: item[:3])[3] if candidates else None
+        candidates.append((
+            int(has_code), quality[0], quality[1], int(not legacy_delta_risk),
+            job_dir.stat().st_mtime, candidate,
+        ))
+    return max(candidates, key=lambda item: item[:5])[5] if candidates else None
 
 
 def seed_reusable_artifacts(candidate: ReuseCandidate, new_job_dir: Path) -> Path:
@@ -169,7 +215,16 @@ def seed_reusable_artifacts(candidate: ReuseCandidate, new_job_dir: Path) -> Pat
     copied: list[dict[str, str]] = []
     for name in candidate.reusable_artifacts:
         source = source_work / name
-        target_name = "code_change_set.json" if name.startswith("code_change_set") else name
+        target_name = (
+            "code_change_set.json"
+            if name.startswith("code_change_set") or name == "development_best_candidate.json"
+            else (
+                "development_verification_failure.txt"
+                if name.startswith("development_verification_failure")
+                or name == "development_best_failure.txt"
+                else name
+            )
+        )
         target = target_work / target_name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)

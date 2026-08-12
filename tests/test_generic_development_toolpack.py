@@ -45,6 +45,34 @@ def test_proposed_exact_edit_accepts_bounded_component_replacement() -> None:
     assert len(proposal.changes[0].replace or "") == 12_000
 
 
+def test_unity_scene_catalog_exposes_real_scene_and_object_anchors_without_edit_authority() -> None:
+    pack = object.__new__(ApprovedProjectDevelopmentToolPack)
+    blobs = {
+        "Assets/LoginScene_All.unity": (
+            b"--- !u!1 &1\nGameObject:\n  m_Name: LoginCanvas\n"
+            b"--- !u!1 &2\nGameObject:\n  m_Name: LoginButton\n"
+        ),
+        "Assets/LobbyScene_All.unity": (
+            b"--- !u!1 &3\nGameObject:\n  m_Name: LobbyCanvas\n"
+        ),
+    }
+    pack._blob = lambda _head, relative: blobs[relative]
+
+    data = pack._unity_scene_catalog(
+        "a" * 40,
+        list(blobs),
+        ("Assets/",),
+        "Modernize login and lobby UI",
+    )
+
+    assert data is not None
+    payload = json.loads(data)
+    assert payload["authority"] == "read_only_committed_scene_metadata"
+    scenes = {item["scene_name"]: item for item in payload["scenes"]}
+    assert "LoginScene_All" in scenes
+    assert "LoginButton" in scenes["LoginScene_All"]["object_names"]
+
+
 def test_proposed_exact_edit_supports_mature_single_file_components() -> None:
     proposal = ProposedProjectCodeChangeSet.model_validate({
         "summary": "Update a mature component without rewriting the repository.",
@@ -75,6 +103,27 @@ def test_compact_proposal_prefers_catalog_edit_over_redundant_content() -> None:
 
     change = proposal.changes[0]
     assert change.content is None
+    assert change.anchor_id == "A123456789abc"
+    assert change.replace == "bounded replacement"
+
+
+def test_exact_repair_preserves_verified_catalog_anchor_id() -> None:
+    proposal = ExactRepairProjectCodeChangeSet.model_validate({
+        "summary": "Repair one verified source window.",
+        "changes": [{
+            "path": "Assets/JULPAE/Tests/PlayMode/OneBriefVisualTests.cs",
+            "base_sha256": "a" * 64,
+            "content": "redundant whole-file output",
+            "search": "invented text",
+            "anchor_id": "A123456789abc",
+            "replace": "bounded replacement",
+            "reason": "Repair the failed PlayMode assertion.",
+        }],
+    })
+
+    change = proposal.changes[0]
+    assert change.content is None
+    assert change.search is None
     assert change.anchor_id == "A123456789abc"
     assert change.replace == "bounded replacement"
 
@@ -487,6 +536,79 @@ def test_generic_inspection_retargets_context_for_a_new_multiarea_ui_goal(tmp_pa
     assert first_paths.index("src/localization-manager.js") > 3
 
 
+def test_generic_inspection_reserves_context_for_each_requested_surface(tmp_path: Path) -> None:
+    root, registry = _approved_node_project(tmp_path)
+    additions = {
+        "src/Login/LoginSceneController.cs": "public class LoginSceneController {}\n",
+        "src/Lobby/LobbyResponsiveLayout.cs": "public class LobbyResponsiveLayout {}\n",
+        "src/Lobby/LobbySettingsPanel.cs": "public class LobbySettingsPanel {}\n",
+        "src/Shared/AudioVolumeController.cs": "public class AudioVolumeController {}\n",
+        "src/Common/SceneRouter.cs": "public class SceneRouter {}\n",
+        # A very large visual file used to crowd all other surfaces out of the
+        # bounded model context before concept slots were reserved.
+        "src/Visual/ScreenVisualController.cs": "// visual screen layout\n" + "x" * 55_000,
+    }
+    for relative, content in additions.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "add broad ui fixture"], cwd=root, check=True)
+
+    ExternalProjectImporter(registry).import_bytes((root / MANIFEST_NAME).read_bytes())
+    lifecycle = ProjectToolPackLifecycle("generic-node", registry)
+    state = lifecycle.generate_and_qualify()
+    lifecycle.approve(state.qualification.toolpack_sha256)
+    inspection, _sources = ApprovedProjectDevelopmentToolPack(
+        "generic-node", registry
+    ).inspect(
+        tmp_path / "broad-ui-focused",
+        "로그인 로비 설정 화면 UI와 음량 및 화면 이동을 현대화한다",
+    )
+
+    paths = {item.path for item in inspection.context_files}
+    assert "src/Login/LoginSceneController.cs" in paths
+    assert "src/Lobby/LobbyResponsiveLayout.cs" in paths
+    assert "src/Lobby/LobbySettingsPanel.cs" in paths
+    assert "src/Shared/AudioVolumeController.cs" in paths
+    assert "src/Common/SceneRouter.cs" in paths
+
+
+def test_generated_playmode_test_receives_fixed_discovery_namespace() -> None:
+    source = (
+        "using NUnit.Framework;\n"
+        "using UnityEngine.TestTools;\n\n"
+        "public class RuntimeFlowTests { [UnityTest] public void Runs() {} }\n"
+    )
+
+    normalized = ApprovedProjectDevelopmentToolPack._normalize_safe_generated_text(
+        "Assets/JULPAE/Tests/PlayMode/RuntimeFlowTests.cs", source
+    )
+
+    assert "namespace OneBrief.Visual" in normalized
+    assert normalized.rstrip().endswith("}")
+
+
+def test_unity_ui_preflight_rejects_test_only_modernization_claim(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-product-contract"
+    clone.mkdir()
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True,
+        adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile,
+        clone,
+        "Modernize login UI",
+        ["Assets/JULPAE/Tests/PlayMode/OneBriefVisualTests.cs"],
+    )
+
+    assert any("only verification code" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_requires_discoverable_test_and_evidence(tmp_path: Path) -> None:
     _root, registry = _approved_node_project(tmp_path)
     pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
@@ -522,7 +644,10 @@ def test_unity_visual_preflight_requires_discoverable_test_and_evidence(tmp_path
         "UnityEngine.GameObject.Find(\"LanguageDropdown\"); "
         "var glyphOk = font.HasCharacter('A'); "
         "var path = \"onebrief-evidence/runtime-evidence.json\"; "
-        "var png = \"onebrief-evidence/ja.png\"; } }\n",
+        "var png = \"onebrief-evidence/ja.png\"; "
+        "var schema = \"onebrief-unity-visual-evidence-v1\"; "
+        "var scenarios = \"scenarios scenario_id observed_state interaction "
+        "assertion_count viewport_width viewport_height screenshot_path\"; } }\n",
         encoding="utf-8",
     )
 
@@ -576,6 +701,15 @@ def test_unity_visual_preflight_allows_temporary_capture_camera_but_rejects_synt
     )
     canvas_issues = pack._unity_visual_contract_issues(profile, clone, "Unity localization UI")
     assert any("synthetic UI" in issue for issue in canvas_issues)
+
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void SwitchLanguage() { "
+        + common
+        + 'new UnityEngine.GameObject("FakeDropdown").AddComponent<TMPro.TMP_Dropdown>(); } }\n',
+        encoding="utf-8",
+    )
+    dropdown_issues = pack._unity_visual_contract_issues(profile, clone, "Unity localization UI")
+    assert any("synthetic UI" in issue for issue in dropdown_issues)
 
 
 def test_unity_visual_preflight_rejects_direct_assembly_csharp_type_references(tmp_path: Path) -> None:
@@ -643,6 +777,34 @@ def test_unity_visual_preflight_allows_production_type_name_used_only_for_reflec
     assert not any("JulpaeLocalization (Assembly-CSharp)" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_accepts_current_unity_generic_dropdown_discovery(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-current-discovery"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Check() { "
+        "UnityEngine.SceneManagement.SceneManager.LoadScene(\"Lobby\"); "
+        "var dropdown = UnityEngine.Object.FindFirstObjectByType<TMPro.TMP_Dropdown>(); "
+        "var glyph = TMPro.TMP_Settings.defaultFontAsset.HasCharacter('A'); "
+        "var json = \"onebrief-evidence/runtime-evidence.json\"; "
+        "var png = \"onebrief-evidence/lobby.png\"; } }\n",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(profile, clone, "Unity language UI")
+
+    assert not any("LanguageDropdown control" in issue for issue in issues)
+    assert not any("inspect and interact with visible UI" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_rejects_async_batchmode_screenshot(tmp_path: Path) -> None:
     _root, registry = _approved_node_project(tmp_path)
     pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
@@ -668,6 +830,63 @@ def test_unity_visual_preflight_rejects_async_batchmode_screenshot(tmp_path: Pat
     )
 
     assert any("must not rely on asynchronous ScreenCapture" in issue for issue in issues)
+
+
+def test_unity_visual_preflight_rejects_overlay_ui_rendered_without_canvas_routing(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    tests = tmp_path / "unity-overlay-clone" / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'UnityEngine.SceneManagement.SceneManager.LoadScene("Lobby"); '
+        "var rt = new UnityEngine.RenderTexture(1920, 1080, 24); "
+        "var camera = UnityEngine.Camera.main; camera.targetTexture = rt; camera.Render(); "
+        'var evidence = "runtime-evidence.json"; var screenshot = "lobby.png"; } }',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(profile, tests.parents[2], "Unity lobby UI")
+
+    assert any("does not capture ScreenSpaceOverlay UI" in issue for issue in issues)
+
+
+def test_unity_visual_preflight_requires_portrait_and_landscape_evidence(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    tests = tmp_path / "unity-responsive-clone" / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'UnityEngine.SceneManagement.SceneManager.LoadScene("Lobby"); '
+        'var viewport_width = 1920; var viewport_height = 1080; '
+        'var evidence = "runtime-evidence.json"; var screenshot = "desktop.png"; } }',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile,
+        tests.parents[2],
+        "Modernize the Unity UI and verify it on mobile and desktop.",
+    )
+
+    assert any("mobile/portrait viewport" in issue for issue in issues)
 
 
 def test_unity_visual_preflight_requires_exact_real_settings_scene(tmp_path: Path) -> None:
@@ -698,6 +917,137 @@ def test_unity_visual_preflight_requires_exact_real_settings_scene(tmp_path: Pat
     assert any("scene that does not exist" in issue for issue in issues)
     assert any("LobbyScene_All" in issue for issue in issues)
     assert any("scene containing the real LanguageDropdown" in issue for issue in issues)
+
+
+def test_unity_visual_preflight_requires_evidence_schema_and_real_navigation(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-navigation-clone"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (clone / "Assets" / "LobbyScene_All.unity").write_text(
+        "--- !u!1 &1\nGameObject:\n  m_Name: LanguageDropdown\n", encoding="utf-8"
+    )
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'UnityEngine.SceneManagement.SceneManager.LoadScene("LobbyScene_All"); '
+        'UnityEngine.GameObject.Find("LanguageDropdown"); '
+        'var evidence = "runtime-evidence.json"; var screenshot = "settings.png"; } }',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile, clone, "Modernize login, lobby, and settings UI."
+    )
+
+    assert any("scenarios array" in issue for issue in issues)
+    assert any("real UI interaction" in issue for issue in issues)
+
+
+def test_unity_visual_preflight_rejects_first_arbitrary_button_fallback(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-button-clone"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (clone / "Assets" / "Lobby.unity").write_text(
+        "--- !u!1 &1\nGameObject:\n  m_Name: SettingsButton\n", encoding="utf-8"
+    )
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'UnityEngine.SceneManagement.SceneManager.LoadScene("Lobby"); '
+        "var root = UnityEngine.GameObject.Find(\"MainCanvas\"); "
+        "UnityEngine.UI.Button settingsButton = root.transform.Find(\"SettingsButton\")?.GetComponent<UnityEngine.UI.Button>(); "
+        "if (settingsButton == null) settingsButton = root.GetComponentInChildren<UnityEngine.UI.Button>(true); "
+        "settingsButton.onClick.Invoke(); "
+        'var schema="onebrief-unity-visual-evidence-v1"; var scenarios="scenarios scenario_id observed_state interaction assertion_count viewport_width viewport_height screenshot_path"; '
+        'var evidence="runtime-evidence.json"; var png="settings.png"; } }',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(profile, clone, "Open the Settings UI.")
+
+    assert any("first arbitrary child Button" in issue for issue in issues)
+
+
+def test_unity_visual_preflight_rejects_test_side_product_ui_repairs(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-evidence-tampering"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (clone / "Assets" / "Lobby.unity").write_text(
+        "--- !u!1 &1\nGameObject:\n  m_Name: SettingsButton\n", encoding="utf-8"
+    )
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'UnityEngine.SceneManagement.SceneManager.LoadScene("Lobby"); '
+        "dropdown.options[0].text = \"Espanol\"; "
+        "canvasScaler.uiScaleMode = UnityEngine.UI.CanvasScaler.ScaleMode.ScaleWithScreenSize; "
+        'var schema="onebrief-unity-visual-evidence-v1"; var scenarios="scenarios scenario_id observed_state interaction assertion_count viewport_width viewport_height screenshot_path"; '
+        'var evidence="runtime-evidence.json"; var png="settings.png"; } }',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(profile, clone, "Verify responsive localized UI.")
+
+    assert any("must observe product text" in issue for issue in issues)
+    assert any("must observe the shipped responsive layout" in issue for issue in issues)
+
+
+def test_unity_visual_preflight_rejects_inert_new_ui_monobehaviour(tmp_path: Path) -> None:
+    root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-inert-ui-clone"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    production = clone / "Assets" / "Scripts"
+    tests.mkdir(parents=True)
+    production.mkdir(parents=True)
+    (production / "ModernizedSettingsUI.cs").write_text(
+        "using UnityEngine; public class ModernizedSettingsUI : MonoBehaviour {}\n",
+        encoding="utf-8",
+    )
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'UnityEngine.SceneManagement.SceneManager.LoadScene("Lobby"); '
+        'UnityEngine.GameObject.Find("Settings").SetActive(true); '
+        'var schema="onebrief-unity-visual-evidence-v1"; var scenarios="scenarios scenario_id observed_state interaction assertion_count viewport_width viewport_height screenshot_path"; '
+        'var evidence="runtime-evidence.json"; var png="settings.png"; } }',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile,
+        clone,
+        "Modernize settings UI.",
+        ["Assets/Scripts/ModernizedSettingsUI.cs", "Assets/Tests/PlayMode/OneBriefVisualTests.cs"],
+    )
+
+    assert any("inert source file" in issue for issue in issues)
 
 
 def test_change_set_hashes_are_bound_to_trusted_inspection(tmp_path: Path) -> None:
