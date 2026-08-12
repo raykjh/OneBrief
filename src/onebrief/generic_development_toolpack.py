@@ -254,6 +254,49 @@ class CompactProposedProjectCodeChangeSet(BaseModel):
     changes: list[CompactProposedProjectFileChange] = Field(min_length=1, max_length=1)
 
 
+class ExactRepairProjectFileChange(BaseModel):
+    """One existing-candidate edit; full-file output is structurally impossible."""
+
+    path: str
+    base_sha256: str | None = None
+    search: str | None = Field(default=None, min_length=1, max_length=3000)
+    replace: str = Field(max_length=8000)
+    anchor_id: str | None = Field(default=None, pattern=r"^A[0-9a-f]{12}$")
+    start_anchor: str | None = Field(default=None, min_length=1, max_length=1000)
+    end_anchor: str | None = Field(default=None, min_length=1, max_length=1000)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        return generic_safe_relative(value).as_posix()
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def bound_explanatory_reason(cls, value: object) -> str:
+        return str(value)[:500]
+
+    @model_validator(mode="after")
+    def validate_edit_mode(self) -> "ExactRepairProjectFileChange":
+        catalog = self.anchor_id is not None and self.search is None
+        exact = self.anchor_id is None and self.search is not None
+        anchored = (
+            self.anchor_id is None
+            and self.search is None
+            and self.start_anchor is not None
+            and self.end_anchor is not None
+        )
+        if sum((catalog, exact, anchored)) != 1:
+            raise ValueError("provide exactly one catalog, exact, or anchored repair edit")
+        return self
+
+
+class ExactRepairProjectCodeChangeSet(BaseModel):
+    schema_version: str = "onebrief-project-code-change-set-v1"
+    summary: str = Field(min_length=3, max_length=500)
+    changes: list[ExactRepairProjectFileChange] = Field(min_length=1, max_length=1)
+
+
 class ApprovedProjectDevelopmentToolPack:
     """Runs only an approved generated profile against an isolated local clone."""
 

@@ -10,6 +10,7 @@ import pytest
 from onebrief.generic_development_toolpack import (
     ApprovedProjectDevelopmentToolPack,
     CompactProposedProjectCodeChangeSet,
+    ExactRepairProjectCodeChangeSet,
     ProjectCodeChangeSet,
     ProjectFileChange,
     ProposedProjectCodeChangeSet,
@@ -107,6 +108,32 @@ def test_compact_proposal_schema_prevents_prevalidation_output_overflow() -> Non
                 "reason": "Keep one repair response within the provider cap.",
             }],
         })
+
+
+def test_exact_repair_schema_cannot_emit_a_full_file() -> None:
+    with pytest.raises(ValueError):
+        ExactRepairProjectCodeChangeSet.model_validate({
+            "summary": "Repair one namespace declaration.",
+            "changes": [{
+                "path": "Assets/Tests/PlayMode/OneBriefVisualTests.cs",
+                "base_sha256": None,
+                "content": "namespace OneBrief.Visual { }",
+                "replace": "namespace OneBrief.Visual",
+                "reason": "The repair must be an exact edit, not a full-file echo.",
+            }],
+        })
+
+    proposal = ExactRepairProjectCodeChangeSet.model_validate({
+        "summary": "Repair one namespace declaration.",
+        "changes": [{
+            "path": "Assets/Tests/PlayMode/OneBriefVisualTests.cs",
+            "base_sha256": None,
+            "search": "public class ExistingTest",
+            "replace": "namespace OneBrief.Visual { public class ExistingTest",
+            "reason": "Wrap the existing test in the required namespace.",
+        }],
+    })
+    assert proposal.changes[0].search == "public class ExistingTest"
 
 
 def test_structural_anchors_rediscover_a_changed_existing_region() -> None:

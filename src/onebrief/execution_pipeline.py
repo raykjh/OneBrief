@@ -51,6 +51,7 @@ from onebrief.development_progress import development_failure_quality
 from onebrief.generic_development_toolpack import (
     ApprovedProjectDevelopmentToolPack,
     CompactProposedProjectCodeChangeSet,
+    ExactRepairProjectCodeChangeSet,
     ProjectCodeChangeSet,
     ProposedProjectCodeChangeSet,
 )
@@ -745,6 +746,12 @@ class ExecutionPipeline:
 
         maker_sources = prepared_sources
         prior_failure = output_dir / "development_verification_failure.txt"
+        prior_failure_text = (
+            prior_failure.read_text("utf-8") if prior_failure.is_file() else ""
+        )
+        exact_repair_required = (
+            "namespace/full name begins" in prior_failure_text.casefold()
+        )
         if previous_change_set is not None:
             initial_state[MAKER_STATE_KEY] = previous_change_set.model_dump(mode="json")
             if (output_dir / "reverify_existing_candidate.json").is_file():
@@ -1122,7 +1129,11 @@ class ExecutionPipeline:
             ),
             maker_schema=(
                 (
-                    CompactProposedProjectCodeChangeSet
+                    (
+                        ExactRepairProjectCodeChangeSet
+                        if exact_repair_required
+                        else CompactProposedProjectCodeChangeSet
+                    )
                     if prior_failure.is_file()
                     else ProposedProjectCodeChangeSet
                 )

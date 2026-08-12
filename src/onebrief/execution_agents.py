@@ -11,6 +11,7 @@ from pydantic import BaseModel, ValidationError
 from onebrief.development_toolpack import CodeChangeSet, approved_edit_path
 from onebrief.generic_development_toolpack import (
     CompactProposedProjectCodeChangeSet,
+    ExactRepairProjectCodeChangeSet,
     ProjectCodeChangeSet,
     ProposedProjectCodeChangeSet,
 )
@@ -168,7 +169,9 @@ class DeveloperAgent:
     ) -> BaseModel:
         """Promote an untrusted proposal through the exact approved path boundary."""
         if self.change_set_schema is ProjectCodeChangeSet:
-            compact_repair = isinstance(raw, CompactProposedProjectCodeChangeSet)
+            compact_repair = isinstance(
+                raw, (CompactProposedProjectCodeChangeSet, ExactRepairProjectCodeChangeSet)
+            )
             proposed = ProposedProjectCodeChangeSet.model_validate(
                 raw.model_dump(mode="json") if isinstance(raw, BaseModel) else raw
             )
