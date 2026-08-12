@@ -90,12 +90,28 @@ class RecoveryPolicy:
             "is not recognized as an internal or external command",
             "could not determine executable to run",
         )
+        windows_sharing_violation = (
+            getattr(error, "winerror", None) in {32, 33}
+            or "winerror 32" in message
+            or "winerror 33" in message
+            or "being used by another process" in message
+            or "file is being used by another process" in message
+            or "다른 프로세스가 파일을 사용 중" in message
+        )
 
         if isinstance(error, BudgetExceeded):
             error_class = ErrorClass.BUDGET
             action = RecoveryAction.ASK_USER
             responsible = "user"
             rationale = "Only the user may approve additional spend or reduce scope."
+        elif isinstance(error, PermissionError) and windows_sharing_violation:
+            error_class = ErrorClass.VERIFICATION_SETUP
+            responsible = "runtime"
+            rationale = (
+                "A Windows sharing violation is a transient verifier collision, not an authority "
+                "expansion. The runtime must retry from preserved evidence after the competing "
+                "process exits."
+            )
         elif any(marker in message for marker in truncation_markers):
             error_class = ErrorClass.OUTPUT_TRUNCATION
             action = RecoveryAction.AUTO_RETRY

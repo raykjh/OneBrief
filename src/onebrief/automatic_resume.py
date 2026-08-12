@@ -484,6 +484,8 @@ def can_attempt_bounded_repair_resume(job_dir: Path) -> bool:
         or "independent unity semantic visual observation failed" in preserved_failure
         or "unity visual evidence requires" in message
         or "unity visual evidence requires" in preserved_failure
+        or "unity visual evidence did not exercise" in message
+        or "unity visual evidence did not exercise" in preserved_failure
         or missing_system_observer
         or semantic_observation_failed
         or (

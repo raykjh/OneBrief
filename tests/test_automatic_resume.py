@@ -702,6 +702,25 @@ def test_truncated_compact_repair_can_resume_from_preserved_candidate(tmp_path: 
     assert can_attempt_bounded_repair_resume(job) is True
 
 
+def test_missing_unity_locale_evidence_can_resume_from_preserved_candidate(
+    tmp_path: Path,
+) -> None:
+    job = tmp_path / "missing-locale"
+    _failed_job(job)
+    record = JobRecord.model_validate_json((job / "job.json").read_text("utf-8"))
+    record = record.model_copy(update={
+        "status": JobStatus.NEEDS_AUTHORIZATION,
+        "message": "[WinError 32] file is being used by another process",
+    })
+    (job / "job.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    (job / "work" / "development_verification_failure.txt").write_text(
+        "Unity visual evidence did not exercise requested locale(s): es",
+        encoding="utf-8",
+    )
+
+    assert can_attempt_bounded_repair_resume(job) is True
+
+
 def test_trusted_semantic_failure_skips_only_unchanged_candidate_preflight(
     tmp_path: Path,
 ) -> None:

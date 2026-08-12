@@ -204,6 +204,21 @@ def test_dependency_restore_failure_is_never_returned_to_maker() -> None:
     assert decision.responsible_party == "runtime"
 
 
+def test_windows_sharing_violation_is_runtime_setup_not_authority() -> None:
+    error = PermissionError(
+        13,
+        "[WinError 32] 다른 프로세스가 파일을 사용 중이기 때문에 액세스할 수 없습니다",
+    )
+    error.winerror = 32
+
+    decision = RecoveryPolicy().decide(error, context="pipeline")
+
+    assert decision.error_class == ErrorClass.VERIFICATION_SETUP
+    assert decision.action == RecoveryAction.STOP
+    assert decision.responsible_party == "runtime"
+    assert decision.retry_allowed is False
+
+
 @pytest.mark.parametrize(
     "error,error_class",
     [

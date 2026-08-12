@@ -181,6 +181,24 @@ def test_changed_input_is_blocked_before_any_agent_call(tmp_path: Path) -> None:
     assert (job_dir / failed.result_package / "artifacts" / "evaluation_metrics.json").is_file()
 
 
+def test_windows_sharing_violation_does_not_request_more_authority(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    job_dir = _create(tmp_path)
+
+    def fail_with_sharing_violation(*_args, **_kwargs):
+        error = PermissionError(13, "[WinError 32] file is being used by another process")
+        error.winerror = 32
+        raise error
+
+    monkeypatch.setattr("onebrief.jobs.ExecutionPipeline.run", fail_with_sharing_violation)
+    failed = run_job(job_dir, gateway=_gateway())
+
+    assert failed.status == JobStatus.FAILED
+    assert failed.current_stage == "verification_setup"
+    assert "approved capability boundary" not in failed.message
+
+
 def test_background_start_returns_without_running_pipeline(tmp_path: Path, monkeypatch) -> None:
     job_dir = _create(tmp_path)
     captured: dict[str, object] = {}

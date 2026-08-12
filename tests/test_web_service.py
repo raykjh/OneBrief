@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from fastapi.testclient import TestClient
 import pytest
@@ -19,7 +21,8 @@ from onebrief.schemas import (
 from onebrief.toolpacks import attach_toolpack_descriptors
 from onebrief.web_service import (
     ExecutionLink, InMemoryWebSessionStore, LocalWebSessionStore, WebSession, app, get_session_store,
-    _local_project_cloud_configured, _project_requires_approved_host, validate_approval,
+    _existing_bounded_resume, _local_project_cloud_configured,
+    _project_requires_approved_host, validate_approval,
 )
 
 
@@ -42,6 +45,62 @@ def requirements(ready: bool) -> RequirementsAnalysis:
         consolidated_questions=[] if ready else ["Please upload the authoritative policy."],
         ready_for_estimate=ready,
     )
+
+
+def test_existing_bounded_resume_resolves_the_same_child_session(tmp_path: Path) -> None:
+    store = LocalWebSessionStore(tmp_path / "sessions")
+    source = tmp_path / "jobs" / "source-job"
+    child = source.parent / "child-job"
+    source.mkdir(parents=True)
+    (child / "work").mkdir(parents=True)
+    record = JobRecord(
+        job_id="child-job",
+        status=JobStatus.RUNNING,
+        created_at="2026-08-13T00:00:00+00:00",
+        updated_at="2026-08-13T00:00:00+00:00",
+        attempts=1,
+        current_stage="development",
+        run_id="run-child",
+    )
+    (child / "job.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    (child / "work" / "continuation_manifest.json").write_text(
+        json.dumps({
+            "source_job_id": "source-job",
+            "cumulative_actual_usd": 1.25,
+            "child_approved_usd": 2.5,
+        }),
+        encoding="utf-8",
+    )
+    (source / ".bounded-repair-resume-claim.json").write_text(
+        json.dumps({
+            "schema_version": "onebrief-bounded-repair-resume-claim-v1",
+            "status": "created",
+            "child_job_id": "child-job",
+        }),
+        encoding="utf-8",
+    )
+    session = WebSession(
+        session_id="child-session",
+        created_at="2026-08-13T00:00:00+00:00",
+        intake=IntakeRequest(goal="Continue the approved project."),
+        requirements=requirements(True),
+    )
+    store.create(session)
+    store.save_execution(ExecutionLink(
+        session_id=session.session_id,
+        job_uri=str(child),
+        operation_name="local",
+        created_at=session.created_at,
+    ))
+
+    existing = _existing_bounded_resume(store, source)
+
+    assert existing is not None
+    resolved_session, resolved_link, resolved_record, manifest = existing
+    assert resolved_session.session_id == "child-session"
+    assert Path(resolved_link.job_uri).resolve() == child.resolve()
+    assert resolved_record.status == JobStatus.RUNNING
+    assert manifest["cumulative_actual_usd"] == 1.25
 
 
 def test_home_serves_the_real_workflow() -> None:

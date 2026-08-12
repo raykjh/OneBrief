@@ -320,6 +320,72 @@ class LocalWebSessionStore(InMemoryWebSessionStore):
         self.executions[session_id] = link
         return link
 
+
+def _existing_bounded_resume(
+    store: InMemoryWebSessionStore, source_job: Path,
+) -> tuple[WebSession, ExecutionLink, JobRecord, dict[str, object]] | None:
+    """Resolve an already-created bounded child without dispatching it again."""
+
+    claim_path = source_job / ".bounded-repair-resume-claim.json"
+    try:
+        claim = json.loads(claim_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+    child_job_id = str(claim.get("child_job_id", ""))
+    if claim.get("status") != "created" or not child_job_id:
+        return None
+    child_job = (source_job.parent / child_job_id).resolve()
+    if child_job.parent != source_job.parent.resolve() or not child_job.is_dir():
+        return None
+    try:
+        child_record = JobStore(child_job).read()
+    except (OSError, ValueError):
+        return None
+    if child_record.job_id != child_job_id:
+        return None
+
+    links = list(store.executions.values())
+    if isinstance(store, LocalWebSessionStore):
+        for path in store.root.glob("*/execution.json"):
+            try:
+                link = ExecutionLink.model_validate_json(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if link.session_id not in {item.session_id for item in links}:
+                links.append(link)
+    for existing_link in links:
+        if existing_link.operation_name != "local":
+            continue
+        try:
+            if Path(existing_link.job_uri).resolve() != child_job:
+                continue
+            child_session = store.read(existing_link.session_id)
+        except (FileNotFoundError, OSError, ValueError):
+            continue
+        manifest_path = child_job / "work" / "continuation_manifest.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            manifest = {}
+        return child_session, existing_link, child_record, manifest
+    return None
+
+
+def _bind_bounded_resume_session(source_job: Path, child_session_id: str) -> None:
+    """Bind the one-shot continuation claim to its durable UI session."""
+
+    claim_path = source_job / ".bounded-repair-resume-claim.json"
+    try:
+        claim = json.loads(claim_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return
+    if claim.get("status") != "created" or not claim.get("child_job_id"):
+        return
+    claim["child_session_id"] = child_session_id
+    LocalWebSessionStore._atomic(
+        claim_path, json.dumps(claim, ensure_ascii=False, indent=2) + "\n"
+    )
+
 class GCSWebSessionStore:
     """Private durable UI state with generation guards for one-shot execution."""
 
@@ -1484,6 +1550,24 @@ async def automatically_resume_session(
             or state.generated.sha256 != expected_toolpack
         ):
             raise RuntimeError("the approved ToolPack changed after the failed run")
+        if link.operation_name == "local":
+            existing = _existing_bounded_resume(store, source_job)
+            if existing is not None:
+                child_session, _child_link, child_record, manifest = existing
+                return {
+                    "session_id": child_session.session_id,
+                    "status": child_record.status.value,
+                    "source_job_id": str(manifest.get("source_job_id", "")),
+                    "cumulative_actual_usd": float(
+                        manifest.get("cumulative_actual_usd", 0.0)
+                    ),
+                    "remaining_approved_usd": float(
+                        manifest.get("child_approved_usd", 0.0)
+                    ),
+                    "maker_reused": True,
+                    "idempotent_reuse": True,
+                    "message": "The existing bounded continuation was returned without redispatch.",
+                }
         if link.operation_name == "local" and can_attempt_structural_resume(source_job):
             child_job, structural = await asyncio.to_thread(
                 create_structural_resume, source_job, _local_jobs_root()
@@ -1562,6 +1646,9 @@ async def automatically_resume_session(
             store.create(child)
             store.claim_run(child_session_id)
             store.save_execution(execution)
+            await asyncio.to_thread(
+                _bind_bounded_resume_session, source_job, child_session_id
+            )
             task = asyncio.create_task(asyncio.to_thread(run_job, child_job))
             _local_tasks.add(task)
             task.add_done_callback(_local_tasks.discard)

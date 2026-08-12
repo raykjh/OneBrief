@@ -36,6 +36,7 @@ from onebrief.project_snapshot import (
     restore_project_snapshot,
 )
 from onebrief.requirements_gate import require_ready_for_estimate
+from onebrief.recovery_policy import ErrorClass, RecoveryPolicy
 from onebrief.schemas import (
     BudgetEnvelope,
     IntakeRequest,
@@ -497,6 +498,30 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
         return finished
     except PermissionError as exc:
         from onebrief.evaluation import persist_execution_evaluation
+
+        recovery = RecoveryPolicy().decide(exc, context="pipeline")
+        if recovery.error_class != ErrorClass.PLATFORM_POLICY:
+            persist_execution_evaluation(job_dir, JobStatus.FAILED)
+            _persist_governance_projections(
+                job_dir,
+                status=JobStatus.FAILED.value,
+                stage=recovery.error_class.value,
+                message=f"{type(exc).__name__}: {exc}",
+            )
+            package, digest = build_result_package(
+                job_dir,
+                status=JobStatus.FAILED,
+                attempt=claimed.attempts,
+            )
+            finished = store.finish(
+                JobStatus.FAILED,
+                stage=recovery.error_class.value,
+                message=f"{type(exc).__name__}: {exc}",
+                result_package=package,
+                manifest_sha256=digest,
+            )
+            _record_project_continuity(job_dir, intake)
+            return finished
 
         persist_execution_evaluation(job_dir, JobStatus.NEEDS_AUTHORIZATION)
         _persist_governance_projections(
