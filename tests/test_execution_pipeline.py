@@ -1416,6 +1416,45 @@ def test_project_developer_anchored_range_tolerates_formatting_only_reflow() -> 
     assert "old();" not in result.changes[0].content
 
 
+def test_playmode_anchor_normalizes_javascript_style_csharp_interpolation() -> None:
+    previous = ProjectCodeChangeSet(
+        summary="Existing generated evidence source.",
+        changes=[{
+            "path": "Assets/Tests/PlayMode/VisualFlowTest.cs",
+            "base_sha256": None,
+            "content": (
+                "before\n            var scenarios = new List<string>();\n"
+                "            string json = $\"{evidence}\";\n"
+                "            File.WriteAllText(\"runtime-evidence.json\", json);\nafter\n"
+            ),
+            "reason": "Prior generated candidate.",
+        }],
+    )
+    proposal = AnchoredRangeRepairProjectCodeChangeSet(
+        summary="Repair the generated evidence range.",
+        changes=[{
+            "path": "Assets/Tests/PlayMode/VisualFlowTest.cs",
+            "base_sha256": None,
+            "start_anchor": "            var scenarios = new List<string>();",
+            "end_anchor": (
+                "            string json = ${\"{evidence}\";\n"
+                "            File.WriteAllText(\"runtime-evidence.json\", json);"
+            ),
+            "replace": "            WriteVerifiedEvidence();",
+            "reason": "Use the exact candidate range after safe selector normalization.",
+        }],
+    )
+    developer = DeveloperAgent(
+        object(), change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/", path_approver=lambda path: path,
+    )
+
+    result = developer.promote_candidate(proposal, [], previous, [])
+
+    assert "WriteVerifiedEvidence();" in result.changes[0].content
+    assert "var scenarios" not in result.changes[0].content
+
+
 def test_semantic_visual_candidate_repairs_use_bounded_ranges() -> None:
     assert development_repair_requires_anchored_range(
         multi_state_evidence_repair=False,

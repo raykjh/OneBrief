@@ -288,6 +288,20 @@ class DeveloperAgent:
                         start_anchor = str(change["start_anchor"])
                         end_anchor = str(change["end_anchor"])
 
+                        normalized_path = path.replace("\\", "/").casefold()
+                        if (
+                            "/tests/playmode/" in f"/{normalized_path}"
+                            and normalized_path.endswith(".cs")
+                        ):
+                            # Generated C# evidence repairs occasionally express
+                            # an interpolated string selector with JavaScript's
+                            # `${"` spelling. The approved candidate contains the
+                            # unambiguous C# `$"` token. Normalize only the
+                            # selector (never product code or replacement bytes)
+                            # before the same unique-range proof below.
+                            start_anchor = start_anchor.replace('${"', '$"')
+                            end_anchor = end_anchor.replace('${"', '$"')
+
                         def anchor_spans(anchor: str, candidate: str, *, end: bool) -> list[int]:
                             exact = list(re.finditer(re.escape(anchor), candidate))
                             if exact:
