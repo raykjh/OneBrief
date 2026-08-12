@@ -22,6 +22,10 @@ def development_failure_quality(message: str) -> tuple[int, int]:
         stage = 9
     elif (
         "unity runtime evidence" in normalized
+        or (
+            "unity visual evidence" in normalized
+            and "unity visual test contract" not in normalized
+        )
         or "unity visual evidence requires a distinct rendered scenario" in normalized
         or "unity visual evidence reused an identical screenshot" in normalized
         or "runtime evidence validation" in normalized

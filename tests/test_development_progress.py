@@ -25,6 +25,18 @@ def test_runtime_evidence_failure_outranks_playmode_failure() -> None:
     )
 
 
+def test_missing_requested_locale_evidence_outranks_static_contract_failure() -> None:
+    static_failure = (
+        "development verification failed: Unity visual test contract: "
+        "selected dropdown must be visible"
+    )
+    locale_failure = "Unity visual evidence did not exercise requested locale(s): es"
+
+    assert development_failure_quality(locale_failure) > development_failure_quality(
+        static_failure
+    )
+
+
 def test_png_viewport_mismatch_outranks_a_prior_playmode_failure() -> None:
     playmode_failure = (
         "development verification failed: unity_playmode_visual_tests "
