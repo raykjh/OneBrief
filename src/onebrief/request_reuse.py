@@ -11,6 +11,12 @@ from typing import Any
 
 from onebrief.project_catalog import RegisteredProject
 from onebrief.development_progress import development_failure_quality
+from onebrief.development_change_tracking import (
+    HISTORY_NAME,
+    REGISTER_NAME,
+    discover_rejected_change_history,
+    write_rejected_change_history,
+)
 from onebrief.schemas import IntakeRequest, ToolPackId
 
 
@@ -156,6 +162,9 @@ def _artifact_names(
         if failed_pair is not None:
             candidate, failure, quality = failed_pair
             names.extend([candidate, failure])
+        for name in (REGISTER_NAME, HISTORY_NAME):
+            if (work / name).is_file():
+                names.append(name)
     return tuple(names), quality
 
 
@@ -246,6 +255,19 @@ def seed_reusable_artifacts(candidate: ReuseCandidate, new_job_dir: Path) -> Pat
         shutil.copy2(source, target)
         digest = hashlib.sha256(target.read_bytes()).hexdigest()
         copied.append({"source": name, "target": target_name, "sha256": digest})
+    # Older failed jobs can have the durable fingerprint register without the
+    # compact maker-readable history introduced later. Reconstruct that history
+    # from their rejected deltas while the source job is still locally
+    # available, instead of letting a continuation rediscover the same repair.
+    if (target_work / REGISTER_NAME).is_file() and not (target_work / HISTORY_NAME).is_file():
+        records = discover_rejected_change_history(source_work)
+        if records:
+            history_path = write_rejected_change_history(target_work, records)
+            copied.append({
+                "source": "derived_from_rejected_deltas",
+                "target": HISTORY_NAME,
+                "sha256": hashlib.sha256(history_path.read_bytes()).hexdigest(),
+            })
     copied_targets = {item["target"] for item in copied}
     if {
         "code_change_set.json",

@@ -309,3 +309,62 @@ def test_reuse_prefers_playmode_checkpoint_over_newer_static_failure(
     )
     assert marker["source_job_id"] == "playmode-job"
     assert marker["candidate_sha256"]
+
+
+def test_reuse_carries_rejected_repairs_and_derives_readable_history(
+    tmp_path: Path,
+) -> None:
+    from onebrief.development_change_tracking import (
+        development_change_fingerprint,
+        write_rejected_change_fingerprints,
+    )
+
+    head = "a" * 40
+    old = tmp_path / "old-job"
+    work = old / "work"
+    evidence = work / "toolpacks" / "exchange_development" / "evidence"
+    evidence.mkdir(parents=True)
+    (old / "inputs").mkdir()
+    (old / "inputs" / "intake.json").write_text(
+        _intake().model_dump_json(), encoding="utf-8"
+    )
+    (old / "job.json").write_text(
+        json.dumps({"job_id": "old-job", "status": "failed"}), encoding="utf-8"
+    )
+    (evidence / "repository_inspection.json").write_text(
+        json.dumps({"head_sha": head}), encoding="utf-8"
+    )
+    candidate_payload = {
+        "summary": "try another layout source",
+        "changes": [{
+            "path": "web/app/page.tsx",
+            "base_sha256": "b" * 64,
+            "content": "updated lobby",
+            "reason": "repair clipped mobile controls",
+        }],
+    }
+    (work / "code_change_set_r0.json").write_text(
+        json.dumps(candidate_payload), encoding="utf-8"
+    )
+    (work / "development_verification_failure_r0.txt").write_text(
+        "web_browser_observation: clipped controls", encoding="utf-8"
+    )
+    (work / "code_change_set_delta_r0.json").write_text(
+        json.dumps(candidate_payload), encoding="utf-8"
+    )
+    write_rejected_change_fingerprints(
+        work, {development_change_fingerprint(candidate_payload)}
+    )
+
+    reuse = find_reuse_candidate(tmp_path, _intake(), _project(head))
+    assert reuse is not None
+    assert "development_rejected_change_fingerprints.json" in reuse.reusable_artifacts
+    target = tmp_path / "new-job"
+    (target / "work").mkdir(parents=True)
+    seed_reusable_artifacts(reuse, target)
+    history = json.loads(
+        (target / "work" / "development_rejected_change_history.json").read_text("utf-8")
+    )
+    assert history["rejected_changes"][0]["changed_paths"] == [
+        "web/app/page.tsx"
+    ]

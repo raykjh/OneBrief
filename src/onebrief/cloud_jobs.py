@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from onebrief.jobs import JobRecord, JobStatus, JobStore, run_job, verify_input_snapshot
 from onebrief.development_progress import development_failure_quality
+from onebrief.development_change_tracking import HISTORY_NAME, REGISTER_NAME
 
 
 REUSABLE_WORK_ARTIFACTS = (
@@ -33,6 +34,8 @@ REUSABLE_WORK_ARTIFACTS = (
     "development_verification_failure.txt",
     "development_best_candidate.json",
     "development_best_failure.txt",
+    REGISTER_NAME,
+    HISTORY_NAME,
 )
 
 
