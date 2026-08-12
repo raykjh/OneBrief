@@ -49,6 +49,45 @@ def _csharp_code_only(value: str) -> str:
     return token.sub(" ", value)
 
 
+def _declared_unity_viewports(source: str) -> list[tuple[int, int]]:
+    """Extract literal or paired-array viewport declarations from a PlayMode test."""
+
+    measured = [
+        (int(width), int(height))
+        for width, height in re.findall(
+            r"viewport_width[^0-9]{0,32}(\d{2,5})[^\n]{0,120}?"
+            r"viewport_height[^0-9]{0,32}(\d{2,5})",
+            source,
+            re.IGNORECASE,
+        )
+    ]
+    structural = _csharp_code_only(source)
+    if "screen.setresolution" not in structural.casefold():
+        return measured
+    arrays: dict[str, list[int]] = {}
+    for name, values in re.findall(
+        r"\bint\s*\[\s*\]\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{([^}]*)\}",
+        structural,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        numbers = [int(item) for item in re.findall(r"\b\d{2,5}\b", values)]
+        if numbers:
+            arrays[name] = numbers
+    width_arrays = [
+        (name, values) for name, values in arrays.items()
+        if "width" in name.casefold() and re.search(rf"\b{re.escape(name)}\s*\[", structural)
+    ]
+    height_arrays = [
+        (name, values) for name, values in arrays.items()
+        if "height" in name.casefold() and re.search(rf"\b{re.escape(name)}\s*\[", structural)
+    ]
+    for _width_name, widths in width_arrays:
+        for _height_name, heights in height_arrays:
+            if len(widths) == len(heights):
+                measured.extend(zip(widths, heights, strict=True))
+    return measured
+
+
 def generic_safe_relative(value: str) -> PurePosixPath:
     path = PurePosixPath(value.replace("\\", "/"))
     if path.is_absolute() or not path.parts or any(part in {"", ".", ".."} for part in path.parts):
@@ -1146,15 +1185,7 @@ class ApprovedProjectDevelopmentToolPack:
                 and ("desktop" in goal_text.casefold() or "데스크톱" in goal_text)
             )
             if responsive_requested:
-                measured = [
-                    (int(width), int(height))
-                    for width, height in re.findall(
-                        r"viewport_width[^0-9]{0,32}(\d{2,5})[^\n]{0,120}?"
-                        r"viewport_height[^0-9]{0,32}(\d{2,5})",
-                        combined_source,
-                        re.IGNORECASE,
-                    )
-                ]
+                measured = _declared_unity_viewports(combined_source)
                 if not any(width < height for width, height in measured) or not any(
                     width >= height for width, height in measured
                 ):

@@ -889,6 +889,41 @@ def test_unity_visual_preflight_requires_portrait_and_landscape_evidence(
     assert any("mobile/portrait viewport" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_accepts_paired_measured_viewport_arrays(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    tests = tmp_path / "unity-responsive-arrays" / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'UnityEngine.SceneManagement.SceneManager.LoadScene("Lobby"); '
+        "int[] widths = { 1920, 1125 }; int[] heights = { 1080, 2436 }; "
+        "for (int i = 0; i < widths.Length; i++) { "
+        "var width = widths[i]; var height = heights[i]; "
+        "UnityEngine.Screen.SetResolution(width, height, false); } "
+        'var evidence = "runtime-evidence.json onebrief-unity-visual-evidence-v1 '
+        "scenarios scenario_id observed_state interaction assertion_count viewport_width "
+        'viewport_height screenshot_path desktop.png mobile.png"; } }',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile,
+        tests.parents[2],
+        "Modernize the Unity UI and verify it on mobile and desktop.",
+    )
+
+    assert not any("mobile/portrait viewport" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_requires_exact_real_settings_scene(tmp_path: Path) -> None:
     _root, registry = _approved_node_project(tmp_path)
     pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
