@@ -25,6 +25,18 @@ def test_runtime_evidence_failure_outranks_playmode_failure() -> None:
     )
 
 
+def test_png_viewport_mismatch_outranks_a_prior_playmode_failure() -> None:
+    playmode_failure = (
+        "development verification failed: unity_playmode_visual_tests "
+        "UNITY TEST FAILURES WaitForEndOfFrame is not evoked in batchmode"
+    )
+    png_mismatch = "Unity visual scenario login_desktop viewport width does not match its PNG"
+
+    assert development_failure_quality(png_mismatch) > development_failure_quality(
+        playmode_failure
+    )
+
+
 def test_distinct_visual_scenario_failure_outranks_static_contract_failure() -> None:
     static_failure = (
         "development verification failed: Unity visual test contract must "

@@ -899,6 +899,40 @@ def test_unity_visual_preflight_rejects_async_batchmode_screenshot(tmp_path: Pat
     assert any("must not rely on asynchronous ScreenCapture" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_rejects_wait_for_end_of_frame_in_batchmode(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    tests = tmp_path / "unity-frame-yield-clone" / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'UnityEngine.SceneManagement.SceneManager.LoadScene("Lobby"); '
+        'var languageDropdown = UnityEngine.GameObject.Find("LanguageDropdown")'
+        ".GetComponent<TMPro.TMP_Dropdown>(); "
+        "languageDropdown.value = 1; "
+        "languageDropdown.onValueChanged.Invoke(languageDropdown.value); "
+        "yield return new UnityEngine.WaitForEndOfFrame(); "
+        "var glyph = TMPro.TMP_Settings.defaultFontAsset.HasCharacter('A'); "
+        "var json = \"onebrief-evidence/runtime-evidence.json\"; "
+        "var png = \"onebrief-evidence/lobby.png\"; } }\n",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile, tests.parents[2], "Unity language UI"
+    )
+
+    assert any("does not evoke WaitForEndOfFrame" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_rejects_overlay_ui_rendered_without_canvas_routing(
     tmp_path: Path,
 ) -> None:

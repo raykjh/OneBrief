@@ -1197,6 +1197,11 @@ class ApprovedProjectDevelopmentToolPack:
                     "render the real scene UI to a RenderTexture, read pixels, EncodeToPNG, and "
                     "File.WriteAllBytes synchronously"
                 )
+            if "waitforendofframe" in structural:
+                issues.append(
+                    "Unity batchmode does not evoke WaitForEndOfFrame; use a batch-safe yield or "
+                    "synchronous render/readback instead"
+                )
             if (
                 "rendertexture" in structural
                 and ".render()" in structural
