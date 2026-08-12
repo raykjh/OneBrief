@@ -618,16 +618,17 @@ def create_bounded_repair_resume(
         and terminal_ledger_gate
         and isinstance(source_ledger, dict)
     ):
-        # The immutable parent remains the audit source for every denied
-        # contract. A user-authorized continuation keeps its observations and
-        # executable history, but a terminal denial cannot remain the active
-        # child gate or it would block before the selected newer checkpoint is
-        # revalidated.
-        resumed_ledger = dict(source_ledger)
-        resumed_ledger["repair_contracts"] = [
-            item for item in source_ledger.get("repair_contracts", [])
-            if isinstance(item, dict) and bool(item.get("execution_allowed"))
-        ]
+        # The immutable parent remains the audit source for every observation
+        # and denied contract. A user-authorized continuation starts a fresh
+        # active hypothesis ledger; otherwise the observations that produced
+        # the terminal denial immediately recreate that denial before the
+        # selected newer checkpoint can be diagnosed. Exact rejected code
+        # fingerprints and the current trusted failure are copied separately.
+        resumed_ledger = {
+            "schema_version": "onebrief-convergence-ledger-v1",
+            "observations": [],
+            "repair_contracts": [],
+        }
         (child_work / "convergence_ledger.json").write_text(
             json.dumps(resumed_ledger, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
