@@ -1404,12 +1404,15 @@ async def session_status(
             ):
                 if link.operation_name == "local":
                     local_job = Path(link.job_uri).resolve()
+                    bounded_resume = can_attempt_bounded_repair_resume(local_job)
                     payload["auto_resume_available"] = (
-                        progress_gate_allows_resume
-                        and (
+                        bounded_resume
+                        or (
+                            progress_gate_allows_resume
+                            and (
                             can_attempt_automatic_resume(local_job)
-                            or can_attempt_bounded_repair_resume(local_job)
                             or can_attempt_structural_resume(local_job)
+                            )
                         )
                     )
                 else:

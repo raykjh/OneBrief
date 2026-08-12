@@ -50,6 +50,46 @@ def test_missing_unity_playmode_harness_is_evidence_topology_not_product_runtime
     assert contract.verification_ladder[0] == "proof_topology_scan"
 
 
+def test_evidence_topology_can_advance_when_static_blockers_change() -> None:
+    policy = ConvergencePolicy()
+    ledger = ConvergenceLedger()
+    failures = [
+        (
+            "Unity visual test contract: the OneBrief.Visual test must write "
+            "onebrief-evidence/runtime-evidence.json | Unity visual test contract: "
+            "add a Unity test .asmdef with optionalUnityReferences containing TestAssemblies"
+        ),
+        (
+            "Unity visual test contract: runtime-evidence.json must use schema_version "
+            "onebrief-unity-visual-evidence-v1 | Unity visual test contract: a camera "
+            "RenderTexture does not capture ScreenSpaceOverlay UI | Unity visual test contract: "
+            "add a Unity test .asmdef with optionalUnityReferences containing TestAssemblies"
+        ),
+        (
+            "Unity visual test contract: each general UI evidence scenario must contain "
+            "scenario_id, observed_state, interaction, assertion_count, viewport_width, "
+            "viewport_height, and screenshot_path | Unity visual test contract: add a Unity "
+            "test .asmdef with optionalUnityReferences containing TestAssemblies"
+        ),
+    ]
+    contracts = []
+    for index, failure in enumerate(failures, 1):
+        observation = policy.observe(
+            context="development_verification",
+            failure_text=failure,
+            attempt_number=index,
+            affected_paths=["Assets/Tests/PlayMode/VisualFlowTest.cs"],
+            strategy_fingerprint=f"strategy-{index}",
+        )
+        contract = policy.issue_contract(ledger, observation)
+        ledger = policy.record(ledger, observation, contract)
+        contracts.append(contract)
+
+    assert all(item.execution_allowed for item in contracts)
+    assert contracts[-1].progress_kind == ProgressKind.NARROWED_FAILURE
+    assert contracts[-1].permitted_paths == []
+
+
 def test_same_failure_and_same_strategy_is_blocked_as_no_progress() -> None:
     policy = ConvergencePolicy()
     ledger = ConvergenceLedger()

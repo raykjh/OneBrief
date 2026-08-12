@@ -185,6 +185,15 @@ def extract_symptom_keys(
             "distinct rendered scenario", "responsive unity visual evidence",
             "reused an identical screenshot",
         )),
+        ("runtime_evidence_json", ("must write onebrief-evidence/runtime-evidence.json",)),
+        ("png_capture", ("must capture png runtime evidence",)),
+        ("scenario_schema", ("must use schema_version onebrief-unity-visual-evidence-v1",)),
+        ("scenario_fields", ("each general ui evidence scenario must contain",)),
+        ("overlay_capture", ("rendertexture does not capture screenspaceoverlay ui",)),
+        ("real_transition", ("must perform a real ui interaction",)),
+        ("visible_ui", ("must inspect and interact with visible ui objects",)),
+        ("language_dropdown", ("languagedropdown",)),
+        ("glyph_inspection", ("missing_glyph_count must inspect",)),
     )
 
     def surface(segment: str) -> str:
@@ -217,6 +226,11 @@ def _same_causal_boundary(
 ) -> bool:
     if previous.layer != current.layer:
         return False
+    if current.layer == FailureLayer.EVIDENCE_TOPOLOGY:
+        # The static Unity evidence checklist is one finite causal boundary.
+        # Its individual blockers legitimately change as earlier requirements
+        # are satisfied, and issue_contract measures that change explicitly.
+        return True
     prior = set(previous.symptom_keys or extract_symptom_keys(
         previous.normalized_signature,
         failed_criterion_ids=previous.failed_criterion_ids,
@@ -400,12 +414,25 @@ class ConvergencePolicy:
             and prior_symptoms
             and current_symptoms < prior_symptoms
         )
+        changed_topology_signal = bool(
+            matches
+            and observation.layer == FailureLayer.EVIDENCE_TOPOLOGY
+            and current_symptoms != prior_symptoms
+        )
         if narrowed:
             progress = ProgressKind.CRITERION_ADVANCE
             allowed = True
             escalation = False
             rationale = (
                 "Trusted evidence removed at least one prior symptom. Continue from the narrower failing boundary."
+            )
+        elif changed_topology_signal and occurrence <= 8:
+            progress = ProgressKind.NARROWED_FAILURE
+            allowed = True
+            escalation = False
+            rationale = (
+                "The finite evidence contract exposed a different static blocker. Continue one bounded "
+                "Tests/PlayMode repair and re-run the authoritative checklist."
             )
         elif same_strategy:
             progress = ProgressKind.NO_PROGRESS
@@ -462,13 +489,18 @@ class ConvergencePolicy:
             observation.observation_id, occurrence, hypothesis.hypothesis_id,
             sorted(observation.affected_paths), allowed,
         ]
+        permitted_paths = (
+            []
+            if observation.layer == FailureLayer.EVIDENCE_TOPOLOGY
+            else observation.affected_paths
+        )
         return RepairContract(
             contract_id=_digest("RC", contract_payload),
             observation_id=observation.observation_id,
             progress_kind=progress,
             occurrence=occurrence,
             hypothesis=hypothesis,
-            permitted_paths=observation.affected_paths,
+            permitted_paths=permitted_paths,
             preserve_criterion_ids=list(dict.fromkeys(preserve_criterion_ids or []))[:16],
             verification_ladder=ladder_by_layer[observation.layer],
             execution_allowed=allowed,
