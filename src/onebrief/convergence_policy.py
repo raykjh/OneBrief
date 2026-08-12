@@ -217,7 +217,11 @@ def _same_causal_boundary(
     return previous.normalized_signature == current.normalized_signature
 
 
-def _hypothesis(layer: FailureLayer, observation_id: str) -> RepairHypothesis:
+def _hypothesis(
+    layer: FailureLayer,
+    observation_id: str,
+    evidence_signature: str = "",
+) -> RepairHypothesis:
     templates: dict[FailureLayer, tuple[str, str, str, str, bool]] = {
         FailureLayer.SOURCE_BINDING: (
             "The proposed selector does not bind to the exact approved candidate snapshot, or an approved catalog ID was emitted in the wrong selector field.",
@@ -284,6 +288,23 @@ def _hypothesis(layer: FailureLayer, observation_id: str) -> RepairHypothesis:
         ),
     }
     cause, probe, signal, boundary, reasoning = templates[layer]
+    if (
+        layer == FailureLayer.SEMANTIC_PRODUCT
+        and "unity layout diagnostics" in evidence_signature.casefold()
+    ):
+        cause = (
+            "The visible Unity defect is associated with a recorded Canvas or RectTransform "
+            "topology risk, so another global scaler guess is not yet justified."
+        )
+        probe = (
+            "Match the smallest failing screenshot surface to one hierarchy risk record, then "
+            "inspect only that Canvas and its nearest risky RectTransform ancestry."
+        )
+        signal = (
+            "One named hierarchy risk disappears and the corresponding rendered symptom is removed "
+            "while previously passing surfaces remain unchanged."
+        )
+        boundary = "One diagnosed production RectTransform ancestry and one visible symptom."
     return RepairHypothesis(
         hypothesis_id=_digest("RH", [observation_id, layer.value, probe]),
         suspected_cause=cause,
@@ -395,7 +416,11 @@ class ConvergencePolicy:
                 if allowed else
                 "The failure requires new human authority and cannot authorize an autonomous repair."
             )
-        hypothesis = _hypothesis(observation.layer, observation.observation_id)
+        hypothesis = _hypothesis(
+            observation.layer,
+            observation.observation_id,
+            observation.normalized_signature,
+        )
         ladder_by_layer = {
             FailureLayer.SOURCE_BINDING: [
                 "schema_and_selector_probe", "exact_source_promotion", "compile", "targeted_test", "full_verification"

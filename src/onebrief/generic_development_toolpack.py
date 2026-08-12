@@ -32,6 +32,10 @@ from onebrief.unity_runtime_evidence import (
     requested_ui_surfaces,
     validate_and_copy_unity_visual_evidence,
 )
+from onebrief.unity_layout_diagnostics import (
+    install_unity_layout_diagnostic_source,
+    package_unity_layout_diagnostics,
+)
 from onebrief.web_runtime_evidence import (
     observe_web_application,
     validate_preserved_language_states,
@@ -896,6 +900,11 @@ class ApprovedProjectDevelopmentToolPack:
                 and not needs_visual_runtime
             ):
                 continue
+            if (
+                adapter.adapter_id == AdapterId.UNITY_LAYOUT_DIAGNOSTICS
+                and not needs_visual_runtime
+            ):
+                continue
             if adapter.adapter_id == AdapterId.NODE_SCRIPT:
                 parameter = str(adapter.parameter)
                 if "::" in parameter:
@@ -912,6 +921,7 @@ class ApprovedProjectDevelopmentToolPack:
                 AdapterId.UNITY_COMPILE,
                 AdapterId.UNITY_EDITMODE_TESTS,
                 AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+                AdapterId.UNITY_LAYOUT_DIAGNOSTICS,
             }:
                 editor = self.lifecycle._unity_editor(self.root)
                 if editor is None or str(editor) != adapter.evidence:
@@ -920,6 +930,7 @@ class ApprovedProjectDevelopmentToolPack:
                     AdapterId.UNITY_COMPILE: "onebrief-compile.log",
                     AdapterId.UNITY_EDITMODE_TESTS: "onebrief-editmode.log",
                     AdapterId.UNITY_PLAYMODE_VISUAL_TESTS: "onebrief-playmode-visual.log",
+                    AdapterId.UNITY_LAYOUT_DIAGNOSTICS: "onebrief-layout-diagnostics.log",
                 }
                 log = clone / log_names[adapter.adapter_id]
                 argv = [str(editor), "-batchmode"]
@@ -937,6 +948,11 @@ class ApprovedProjectDevelopmentToolPack:
                         "-testFilter", "OneBrief.Visual",
                         "-testResults", str(clone / "onebrief-playmode-visual-results.xml"),
                     ]
+                elif adapter.adapter_id == AdapterId.UNITY_LAYOUT_DIAGNOSTICS:
+                    argv += [
+                        "-quit", "-executeMethod",
+                        "OneBriefDiagnostics.LayoutDiagnostics.Export",
+                    ]
                 commands.append((adapter.adapter_id.value, argv, 900))
         def priority(item: tuple[str, list[str], int]) -> tuple[int, str]:
             command_id = item[0]
@@ -944,6 +960,8 @@ class ApprovedProjectDevelopmentToolPack:
                 return (10, command_id)
             if "build" in command_id or "compile" in command_id:
                 return (20, command_id)
+            if command_id == AdapterId.UNITY_LAYOUT_DIAGNOSTICS.value:
+                return (25, command_id)
             if "test" in command_id:
                 return (30, command_id)
             return (25, command_id)
@@ -1458,6 +1476,15 @@ class ApprovedProjectDevelopmentToolPack:
                     encoding="utf-8",
                     newline="\n",
                 )
+            candidate_hasher = hashlib.sha256()
+            candidate_hasher.update(head.encode("ascii"))
+            for relative in sorted(item.path for item in change_set.changes):
+                target = clone / Path(*PurePosixPath(relative).parts)
+                candidate_hasher.update(relative.encode("utf-8"))
+                candidate_hasher.update(b"\0")
+                candidate_hasher.update(target.read_bytes())
+                candidate_hasher.update(b"\0")
+            candidate_sha256 = candidate_hasher.hexdigest()
             if new_paths:
                 self._git("add", "-N", "--", *new_paths, cwd=clone)
             approved_paths = [item.path for item in change_set.changes]
@@ -1482,6 +1509,11 @@ class ApprovedProjectDevelopmentToolPack:
                 raise RuntimeError(
                     f"development patch hygiene failed: {hygiene_failure}"
                 ) from hygiene_failure
+            if any(
+                item.enabled and item.adapter_id == AdapterId.UNITY_LAYOUT_DIAGNOSTICS
+                for item in profile.adapters
+            ) and self._requires_unity_visual_runtime(goal_text):
+                install_unity_layout_diagnostic_source(clone)
             dependency_results, repaired_locks = self._restore_node_dependencies(profile, clone)
             for repaired in repaired_locks:
                 if self.approved_edit_path(repaired) is None:
@@ -1496,6 +1528,20 @@ class ApprovedProjectDevelopmentToolPack:
                 for command_id, argv, timeout in commands
             ]
             evidence_paths: list[str] = []
+            if any(
+                item.command_id == AdapterId.UNITY_LAYOUT_DIAGNOSTICS.value
+                for item in results
+            ):
+                evidence_dir = output_dir / "unity_layout_diagnostics"
+                package_unity_layout_diagnostics(
+                    clone / "onebrief-evidence" / "unity-layout-diagnostics.json",
+                    evidence_dir,
+                    source_revision=head,
+                    candidate_sha256=candidate_sha256,
+                )
+                evidence_paths.append(
+                    evidence_dir.relative_to(output_dir.parent).as_posix()
+                )
             web_observer = next((
                 item for item in profile.adapters
                 if item.adapter_id == AdapterId.NODE_WEB_OBSERVATION and item.enabled

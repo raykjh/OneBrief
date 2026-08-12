@@ -183,3 +183,27 @@ def test_removed_visual_symptom_counts_as_real_progress() -> None:
 
     assert contract.progress_kind == ProgressKind.CRITERION_ADVANCE
     assert contract.execution_allowed is True
+
+
+def test_unity_layout_evidence_replaces_global_scaler_guess_with_topology_probe() -> None:
+    policy = ConvergencePolicy()
+    observation = policy.observe(
+        context="development_verification",
+        failure_text=(
+            "independent Unity semantic visual observation failed: "
+            "screenshots/lobby_mobile.png: controls overlap | "
+            "Deterministic Unity layout diagnostics: "
+            '{"risk_counts":{"stretched_width_positive_delta":2},'
+            '"highest_priority_risks":["Lobby/Canvas/Panel"]}'
+        ),
+        attempt_number=1,
+        affected_paths=["Assets/UI/Lobby.cs"],
+    )
+
+    contract = policy.issue_contract(ConvergenceLedger(), observation)
+
+    assert "RectTransform topology risk" in contract.hypothesis.suspected_cause
+    assert "nearest risky RectTransform ancestry" in contract.hypothesis.cheapest_probe
+    assert contract.hypothesis.repair_boundary == (
+        "One diagnosed production RectTransform ancestry and one visible symptom."
+    )

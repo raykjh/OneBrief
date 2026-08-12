@@ -106,6 +106,7 @@ from onebrief.schemas import IntakeRequest, InternalSource, OutputTarget, Requir
 from onebrief.public_research import PublicResearchResult
 from onebrief.toolpacks import execute_toolpacks
 from onebrief.unity_semantic_observation import observe_unity_visual_evidence
+from onebrief.unity_layout_diagnostics import compact_unity_layout_diagnostic_context
 from onebrief.workbook_export import export_workbook
 from onebrief.temperament import (
     VERIFIER_PROFILE,
@@ -445,19 +446,29 @@ class ExecutionPipeline:
             )
             unity_evidence = development_dir / "unity_visual_evidence"
             if unity_evidence.is_dir():
-                observe_unity_visual_evidence(
-                    self.gateway,
-                    model=self.stage_models.get(
-                        "independent_verification", "gemini-3.5-flash"
-                    ),
-                    evidence_dir=unity_evidence,
-                    observation_path=(
-                        development_dir.parent
-                        / "independent_observations"
-                        / "unity_ui_observation.json"
-                    ),
-                    goal_text=json.dumps(contract, ensure_ascii=False),
-                )
+                try:
+                    observe_unity_visual_evidence(
+                        self.gateway,
+                        model=self.stage_models.get(
+                            "independent_verification", "gemini-3.5-flash"
+                        ),
+                        evidence_dir=unity_evidence,
+                        observation_path=(
+                            development_dir.parent
+                            / "independent_observations"
+                            / "unity_ui_observation.json"
+                        ),
+                        goal_text=json.dumps(contract, ensure_ascii=False),
+                    )
+                except RuntimeError as exc:
+                    diagnostic = compact_unity_layout_diagnostic_context(
+                        development_dir / "unity_layout_diagnostics"
+                    )
+                    if diagnostic:
+                        raise RuntimeError(
+                            f"{exc} | Deterministic Unity layout diagnostics: {diagnostic[:6000]}"
+                        ) from exc
+                    raise
             return run
         return development_pack.apply_and_verify(change_set, development_dir)
     def _temperament_audit(self, output_dir: Path) -> list[dict[str, object]]:

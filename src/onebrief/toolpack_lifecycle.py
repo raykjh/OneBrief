@@ -14,6 +14,11 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
+from onebrief.capability_packs import (
+    CapabilityPackRef,
+    capability_pack_refs_for_adapter_ids,
+    validate_capability_pack_refs,
+)
 from onebrief.project_import import (
     MANIFEST_NAME,
     ImportedProjectRecord,
@@ -61,6 +66,7 @@ class AdapterId(StrEnum):
     UNITY_COMPILE = "unity_compile"
     UNITY_EDITMODE_TESTS = "unity_editmode_tests"
     UNITY_PLAYMODE_VISUAL_TESTS = "unity_playmode_visual_tests"
+    UNITY_LAYOUT_DIAGNOSTICS = "unity_layout_diagnostics"
     NODE_SCRIPT = "node_script"
     NODE_WEB_OBSERVATION = "node_web_observation"
     PYTHON_TESTS = "python_tests"
@@ -75,7 +81,10 @@ class ToolAdapter(BaseModel):
 
 
 class GeneratedProjectToolPack(BaseModel):
-    schema_version: Literal["onebrief-generated-toolpack-v1"] = "onebrief-generated-toolpack-v1"
+    schema_version: Literal[
+        "onebrief-generated-toolpack-v1", "onebrief-generated-toolpack-v2"
+    ] = "onebrief-generated-toolpack-v2"
+    pack_kind: Literal["project_profile"] = "project_profile"
     project_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,63}$")
     project_root: str
     manifest_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -86,6 +95,7 @@ class GeneratedProjectToolPack(BaseModel):
     allowed_write_prefixes: list[str] = Field(max_length=20)
     allowed_suffixes: list[str] = Field(min_length=1, max_length=80)
     adapters: list[ToolAdapter] = Field(min_length=1, max_length=12)
+    capability_packs: list[CapabilityPackRef] = Field(default_factory=list, max_length=12)
     blocked_boundaries: list[str] = Field(min_length=1, max_length=20)
 
     @model_validator(mode="after")
@@ -99,6 +109,13 @@ class GeneratedProjectToolPack(BaseModel):
             raise ValueError("ToolPack requested an unsupported editable suffix")
         if len(self.adapters) != len({(item.adapter_id, item.parameter) for item in self.adapters}):
             raise ValueError("ToolPack adapters must be unique")
+        if self.schema_version == "onebrief-generated-toolpack-v2":
+            errors = validate_capability_pack_refs(
+                self.capability_packs,
+                [item.adapter_id.value for item in self.adapters],
+            )
+            if errors:
+                raise ValueError("; ".join(errors))
         return self
 
     @property
@@ -316,6 +333,15 @@ class ProjectToolPackLifecycle:
                         else "A compatible Unity Editor and Unity Test Framework were not both found."
                     ),
                 ),
+                ToolAdapter(
+                    adapter_id=AdapterId.UNITY_LAYOUT_DIAGNOSTICS,
+                    label="Inspect Canvas and RectTransform hierarchy without editing the project",
+                    enabled=editor is not None,
+                    evidence=(
+                        str(editor) if editor is not None
+                        else "A compatible Unity Editor was not found."
+                    ),
+                ),
             ])
         adapters.extend(self._node_adapters(root))
         if "python" in systems:
@@ -327,6 +353,9 @@ class ProjectToolPackLifecycle:
             ))
         resident = root / MANIFEST_NAME
         manifest_digest = hashlib.sha256(resident.read_bytes()).hexdigest()
+        capability_packs = capability_pack_refs_for_adapter_ids(
+            [item.adapter_id.value for item in adapters]
+        )
         generated = GeneratedProjectToolPack(
             project_id=self.project_id,
             project_root=str(root),
@@ -345,6 +374,7 @@ class ProjectToolPackLifecycle:
             allowed_write_prefixes=write_prefixes,
             allowed_suffixes=sorted(SAFE_SUFFIXES),
             adapters=adapters,
+            capability_packs=capability_packs,
             blocked_boundaries=[
                 "source repository writes",
                 "credentials, secret stores, accounts, payments, and personal data",
@@ -400,6 +430,17 @@ class ProjectToolPackLifecycle:
                 check_id="validation_adapter_available",
                 passed=any(item.enabled and item.adapter_id != AdapterId.REPOSITORY_SNAPSHOT for item in generated.adapters),
                 message="At least one deterministic project validation adapter is available.",
+            ),
+            QualificationCheck(
+                check_id="capability_pack_integrity",
+                passed=not validate_capability_pack_refs(
+                    generated.capability_packs,
+                    [item.adapter_id.value for item in generated.adapters],
+                ),
+                message=(
+                    "Every adapter is supplied by an exact-version reusable capability pack, "
+                    "and each component digest is current."
+                ),
             ),
         ]
         return ToolPackQualification(

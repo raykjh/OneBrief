@@ -69,6 +69,15 @@ def test_generated_toolpack_is_qualified_and_exact_hash_approved(tmp_path: Path,
     assert generated.generated is not None
     assert generated.generated.allowed_write_prefixes == ["Assets/", "Packages/"]
     assert any(item.adapter_id.value == "unity_compile" and item.enabled for item in generated.generated.adapters)
+    assert any(
+        item.adapter_id.value == "unity_layout_diagnostics" and item.enabled
+        for item in generated.generated.adapters
+    )
+    assert [item.pack_id.value for item in generated.generated.capability_packs] == [
+        "repository-control",
+        "unity-control",
+        "unity-layout-diagnostics",
+    ]
     with pytest.raises(ValueError, match="changed after review"):
         lifecycle.approve("0" * 64)
 
