@@ -217,6 +217,40 @@ def create_project_snapshot(project_id: str, inputs_dir: Path) -> ProjectSnapsho
     return manifest
 
 
+def record_local_project_provenance(job_dir: Path, project_id: str) -> Path:
+    """Bind a local-only job to the exact approved repository without copying assets.
+
+    Large Unity repositories are validated in a disposable local Git clone. Shipping every
+    committed binary asset into the job would add hundreds of megabytes without improving
+    isolation, while the approved ToolPack already binds the source HEAD and permissions.
+    """
+
+    lifecycle = ProjectToolPackLifecycle(project_id)
+    state = lifecycle.state()
+    if not state.execution_ready or state.generated is None or state.approval is None:
+        detail = "; ".join(state.execution_blockers) or "ToolPack is not approved"
+        raise PermissionError(detail)
+    generated = state.generated
+    root = Path(generated.project_root).resolve()
+    head = _git(root, "rev-parse", "HEAD").strip()
+    if head != generated.repository_head_sha:
+        raise RuntimeError("project HEAD changed after ToolPack approval")
+    workspace = job_dir / "work" / "project_snapshot"
+    workspace.mkdir(parents=True, exist_ok=True)
+    evidence = {
+        "schema_version": "onebrief-local-project-provenance-v1",
+        "mode": "local_verified_clone",
+        "project_id": project_id,
+        "source_head_sha": head,
+        "source_toolpack_sha256": generated.sha256,
+        "status": "verified_and_approved",
+        "verified_at": _now(),
+    }
+    path = workspace / "restore_evidence.json"
+    path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
 def _extract_verified(archive: Path, destination: Path, manifest: ProjectSnapshotManifest) -> None:
     if archive.stat().st_size != manifest.archive_size_bytes or _sha256(archive) != manifest.archive_sha256:
         raise RuntimeError("project snapshot archive hash or size changed")

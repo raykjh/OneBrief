@@ -76,6 +76,23 @@ def test_bee_failure_diagnostics_collects_recent_compiler_error(tmp_path: Path) 
     assert "error CS0103: MissingName" in signals[0]
 
 
+def test_bee_failure_diagnostics_ignores_binary_assemblies(tmp_path: Path) -> None:
+    bee = tmp_path / "Library" / "Bee" / "artifacts"
+    bee.mkdir(parents=True)
+    (bee / "generated.dll").write_bytes(
+        b"\x00\xfffailed\x00" + b"binary-noise" * 100
+    )
+    (bee / "compile.log").write_text(
+        "Assets/Test.cs(2,1): error CS1002: ; expected\n",
+        encoding="utf-8",
+    )
+
+    signals = _bee_failure_diagnostics(tmp_path, since=0)
+
+    assert len(signals) == 1
+    assert signals[0].startswith("Library/Bee/artifacts/compile.log:")
+
+
 def test_unity_test_failure_diagnostics_extracts_assertion_message(tmp_path: Path) -> None:
     results = tmp_path / "results.xml"
     results.write_text(

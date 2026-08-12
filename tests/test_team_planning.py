@@ -195,6 +195,25 @@ def test_project_owner_binds_public_research_to_the_grounded_model() -> None:
     assert selected.model.value == "gemini-3.5-flash"
 
 
+def test_provider_omitted_investigator_is_recovered_for_public_research() -> None:
+    result = ProjectOwnerAgent(FakeGateway(_plan())).run(
+        project_id="job-123",
+        intake=IntakeRequest(
+            goal="Research and improve the existing project.",
+            public_research_allowed=True,
+        ),
+        requirements=_requirements(),
+        sources=[_source()],
+    )
+
+    investigator = next(
+        member for member in result.members if member.agent_type == AgentType.INVESTIGATOR
+    )
+    assert result.stage_owners["public_research"] == investigator.instance_id
+    assert investigator.model.value == "gemini-3.5-flash"
+    assert "workflow-mandatory" in investigator.selection_reason
+
+
 
 def test_wrong_stage_owner_is_rejected() -> None:
     plan = _plan().model_copy(deep=True)

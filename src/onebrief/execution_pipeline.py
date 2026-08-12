@@ -223,6 +223,22 @@ class ExecutionPipeline:
         payload["changes"] = [merged[path].model_dump(mode="json") for path in order]
         return type(previous).model_validate(payload)
 
+    @staticmethod
+    def _same_development_changes(left: BaseModel, right: BaseModel) -> bool:
+        """Compare executable file results while ignoring narrative metadata."""
+
+        def fingerprint(candidate: BaseModel) -> list[tuple[str, str | None, str]]:
+            return sorted(
+                (
+                    str(item.path).casefold(),
+                    getattr(item, "base_sha256", None),
+                    str(item.content),
+                )
+                for item in getattr(candidate, "changes", [])
+            )
+
+        return fingerprint(left) == fingerprint(right)
+
     def _bind_project_change_set(
         self, intake: IntakeRequest, development_pack, change_set: T, output_dir: Path
     ) -> T:
@@ -354,6 +370,60 @@ class ExecutionPipeline:
             ),
         }
 
+    @staticmethod
+    def _development_failure_report(feedback: str) -> VerificationReport:
+        """Turn deterministic adapter blockers into one repair slice each."""
+
+        prefix = "development verification failed: "
+        detail = feedback[len(prefix):] if feedback.casefold().startswith(prefix) else feedback
+        blockers = [item.strip() for item in detail.split(" | ") if item.strip()][:12]
+        if not blockers:
+            blockers = [feedback]
+        first = blockers[0].casefold()
+        if "unity visual test contract" in first and "png" in first:
+            action = (
+                "Implement PNG evidence directly inside the OneBrief.Visual PlayMode test source; do not delegate "
+                "to a production helper. Use the loaded real scene, RenderTexture, ReadPixels, EncodeToPNG, "
+                "File.WriteAllBytes, and a literal .png path."
+            )
+        elif "unity visual test contract" in first and "visible ui" in first:
+            action = (
+                "Inside the OneBrief.Visual test, load the real project scene and discover active or inactive scene "
+                "UI components with Unity object queries; interact with them directly and never construct synthetic UI."
+            )
+        elif "unity visual test contract" in first and "language" in first:
+            action = (
+                "Inside the OneBrief.Visual test, load the real scene and operate the real TMP_Dropdown found from "
+                "scene objects; do not construct synthetic UI or delegate to a production verification component."
+            )
+        elif "unity visual test contract" in first and "glyph" in first:
+            action = (
+                "Inside the OneBrief.Visual test, ForceMeshUpdate on real TMP_Text objects and inspect "
+                "textInfo.characterInfo with font.HasCharacter to compute missing_glyph_count."
+            )
+        elif "unity visual test contract" in first and "directly reference" in first:
+            action = (
+                "Remove the production type name and Assembly-CSharp reference from the test. Interact only through "
+                "the loaded scene's public UI objects or generic reflection APIs."
+            )
+        else:
+            action = (
+                "Resolve the first listed deterministic blocker in the smallest independently verifiable change."
+            )
+        return VerificationReport(
+            verdict=Verdict.REVISE,
+            criterion_checks=[{
+                "criterion": f"Isolated build and test blocker {index}",
+                "passed": False,
+                "evidence": blocker,
+            } for index, blocker in enumerate(blockers, start=1)],
+            blocking_issues=blockers,
+            revision_instructions=[
+                action + " Do not repeat unchanged repair files."
+            ],
+            missing_information=[],
+        )
+
     def _run_adk_document_convergence(
         self,
         *,
@@ -382,6 +452,18 @@ class ExecutionPipeline:
             )
             if plan is None:
                 return None
+            if len(plan.tasks) > 1:
+                # Software repairs converge more reliably when one verified
+                # blocker is changed and retested at a time. The next adapter
+                # run will remove resolved blockers and expose the next slice.
+                selected = plan.tasks[0]
+                plan = plan.model_copy(update={
+                    "tasks": [selected],
+                    "stop_after_this_round": selected.disposition.value == "escalate",
+                    "rationale": (
+                        "Execute one smallest blocker, re-run trusted verification, then select the next blocker."
+                    ),
+                })
             repair_fingerprints.extend(item.fingerprint for item in plan.tasks)
             self._write(
                 output_dir / f"repair_plan_r{round_number}.json",
@@ -635,6 +717,15 @@ class ExecutionPipeline:
             )
             if plan is None:
                 return None
+            if len(plan.tasks) > 1:
+                selected = plan.tasks[0]
+                plan = plan.model_copy(update={
+                    "tasks": [selected],
+                    "stop_after_this_round": selected.disposition.value == "escalate",
+                    "rationale": (
+                        "Execute one smallest software blocker, re-run trusted verification, then select the next blocker."
+                    ),
+                })
             repair_fingerprints.extend(item.fingerprint for item in plan.tasks)
             self._write(
                 output_dir / (
@@ -669,18 +760,8 @@ class ExecutionPipeline:
                 maker_sources.append(compact)
         if previous_change_set is not None and prior_failure.is_file():
             feedback = " ".join(prior_failure.read_text("utf-8").split())[:12_000]
-            initial_state[VERIFICATION_STATE_KEY] = VerificationReport(
-                verdict=Verdict.REVISE,
-                criterion_checks=[{
-                    "criterion": "Latest isolated continuation check",
-                    "passed": False,
-                    "evidence": feedback,
-                }],
-                blocking_issues=[feedback],
-                revision_instructions=[
-                    "Repair only this evidenced failure and preserve all passing behavior."
-                ],
-                missing_information=[],
+            initial_state[VERIFICATION_STATE_KEY] = self._development_failure_report(
+                feedback
             ).model_dump(mode="json")
             continuation_report = VerificationReport.model_validate(
                 initial_state[VERIFICATION_STATE_KEY]
@@ -765,14 +846,67 @@ class ExecutionPipeline:
                 output_dir / f"code_change_set_delta_r{round_number}.json",
                 delta.model_dump_json(indent=2),
             )
+            prior_candidate = previous_change_set
             candidate = previous_change_set if reverify_existing else (
                 self._merge_development_retry(previous_change_set, delta)
                 if previous_change_set is not None
                 else delta
             )
+            if isinstance(candidate, ProjectCodeChangeSet):
+                # A corrected generated Unity test supersedes an earlier file
+                # placed outside Tests/PlayMode. Production files and unrelated
+                # generated files are never removed by this normalization.
+                corrected_test_names = {
+                    Path(item.path).name.casefold()
+                    for item in candidate.changes
+                    if "tests/playmode/" in item.path.replace("\\", "/").casefold()
+                }
+                if corrected_test_names:
+                    candidate = candidate.model_copy(update={
+                        "changes": [
+                            item for item in candidate.changes
+                            if not (
+                                Path(item.path).name.casefold() in corrected_test_names
+                                and "tests/playmode/" not in item.path.replace("\\", "/").casefold()
+                                and item.base_sha256 is None
+                            )
+                        ]
+                    })
             candidate = self._bind_project_change_set(
                 intake, development_pack, candidate, output_dir
             )
+            if (
+                prior_candidate is not None
+                and not reverify_existing
+                and self._same_development_changes(prior_candidate, candidate)
+            ):
+                feedback = (
+                    "Rejected an identical repair candidate that already failed deterministic verification. "
+                    "Do not repeat the same changed file content; diagnose the observed failure and choose a "
+                    "different bounded edit against the current approved candidate."
+                )
+                self._write(
+                    output_dir / f"development_repeated_candidate_r{round_number}.txt",
+                    feedback,
+                )
+                report = self._development_failure_report(feedback)
+                self._write(
+                    output_dir / f"verification_r{round_number}.json",
+                    report.model_dump_json(indent=2),
+                )
+                current_exact_edit_anchors = developer.exact_edit_anchors(
+                    prior_candidate, feedback
+                )
+                repair_plan = prepare_repair(report, round_number)
+                return {
+                    MAKER_STATE_KEY: prior_candidate.model_dump(mode="json"),
+                    VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
+                    **({
+                        REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
+                    } if repair_plan is not None else {}),
+                    EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
+                    SKIP_VERIFIER_STATE_KEY: True,
+                }
             previous_change_set = candidate
             self._write(
                 output_dir / f"code_change_set_r{round_number}.json",
@@ -831,19 +965,7 @@ class ExecutionPipeline:
                     or not decision.retry_allowed
                 ):
                     raise
-                report = VerificationReport(
-                    verdict=Verdict.REVISE,
-                    criterion_checks=[{
-                        "criterion": "Isolated build and test execution",
-                        "passed": False,
-                        "evidence": feedback,
-                    }],
-                    blocking_issues=[feedback],
-                    revision_instructions=[
-                        "Correct the reported build or test failure without removing passing behavior."
-                    ],
-                    missing_information=[],
-                )
+                report = self._development_failure_report(feedback)
                 self._write(
                     output_dir / f"verification_r{round_number}.json",
                     report.model_dump_json(indent=2),
@@ -938,12 +1060,20 @@ class ExecutionPipeline:
             "Files marked immutable_acceptance_contract may not be changed. Never touch secrets, dependencies, "
             "Git metadata, deployment, accounts, financial transactions, or paths outside the approved project. "
             "For every existing-file change, use one exact search/replace edit and never return the entire file; "
-            "the search text must occur exactly once in the approved source. On revision, repair every build, test, "
+            "the search text must occur exactly once in the approved source. "
             "When exact_edit_anchors are supplied, prefer its anchor_id and return the complete replacement for "
             "that displayed source window; OneBrief resolves the ID deterministically. Otherwise copy search text "
             "only from those verbatim windows and keep each edit to the smallest unique anchor. "
-            "runtime, or independent-review failure while preserving all "
+            "On revision, repair every build, test, runtime, or independent-review failure while preserving all "
             "previously passing behavior. New files may use complete content; existing files must use exact edits. "
+            "A compact repair may add a bounded new text file with complete content and a null base hash when the "
+            "verification evidence explicitly requires a missing test, manifest, configuration, or sidecar file. "
+            "When verification says a generated test or asmdef is in the wrong directory, do not edit that old new-file "
+            "entry in place: add the corrected file under a dedicated Tests/PlayMode path. OneBrief will supersede the "
+            "older generated path when both represent the same test contract. "
+            "Never echo unchanged previous_artifact files in a repair delta. Keep each new file or replacement under "
+            "20,000 characters and return exactly one changed path per repair turn. Trailing whitespace is "
+            "normalized deterministically, so do not spend a repair change only reformatting it. "
             "Prefer small incremental changes that can be verified and extended in later rounds. Return only the schema."
             " When repair_plan is present, treat it as the complete scope of this revision: repair those failed "
             "criterion slices only, preserve every passing criterion listed there, and do not redesign unrelated behavior. "
@@ -1210,6 +1340,9 @@ class ExecutionPipeline:
                         existing = self._load(research_path, PublicResearchResult)
                         if existing is not None and not research_reentry_requested:
                             return existing
+                        unavailable = output_dir / "public_research_unavailable.json"
+                        if unavailable.is_file() and not research_reentry_requested:
+                            return None
                         try:
                             request = (
                                 json.loads(research_reentry_path.read_text(encoding="utf-8"))

@@ -76,3 +76,22 @@ def test_repeated_failure_decomposes_then_stops_blind_retry() -> None:
     assert third.tasks[0].disposition == RepairDisposition.ESCALATE
     assert third.stop_after_this_round is True
 
+
+def test_multiple_system_blockers_remain_separate_repair_tasks() -> None:
+    report = VerificationReport(
+        verdict=Verdict.REVISE,
+        criterion_checks=[
+            CriterionCheck(criterion="PNG", passed=False, evidence="capture PNG"),
+            CriterionCheck(criterion="Scene", passed=False, evidence="operate real scene"),
+        ],
+        blocking_issues=["capture PNG", "operate real scene"],
+        revision_instructions=["Resolve every blocker."],
+        missing_information=[],
+    )
+
+    plan = build_repair_plan(_contract(), report, round_number=0)
+
+    assert plan is not None
+    assert [task.failure_evidence for task in plan.tasks] == [
+        ["capture PNG"], ["operate real scene"]
+    ]

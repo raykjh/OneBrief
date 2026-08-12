@@ -968,6 +968,7 @@ def test_existing_project_inspect_injects_restored_continuation_context(tmp_path
         ]
         assert len(restored) == 1
         assert "canonical_goal" in restored[0].content
+        assert "resumes the existing completion contract" in restored[0].summary
         return requirements(True)
 
     store = InMemoryWebSessionStore()
@@ -986,6 +987,51 @@ def test_existing_project_inspect_injects_restored_continuation_context(tmp_path
 
     assert response.status_code == 200, response.text
     assert response.json()["continuation"]["state"]["project_id"] == "exchange"
+    assert response.json()["continuation"]["continuation_kind"] == "resume"
+
+
+def test_existing_project_new_goal_starts_a_revision_contract(tmp_path, monkeypatch) -> None:
+    project_root = tmp_path / "exchange"
+    project_root.mkdir()
+    project = RegisteredProject(
+        project_id="exchange", name="Exchange", summary="FX", root_path=str(project_root),
+        project_type="web", branch="main", head_sha="a" * 40, worktree_status="clean",
+        ready_for_isolated_edit=True, toolpack_id=ToolPackId.EXCHANGE_DEVELOPMENT,
+    )
+
+    class FakeCatalog:
+        def get(self, project_id):
+            assert project_id == "exchange"
+            return project
+
+    async def fake_inspect(intake):
+        restored = [
+            source for source in intake.internal_sources
+            if source.requirement_keys == ["existing_project_continuation"]
+        ]
+        assert len(restored) == 1
+        assert "baseline evidence only" in restored[0].summary
+        return requirements(True)
+
+    store = InMemoryWebSessionStore()
+    monkeypatch.setattr("onebrief.web_service.ProjectCatalog", FakeCatalog)
+    monkeypatch.setattr("onebrief.web_service._local_jobs_root", lambda: (tmp_path / "jobs").resolve())
+    monkeypatch.setattr("onebrief.web_service.inspect_requirements", fake_inspect)
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).post("/api/inspect", data={
+            "goal": "Add a new mobile dashboard and verify it.",
+            "output_target": "existing_project",
+            "existing_project_id": "exchange",
+        })
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    continuation = response.json()["continuation"]
+    assert continuation["continuation_kind"] == "revision"
+    assert continuation["state"]["completed_work"] == []
+    assert continuation["baseline_state"] is not None
 
 def test_spreadsheet_result_returns_xlsx_instead_of_audit_zip(tmp_path) -> None:
     job_dir = tmp_path / "sheet-job"

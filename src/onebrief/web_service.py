@@ -32,6 +32,10 @@ from onebrief.cloud_jobs import (
 from onebrief.agent_platform_client import dispatch_approved_job_via_agent_platform
 from onebrief.automatic_resume import (
     can_attempt_automatic_resume,
+    can_attempt_bounded_repair_resume,
+    can_attempt_structural_resume,
+    create_bounded_repair_resume,
+    create_structural_resume,
     revalidate_failed_development,
     seed_automatic_resume,
 )
@@ -726,7 +730,7 @@ async def inspect(
             selected_project = ProjectCatalog().get(existing_project_id)
         continuation_context = ProjectContinuityStore(
             selected_project, _local_jobs_root()
-        ).context()
+        ).context().for_request(goal)
         sources = [*sources, continuation_context.as_internal_source()]
     elif existing_project_id:
         raise HTTPException(422, "기존 프로젝트가 아닌 작업에는 프로젝트를 지정할 수 없습니다.")
@@ -1142,6 +1146,7 @@ async def run_session(
                 sources=session.intake.internal_sources,
                 estimate=session.budget,
                 approved_usd=approval.approved_usd,
+                embed_project_snapshot=False,
             )
             if reuse_candidate is not None:
                 seed_reusable_artifacts(reuse_candidate, job_dir)
@@ -1328,8 +1333,11 @@ async def session_status(
                 and session.intake.existing_project_id
             ):
                 if link.operation_name == "local":
-                    payload["auto_resume_available"] = can_attempt_automatic_resume(
-                        Path(link.job_uri).resolve()
+                    local_job = Path(link.job_uri).resolve()
+                    payload["auto_resume_available"] = (
+                        can_attempt_automatic_resume(local_job)
+                        or can_attempt_bounded_repair_resume(local_job)
+                        or can_attempt_structural_resume(local_job)
                     )
                 else:
                     # Cloud candidates are downloaded and deterministically
@@ -1398,6 +1406,97 @@ async def automatically_resume_session(
             or state.generated.sha256 != expected_toolpack
         ):
             raise RuntimeError("the approved ToolPack changed after the failed run")
+        if link.operation_name == "local" and can_attempt_structural_resume(source_job):
+            child_job, structural = await asyncio.to_thread(
+                create_structural_resume, source_job, _local_jobs_root()
+            )
+            child = previous.model_copy(update={
+                "session_id": child_session_id,
+                "created_at": _now(),
+                "selected_project": project,
+                "reuse_source_job_uri": link.job_uri,
+                "previous_attempt": {
+                    "job_id": structural.source_job_id,
+                    "status": "failed",
+                    "reusable_artifacts": [],
+                    "message": (
+                        "A deterministic team-plan defect was repaired. No maker output existed; "
+                        "the workflow restarts under only the unused original approval."
+                    ),
+                },
+                "parent_session_id": session_id,
+                "amendment_kind": "structural_automatic_resume",
+                "amendment_reason": "A missing mandatory stage owner was restored from the agent registry.",
+            })
+            execution = ExecutionLink(
+                session_id=child_session_id,
+                job_uri=str(child_job),
+                operation_name="local",
+                created_at=_now(),
+                authorization_receipt=link.authorization_receipt,
+            )
+            store.create(child)
+            store.claim_run(child_session_id)
+            store.save_execution(execution)
+            task = asyncio.create_task(asyncio.to_thread(run_job, child_job))
+            _local_tasks.add(task)
+            task.add_done_callback(_local_tasks.discard)
+            return {
+                "session_id": child_session_id,
+                "status": "queued",
+                "source_job_id": structural.source_job_id,
+                "source_actual_usd": structural.source_actual_usd,
+                "remaining_approved_usd": structural.remaining_approved_usd,
+                "maker_reused": False,
+                "message": "The structural plan was repaired and resumed within the original cap.",
+            }
+        if link.operation_name == "local" and can_attempt_bounded_repair_resume(source_job):
+            child_job, repair = await asyncio.to_thread(
+                create_bounded_repair_resume, source_job, _local_jobs_root()
+            )
+            child = previous.model_copy(update={
+                "session_id": child_session_id,
+                "created_at": _now(),
+                "selected_project": project,
+                "reuse_source_job_uri": link.job_uri,
+                "previous_attempt": {
+                    "job_id": repair.source_job_id,
+                    "status": "failed",
+                    "reusable_artifacts": repair.reused_artifacts,
+                    "message": (
+                        "The rejected candidate and exact failure evidence were retained. "
+                        "Completed planning and analysis are not billed again."
+                    ),
+                },
+                "parent_session_id": session_id,
+                "amendment_kind": "bounded_repair_resume",
+                "amendment_reason": (
+                    "The same maker resumes from the best rejected candidate under only unused approval."
+                ),
+            })
+            execution = ExecutionLink(
+                session_id=child_session_id,
+                job_uri=str(child_job),
+                operation_name="local",
+                created_at=_now(),
+                authorization_receipt=link.authorization_receipt,
+            )
+            store.create(child)
+            store.claim_run(child_session_id)
+            store.save_execution(execution)
+            task = asyncio.create_task(asyncio.to_thread(run_job, child_job))
+            _local_tasks.add(task)
+            task.add_done_callback(_local_tasks.discard)
+            return {
+                "session_id": child_session_id,
+                "status": "queued",
+                "source_job_id": repair.source_job_id,
+                "source_actual_usd": repair.source_actual_usd,
+                "cumulative_actual_usd": repair.cumulative_actual_usd,
+                "remaining_approved_usd": repair.remaining_approved_usd,
+                "maker_reused": True,
+                "message": "The rejected candidate resumed within the original aggregate cap.",
+            }
         plan = await asyncio.to_thread(
             revalidate_failed_development, source_job, project_id
         )

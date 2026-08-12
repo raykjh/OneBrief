@@ -67,6 +67,8 @@ class ProjectContinuationState(BaseModel):
 class ProjectContinuationContext(BaseModel):
     project: RegisteredProject
     state: ProjectContinuationState
+    continuation_kind: Literal["resume", "revision"] = "resume"
+    baseline_state: ProjectContinuationState | None = None
     previous_runs: list[PreviousRun] = Field(default_factory=list)
     tracked_documents: list[str] = Field(default_factory=list)
     tracked_code: list[str] = Field(default_factory=list)
@@ -81,12 +83,64 @@ class ProjectContinuationContext(BaseModel):
             requirement_keys=["existing_project_continuation"],
             summary=(
                 "Authoritative continuation context reconstructed from the selected repository, "
-                "its Git history, durable OneBrief state, and previous execution records."
+                "its Git history, durable OneBrief state, and previous execution records. "
+                + (
+                    "The current request is a new revision: prior completion is baseline evidence "
+                    "only and does not satisfy the new completion contract."
+                    if self.continuation_kind == "revision"
+                    else "The current request resumes the existing completion contract."
+                )
             ),
             content=content,
             media_type="application/json",
             size_bytes=len(content.encode("utf-8")),
             sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        )
+
+    def for_request(self, goal: str) -> "ProjectContinuationContext":
+        """Rebase durable history when the user asks for a new project revision.
+
+        A previous verified package remains useful baseline evidence, but it must not make a
+        newly requested improvement look complete before new acceptance criteria are evaluated.
+        Exact-goal requests and short continuation commands retain the existing run state.
+        """
+
+        requested = goal.strip()
+        canonical = self.state.canonical_goal.strip()
+        normalized = " ".join(requested.casefold().split())
+        resume_commands = {
+            "continue",
+            "continue the unfinished work.",
+            "resume",
+            "resume the work.",
+            "계속",
+            "계속해줘",
+            "계속 진행해줘",
+            "작업 재개",
+            "작업을 이어서 진행해줘",
+        }
+        if requested == canonical or normalized in resume_commands:
+            return self
+
+        baseline = self.state.model_copy(deep=True)
+        revised = baseline.model_copy(
+            update={
+                "canonical_goal": requested,
+                "acceptance_criteria": [],
+                "completed_work": [],
+                "pending_work": [
+                    "define, execute, and independently verify the newly requested improvement"
+                ],
+                "failed_work": [],
+                "updated_at": _now(),
+            }
+        )
+        return self.model_copy(
+            update={
+                "state": revised,
+                "continuation_kind": "revision",
+                "baseline_state": baseline,
+            }
         )
 
 

@@ -168,6 +168,7 @@ class DeveloperAgent:
     ) -> BaseModel:
         """Promote an untrusted proposal through the exact approved path boundary."""
         if self.change_set_schema is ProjectCodeChangeSet:
+            compact_repair = isinstance(raw, CompactProposedProjectCodeChangeSet)
             proposed = ProposedProjectCodeChangeSet.model_validate(
                 raw.model_dump(mode="json") if isinstance(raw, BaseModel) else raw
             )
@@ -196,6 +197,15 @@ class DeveloperAgent:
                 path = str(change.get("path", ""))
                 if self.path_approver(path) is None:
                     continue
+                if compact_repair and change.get("content") is not None:
+                    if path in source_map or path in previous_map:
+                        raise ValueError(
+                            f"compact full-file repair may only add a new file: {path}"
+                        )
+                    if change.get("base_sha256") is not None:
+                        raise ValueError(
+                            f"new compact repair file must have a null base hash: {path}"
+                        )
                 pending = changes_by_path.get(path.casefold())
                 if pending is not None and change.get("content") is not None:
                     raise ValueError(

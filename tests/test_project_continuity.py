@@ -75,3 +75,53 @@ def test_continuation_restores_goal_and_classifies_previous_work(tmp_path: Path)
     assert context.as_internal_source().requirement_keys == ["existing_project_continuation"]
     assert (root / ".onebrief" / "project_state.json").is_file()
     assert ProjectCatalog(exchange_root=root).get("exchange").ready_for_isolated_edit is True
+
+
+def test_new_improvement_rebases_previous_completion_as_baseline(tmp_path: Path) -> None:
+    root = tmp_path / "exchange"
+    root.mkdir()
+    (root / "README.md").write_text("# Exchange\n", encoding="utf-8")
+    _git(root, "init")
+    _git(root, "config", "user.name", "OneBrief Test")
+    _git(root, "config", "user.email", "onebrief@example.invalid")
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "Create exchange app")
+
+    project = ProjectCatalog(exchange_root=root).get("exchange")
+    store = ProjectContinuityStore(project, tmp_path / "jobs")
+    original = store.context()
+    original.state.completed_work = ["verified result package produced"]
+    original.state.pending_work = ["review and apply the verified result"]
+
+    revised = original.for_request("Add a new mobile dashboard and verify it.")
+
+    assert revised.continuation_kind == "revision"
+    assert revised.state.canonical_goal == "Add a new mobile dashboard and verify it."
+    assert revised.state.completed_work == []
+    assert revised.state.failed_work == []
+    assert revised.state.pending_work == [
+        "define, execute, and independently verify the newly requested improvement"
+    ]
+    assert revised.baseline_state is not None
+    assert revised.baseline_state.completed_work == ["verified result package produced"]
+    assert "baseline evidence only" in revised.as_internal_source().summary
+
+
+def test_short_continue_command_keeps_current_completion_state(tmp_path: Path) -> None:
+    root = tmp_path / "exchange"
+    root.mkdir()
+    (root / "README.md").write_text("# Exchange\n", encoding="utf-8")
+    _git(root, "init")
+    _git(root, "config", "user.name", "OneBrief Test")
+    _git(root, "config", "user.email", "onebrief@example.invalid")
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "Create exchange app")
+
+    project = ProjectCatalog(exchange_root=root).get("exchange")
+    context = ProjectContinuityStore(project, tmp_path / "jobs").context()
+
+    resumed = context.for_request("계속 진행해줘")
+
+    assert resumed.continuation_kind == "resume"
+    assert resumed.baseline_state is None
+    assert resumed.state.canonical_goal == context.state.canonical_goal

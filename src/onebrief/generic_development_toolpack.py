@@ -160,12 +160,13 @@ class ProposedProjectCodeChangeSet(BaseModel):
 
 
 class CompactProposedProjectFileChange(BaseModel):
-    """Bounded repair delta used after a full-file structured response fails."""
+    """Bounded repair delta, including a small new file when evidence requires one."""
 
     path: str
     base_sha256: str | None = None
+    content: str | None = Field(default=None, max_length=20000)
     search: str | None = Field(default=None, min_length=1, max_length=6000)
-    replace: str = Field(max_length=12000)
+    replace: str | None = Field(default=None, max_length=20000)
     anchor_id: str | None = Field(default=None, pattern=r"^A[0-9a-f]{12}$")
     start_anchor: str | None = Field(default=None, min_length=1, max_length=2000)
     end_anchor: str | None = Field(default=None, min_length=1, max_length=2000)
@@ -176,37 +177,77 @@ class CompactProposedProjectFileChange(BaseModel):
     def validate_path(cls, value: str) -> str:
         return generic_safe_relative(value).as_posix()
 
+    @field_validator("reason", mode="before")
+    @classmethod
+    def bound_explanatory_reason(cls, value: object) -> str:
+        # ``reason`` is audit metadata, not executable content or authority.
+        # Preserve the useful prefix instead of discarding an otherwise valid
+        # bounded edit because a provider over-explained it.
+        return str(value)[:500]
+
     @model_validator(mode="after")
     def validate_edit_mode(self) -> "CompactProposedProjectFileChange":
-        catalog_edit = (
-            self.anchor_id is not None
+        # Gemini occasionally includes a redundant ``content`` field while also
+        # returning the requested bounded edit. Prefer the narrower edit mode
+        # deterministically; trusted promotion still verifies the catalog/search
+        # anchor against the approved source before any clone is changed.
+        if self.replace is not None:
+            if self.anchor_id is not None:
+                self.content = None
+                self.search = None
+                self.start_anchor = None
+                self.end_anchor = None
+            elif self.search is not None:
+                self.content = None
+                self.start_anchor = None
+                self.end_anchor = None
+            elif self.start_anchor is not None and self.end_anchor is not None:
+                self.content = None
+        full_file = (
+            self.content is not None
             and self.search is None
+            and self.replace is None
+            and self.anchor_id is None
             and self.start_anchor is None
             and self.end_anchor is None
         )
+        catalog_edit = (
+            self.content is None
+            and self.anchor_id is not None
+            and self.search is None
+            and self.start_anchor is None
+            and self.end_anchor is None
+            and self.replace is not None
+        )
         exact_edit = (
-            self.anchor_id is None
+            self.content is None
+            and self.anchor_id is None
             and self.search is not None
             and self.start_anchor is None
             and self.end_anchor is None
+            and self.replace is not None
         )
         anchored_edit = (
-            self.anchor_id is None
+            self.content is None
+            and self.anchor_id is None
             and self.search is None
             and self.start_anchor is not None
             and self.end_anchor is not None
+            and self.replace is not None
         )
-        if sum((catalog_edit, exact_edit, anchored_edit)) != 1:
+        if sum((full_file, catalog_edit, exact_edit, anchored_edit)) != 1:
             raise ValueError(
-                "provide one catalog anchor, bounded exact edit, or bounded anchored edit"
+                "provide one bounded new file, catalog anchor, exact edit, or anchored edit"
             )
+        if full_file and self.base_sha256 is not None:
+            raise ValueError("a compact full-file repair must be a new file with a null base hash")
         return self
 
 
 class CompactProposedProjectCodeChangeSet(BaseModel):
     schema_version: str = "onebrief-project-code-change-set-v1"
     summary: str = Field(min_length=3, max_length=1000)
-    changes: list[CompactProposedProjectFileChange] = Field(min_length=1, max_length=3)
+    changes: list[CompactProposedProjectFileChange] = Field(min_length=1, max_length=1)
 
 
 class ApprovedProjectDevelopmentToolPack:
@@ -325,7 +366,10 @@ class ApprovedProjectDevelopmentToolPack:
                 # isolated PlayMode test this is an unambiguous one-character
                 # syntax repair; production sources remain untouched.
                 body = body.replace('${"', '$"')
-                body = body.rstrip(" \t")
+            # Trailing horizontal whitespace never changes C# semantics and
+            # causes deterministic patch-hygiene rejection. Normalize it for
+            # every generated candidate, not only files already under Tests.
+            body = body.rstrip(" \t")
             if re.match(r"^\s*using\s+(?:static\s+)?[A-Za-z_][A-Za-z0-9_.]*(?:\s*=\s*[A-Za-z_][A-Za-z0-9_.]*)?;[ \t]+$", body):
                 body = body.rstrip(" \t")
             normalized.append(body + newline)

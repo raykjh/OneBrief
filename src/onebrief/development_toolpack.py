@@ -192,6 +192,10 @@ def _bee_failure_diagnostics(cwd: Path, *, since: float) -> list[str]:
     collected: list[str] = []
     inspected = 0
     total_bytes = 0
+    # Bee stores assemblies and PDBs beside its human-readable compiler logs.
+    # Decoding those binary artifacts as UTF-8 can manufacture words such as
+    # ``failed`` and drown the real NUnit/compiler assertion in binary noise.
+    readable_suffixes = {".log", ".txt", ".rsp", ".json"}
     for path in bee_root.rglob("*"):
         if inspected >= 10_000 or total_bytes >= 30_000_000:
             break
@@ -199,7 +203,11 @@ def _bee_failure_diagnostics(cwd: Path, *, since: float) -> list[str]:
             stat = path.stat()
         except OSError:
             continue
-        if not path.is_file() or stat.st_size > 2_000_000:
+        if (
+            not path.is_file()
+            or path.suffix.casefold() not in readable_suffixes
+            or stat.st_size > 2_000_000
+        ):
             continue
         inspected += 1
         total_bytes += stat.st_size

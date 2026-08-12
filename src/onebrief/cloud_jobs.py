@@ -23,6 +23,7 @@ REUSABLE_WORK_ARTIFACTS = (
     "project_architecture.json",
     "public_research.json",
     "public_research.md",
+    "public_research_unavailable.json",
     "analysis.json",
     *(f"draft_r{index}.json" for index in range(13)),
     "code_change_set.json",

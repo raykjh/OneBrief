@@ -14,6 +14,7 @@ from onebrief.project_snapshot import (
     SNAPSHOT_ARCHIVE,
     SNAPSHOT_MANIFEST,
     create_project_snapshot,
+    record_local_project_provenance,
     restore_project_snapshot,
 )
 from onebrief.toolpack_lifecycle import ProjectToolPackLifecycle
@@ -247,3 +248,51 @@ def test_project_development_job_embeds_snapshot_in_immutable_inputs(
 
     assert not (package / "artifacts" / "project_snapshot" / "repository").exists()
     assert (package / "artifacts" / "project_snapshot" / "restore_evidence.json").is_file()
+
+
+def test_local_project_job_uses_exact_provenance_without_copying_large_assets(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root, _registry = _approved_python_project(tmp_path, monkeypatch)
+    source = InternalSource(
+        name="task.md",
+        priority=SourcePriority.MANDATORY,
+        requirement_keys=["task_contract"],
+        content="Improve the approved source in an isolated local clone.",
+    )
+    intake = IntakeRequest(
+        goal="Improve the approved Python project locally.",
+        output_target=OutputTarget.EXISTING_PROJECT,
+        existing_project_id="snapshot-python",
+        internal_sources=[source],
+        toolpack_ids=[ToolPackId.PROJECT_DEVELOPMENT],
+    )
+    requirements = RequirementsAnalysis(
+        supported=True,
+        support_reason="The local project and validation contract are available.",
+        normalized_goal=intake.goal,
+        deliverables=["Verified source patch"],
+        mandatory_information=[],
+        optional_information=[],
+        acceptance_criteria=["The approved tests pass."],
+        assumptions=[],
+        consolidated_questions=[],
+        ready_for_estimate=True,
+    )
+    estimate = estimate_budget(intake, requirements)
+    job = create_job(
+        jobs_dir=tmp_path / "jobs",
+        intake=intake,
+        requirements=requirements,
+        sources=[source],
+        estimate=estimate,
+        approved_usd=estimate.recommended_approval_usd,
+        embed_project_snapshot=False,
+    )
+
+    assert not (job / "inputs" / SNAPSHOT_ARCHIVE).exists()
+    evidence_path = record_local_project_provenance(job, "snapshot-python")
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert evidence["mode"] == "local_verified_clone"
+    assert evidence["source_head_sha"] == _git(root, "rev-parse", "HEAD")
+    assert evidence["status"] == "verified_and_approved"

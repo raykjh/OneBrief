@@ -9,6 +9,7 @@ import pytest
 
 from onebrief.generic_development_toolpack import (
     ApprovedProjectDevelopmentToolPack,
+    CompactProposedProjectCodeChangeSet,
     ProjectCodeChangeSet,
     ProjectFileChange,
     ProposedProjectCodeChangeSet,
@@ -56,6 +57,43 @@ def test_proposed_exact_edit_supports_mature_single_file_components() -> None:
     })
 
     assert len(proposal.changes[0].replace or "") == 40_000
+
+
+def test_compact_proposal_prefers_catalog_edit_over_redundant_content() -> None:
+    proposal = CompactProposedProjectCodeChangeSet.model_validate({
+        "summary": "Repair one verified source window.",
+        "changes": [{
+            "path": "Assets/JULPAE/Tests/PlayMode/OneBriefVisualTests.cs",
+            "base_sha256": "a" * 64,
+            "content": "unsafe whole-file echo",
+            "anchor_id": "A123456789abc",
+            "replace": "bounded replacement",
+            "reason": "Repair the failed PlayMode assertion.",
+        }],
+    })
+
+    change = proposal.changes[0]
+    assert change.content is None
+    assert change.anchor_id == "A123456789abc"
+    assert change.replace == "bounded replacement"
+
+
+def test_compact_proposal_bounds_explanatory_reason_without_changing_edit() -> None:
+    proposal = CompactProposedProjectCodeChangeSet.model_validate({
+        "summary": "Repair one verified source window.",
+        "changes": [{
+            "path": "Assets/JULPAE/Tests/PlayMode/OneBriefVisualTests.cs",
+            "base_sha256": "a" * 64,
+            "search": "old assertion",
+            "replace": "new assertion",
+            "reason": "explanation " * 100,
+        }],
+    })
+
+    change = proposal.changes[0]
+    assert len(change.reason) == 500
+    assert change.search == "old assertion"
+    assert change.replace == "new assertion"
 
 
 def test_structural_anchors_rediscover_a_changed_existing_region() -> None:
@@ -716,14 +754,14 @@ def test_generic_runner_normalizes_nonsemantic_text_whitespace_before_validation
     ) == "export const answer = 42;\n"
 
 
-def test_safe_csharp_normalization_only_trims_using_directives() -> None:
+def test_safe_csharp_normalization_trims_line_end_whitespace_without_touching_literals() -> None:
     content = "using System;   \nvar text = @\"meaningful   \";   \n"
 
     normalized = ApprovedProjectDevelopmentToolPack._normalize_safe_generated_text(
         "Assets/Tests/Visual.cs", content
     )
 
-    assert normalized == "using System;\nvar text = @\"meaningful   \";   \n"
+    assert normalized == "using System;\nvar text = @\"meaningful   \";\n"
 
 
 def test_safe_web_normalization_converts_crlf_and_removes_trailing_space() -> None:
@@ -736,7 +774,7 @@ def test_safe_web_normalization_converts_crlf_and_removes_trailing_space() -> No
     assert normalized == '<select id="langSelect">\n<option>한국어</option>\n'
 
 
-def test_safe_csharp_normalization_trims_test_source_whitespace_only_in_playmode_tests() -> None:
+def test_safe_csharp_normalization_trims_generated_candidate_whitespace_for_all_csharp() -> None:
     content = "using System;\n    \nvar text = \"test\";   \n"
 
     generated = ApprovedProjectDevelopmentToolPack._normalize_safe_generated_text(
@@ -747,7 +785,7 @@ def test_safe_csharp_normalization_trims_test_source_whitespace_only_in_playmode
     )
 
     assert generated == "using System;\n\nvar text = \"test\";\n"
-    assert production == content
+    assert production == "using System;\n\nvar text = \"test\";\n"
 
 
 def test_safe_csharp_normalization_repairs_javascript_style_interpolation_only_in_playmode_tests() -> None:

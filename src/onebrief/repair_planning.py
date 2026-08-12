@@ -84,10 +84,15 @@ def build_repair_plan(
     contract_by_id = {item.criterion_id: item for item in contract.quality_criteria}
     tasks: list[RepairTask] = []
     for index, check in enumerate(failed[:12], start=1):
-        evidence = list(dict.fromkeys([
-            check.evidence,
-            *report.blocking_issues,
-        ]))[:8]
+        # A deterministic adapter can report several independent blockers.
+        # When they have already been split into checks, reattaching the full
+        # blocker list to every task defeats decomposition and makes the maker
+        # repeatedly choose only one convenient item.
+        evidence = list(dict.fromkeys(
+            [check.evidence, *report.blocking_issues]
+            if len(failed) == 1
+            else [check.evidence]
+        ))[:8]
         instructions = list(dict.fromkeys(report.revision_instructions))[:8] or [
             "Repair only the evidenced failure and preserve every passing criterion."
         ]

@@ -160,8 +160,18 @@ class TeamPlanDraft(BaseModel):
     toolpack_ids: list[ToolPackId] = Field(default_factory=list, max_length=5)
 
 
-def normalize_team_plan(raw: TeamPlanDraft | TeamPlan, *, project_id: str) -> TeamPlan:
-    """Repair redundant team references without inventing agents or authority."""
+def normalize_team_plan(
+    raw: TeamPlanDraft | TeamPlan,
+    *,
+    project_id: str,
+    public_research_allowed: bool = False,
+) -> TeamPlan:
+    """Repair provider structure and supply only workflow-mandatory worker roles.
+
+    Agent authority still comes exclusively from the registry. The deterministic additions below
+    cannot broaden project permissions; they only prevent a structurally incomplete provider plan
+    from aborting before the approved workflow starts.
+    """
     members: list[TeamMemberPlan] = []
     financial_goal = any(
         token in raw.goal_summary.casefold()
@@ -203,6 +213,61 @@ def normalize_team_plan(raw: TeamPlanDraft | TeamPlan, *, project_id: str) -> Te
             update={"skill_packs": list(dict.fromkeys(skills))}
         )
         members.append(member.model_copy(update={"packs": packs}))
+
+    required_types = [AgentType.ANALYST, AgentType.MAKER, AgentType.CRITIC]
+    if public_research_allowed:
+        required_types.append(AgentType.INVESTIGATOR)
+    present_types = {member.agent_type for member in members}
+    fallback_team = next(
+        (member.team_id for member in members if member.agent_type == AgentType.PROJECT_OWNER),
+        members[0].team_id if members else "delivery",
+    )
+    registry = AgentRegistry()
+    used_ids = {member.instance_id for member in members}
+    for agent_type in required_types:
+        if agent_type in present_types:
+            continue
+        card = registry.get(agent_type)
+        instance_id = f"{agent_type.value}-required"
+        counter = 2
+        while instance_id in used_ids:
+            instance_id = f"{agent_type.value}-required-{counter}"
+            counter += 1
+        members.append(TeamMemberPlan(
+            instance_id=instance_id,
+            team_id=fallback_team,
+            agent_type=agent_type,
+            role_title=card.display_name,
+            responsibility=card.mission,
+            perspective=(
+                "Independently verify the artifact against the approved completion contract."
+                if agent_type == AgentType.CRITIC
+                else "Execute only the registry-defined responsibility with evidence grounding."
+            ),
+            selection_reason=(
+                "Deterministic recovery supplied this workflow-mandatory role after the provider "
+                "omitted its required stage owner."
+            ),
+            temperament=TemperamentAssignment(pace="T", orientation="F", scope="G"),
+            model=(
+                ApprovedModel.GEMINI_3_1_PRO_PREVIEW
+                if agent_type == AgentType.CRITIC
+                else ApprovedModel.GEMINI_3_5_FLASH
+            ),
+            model_selection_reason=(
+                "The approved higher-reasoning model is reserved for independent verification."
+                if agent_type == AgentType.CRITIC
+                else "The approved Flash model provides the required grounded workflow capability."
+            ),
+            packs=PackGrant(
+                knowledge_packs=["project-contract", "approved-sources", "acceptance-criteria"],
+                tool_packs=["structured-gemini", "artifact-workspace"],
+                template_packs=["evidence-handoff"],
+                rule_packs=["budget-gate", "evidence-grounding", "independent-review"],
+            ),
+        ))
+        used_ids.add(instance_id)
+        present_types.add(agent_type)
     selected = {member.agent_type for member in members}
     original_teams = {team.team_id: team for team in raw.teams}
     teams: list[TeamDefinition] = []
@@ -426,7 +491,11 @@ class ProjectOwnerAgent:
         )
         if not isinstance(plan, (TeamPlanDraft, TeamPlan)):
             raise TypeError("project owner returned an invalid TeamPlan type")
-        plan = normalize_team_plan(plan, project_id=project_id)
+        plan = normalize_team_plan(
+            plan,
+            project_id=project_id,
+            public_research_allowed=intake.public_research_allowed,
+        )
         plan = apply_decision_criticality_policy(plan)
         if intake.public_research_allowed:
             investigator_id = plan.stage_owners.get("public_research")

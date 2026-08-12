@@ -1011,7 +1011,7 @@ def test_developer_supplies_exact_small_anchors_for_language_repair() -> None:
     assert direct == payload["exact_edit_anchors"]
 
 
-def test_project_developer_compact_retry_forbids_full_file_content() -> None:
+def test_project_developer_compact_retry_keeps_existing_files_as_exact_edits() -> None:
     previous = ProjectCodeChangeSet(
         summary="Existing candidate.",
         changes=[{
@@ -1066,6 +1066,87 @@ def test_project_developer_compact_retry_forbids_full_file_content() -> None:
 
     assert gateway.schemas == [ProposedProjectCodeChangeSet, CompactProposedProjectCodeChangeSet]
     assert result.changes[0].content == "export const label = 'English';\n"
+
+
+def test_project_developer_compact_retry_can_add_bounded_new_evidence_files() -> None:
+    proposal = CompactProposedProjectCodeChangeSet.model_validate({
+        "summary": "Add the missing Unity test contract.",
+        "changes": [{
+            "path": "Assets/Tests/PlayMode/OneBrief.Visual.Tests.asmdef",
+            "base_sha256": None,
+            "content": '{"optionalUnityReferences":["TestAssemblies"]}\n',
+            "reason": "The verifier explicitly requires a discoverable PlayMode test assembly.",
+        }],
+    })
+    developer = DeveloperAgent(
+        object(), change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/", path_approver=lambda path: path,
+    )
+
+    result = developer.promote_candidate(proposal, [])
+
+    assert result.changes[0].path.endswith("OneBrief.Visual.Tests.asmdef")
+    assert "TestAssemblies" in result.changes[0].content
+
+
+def test_compact_repair_schema_allows_only_one_changed_path() -> None:
+    item = {
+        "path": "Assets/Tests/One.cs",
+        "base_sha256": None,
+        "content": "class One {}\n",
+        "reason": "One bounded repair.",
+    }
+    with pytest.raises(Exception):
+        CompactProposedProjectCodeChangeSet.model_validate({
+            "summary": "Too many repair paths.",
+            "changes": [item, {**item, "path": "Assets/Tests/Two.cs"}],
+        })
+
+
+def test_project_developer_compact_retry_rejects_full_existing_file_replacement() -> None:
+    source = "export const label = 'old';\n"
+    proposal = CompactProposedProjectCodeChangeSet.model_validate({
+        "summary": "Unsafe broad replacement.",
+        "changes": [{
+            "path": "web/app/page.tsx",
+            "base_sha256": None,
+            "content": "export const label = 'new';\n",
+            "reason": "Attempt a broad replacement.",
+        }],
+    })
+    developer = DeveloperAgent(
+        object(), change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/", path_approver=lambda path: path,
+    )
+
+    with pytest.raises(ValueError, match="may only add a new file"):
+        developer.promote_candidate(proposal, [{
+            "repository_path": "web/app/page.tsx",
+            "sha256": "a" * 64,
+            "content": source,
+        }])
+
+
+def test_deterministic_development_failures_become_independent_repair_slices() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "development verification failed: missing PNG | missing scene interaction | missing glyph check"
+    )
+
+    assert report.verdict == Verdict.REVISE
+    assert [item.evidence for item in report.criterion_checks] == [
+        "missing PNG", "missing scene interaction", "missing glyph check"
+    ]
+
+
+def test_unity_png_failure_explains_direct_test_evidence_contract() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "development verification failed: Unity visual test contract: must capture PNG runtime evidence"
+    )
+
+    instruction = report.revision_instructions[0]
+    assert "OneBrief.Visual" in instruction
+    assert "RenderTexture" in instruction
+    assert "EncodeToPNG" in instruction
 
 
 def test_project_developer_resolves_verified_anchor_id_without_retyping_source() -> None:
@@ -1625,6 +1706,34 @@ def test_development_retry_preserves_prior_scope_when_updating_one_file(tmp_path
     assert [(item.path, item.content) for item in merged.changes] == [
         ("Assets/A.cs", "A2"), ("Assets/B.cs", "B1")
     ]
+
+
+def test_development_change_comparison_ignores_only_narrative_metadata(tmp_path: Path) -> None:
+    pipeline = ExecutionPipeline(tmp_path)
+    previous = ProjectCodeChangeSet(
+        summary="First explanation.",
+        changes=[{
+            "path": "Assets/A.cs",
+            "base_sha256": "a" * 64,
+            "content": "same executable content",
+            "reason": "First reason.",
+        }],
+    )
+    repeated = ProjectCodeChangeSet(
+        summary="Different explanation.",
+        changes=[{
+            "path": "Assets/A.cs",
+            "base_sha256": "a" * 64,
+            "content": "same executable content",
+            "reason": "Different reason.",
+        }],
+    )
+    changed = repeated.model_copy(update={
+        "changes": [repeated.changes[0].model_copy(update={"content": "new content"})]
+    })
+
+    assert pipeline._same_development_changes(previous, repeated) is True
+    assert pipeline._same_development_changes(previous, changed) is False
 
 
 def test_retry_summary_can_remove_named_new_duplicate_without_dropping_scope(tmp_path: Path) -> None:
