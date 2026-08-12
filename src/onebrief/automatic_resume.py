@@ -168,6 +168,7 @@ def can_attempt_bounded_repair_resume(job_dir: Path) -> bool:
             and (
                 "invalid json: eof" in message
                 or "provide one bounded new file" in message
+                or "a compact full-file repair must" in message
                 or "provide one catalog anchor" in message
                 or "string should have at most 500 characters" in message
             )

@@ -751,6 +751,8 @@ class ExecutionPipeline:
         )
         exact_repair_required = (
             "namespace/full name begins" in prior_failure_text.casefold()
+            or "the onebrief.visual test must" in prior_failure_text.casefold()
+            or "inside the onebrief.visual test" in prior_failure_text.casefold()
         )
         if previous_change_set is not None:
             initial_state[MAKER_STATE_KEY] = previous_change_set.model_dump(mode="json")
