@@ -164,12 +164,16 @@ class CompactProposedProjectFileChange(BaseModel):
 
     path: str
     base_sha256: str | None = None
-    content: str | None = Field(default=None, max_length=20000)
-    search: str | None = Field(default=None, min_length=1, max_length=6000)
-    replace: str | None = Field(default=None, max_length=20000)
+    # The provider sees every optional field in the JSON schema and may emit
+    # both ``content`` and ``replace`` before our narrower-mode validator can
+    # discard one. Keep the schema itself below a single model response cap so
+    # a repair cannot be truncated before validation.
+    content: str | None = Field(default=None, max_length=8000)
+    search: str | None = Field(default=None, min_length=1, max_length=3000)
+    replace: str | None = Field(default=None, max_length=8000)
     anchor_id: str | None = Field(default=None, pattern=r"^A[0-9a-f]{12}$")
-    start_anchor: str | None = Field(default=None, min_length=1, max_length=2000)
-    end_anchor: str | None = Field(default=None, min_length=1, max_length=2000)
+    start_anchor: str | None = Field(default=None, min_length=1, max_length=1000)
+    end_anchor: str | None = Field(default=None, min_length=1, max_length=1000)
     reason: str = Field(min_length=3, max_length=500)
 
     @field_validator("path")

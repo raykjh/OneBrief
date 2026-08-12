@@ -96,6 +96,19 @@ def test_compact_proposal_bounds_explanatory_reason_without_changing_edit() -> N
     assert change.replace == "new assertion"
 
 
+def test_compact_proposal_schema_prevents_prevalidation_output_overflow() -> None:
+    with pytest.raises(ValueError, match="at most 8000 characters"):
+        CompactProposedProjectCodeChangeSet.model_validate({
+            "summary": "Repair one bounded file.",
+            "changes": [{
+                "path": "Assets/Tests/PlayMode/OneBriefVisualTests.cs",
+                "base_sha256": None,
+                "content": "x" * 8001,
+                "reason": "Keep one repair response within the provider cap.",
+            }],
+        })
+
+
 def test_structural_anchors_rediscover_a_changed_existing_region() -> None:
     developer = DeveloperAgent(
         SimpleNamespace(),
