@@ -810,6 +810,110 @@ def test_adk_software_continuation_returns_bad_edit_anchor_to_same_maker(
     )
 
 
+def test_continuation_repromotes_paid_pending_proposal_before_model_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    previous = ProjectCodeChangeSet(
+        summary="Prior candidate",
+        changes=[{
+            "path": "Assets/UI/Status.cs", "base_sha256": None,
+            "content": "void Bind() { label.text = \"almost-ready\"; }\n",
+            "reason": "Preserve prior progress.",
+        }],
+    )
+    feedback = "Expected ready instead of almost-ready in Assets/UI/Status.cs."
+    anchors = DeveloperAgent.exact_edit_anchors(previous, feedback)
+    anchor_id = str(anchors[0]["anchors"][0]["anchor_id"])
+    pending = AnchoredRangeRepairProjectCodeChangeSet.model_validate({
+        "summary": "Finish the status label.",
+        "changes": [{
+            "path": "Assets/UI/Status.cs", "base_sha256": None,
+            "start_anchor": anchor_id, "end_anchor": anchor_id,
+            "replace": "void Bind() { label.text = \"ready\"; }",
+            "reason": "Use the approved catalog window.",
+        }],
+    })
+
+    class VerifierOnlyGateway(BudgetedGeminiClient):
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def generate_adk_response(self, **kwargs: object) -> types.GenerateContentResponse:
+            self.calls.append(str(kwargs["stage"]))
+            payload = _verification("PASS").model_dump(mode="json")
+            return types.GenerateContentResponse(candidates=[types.Candidate(
+                content=types.Content(
+                    role="model", parts=[types.Part(text=json.dumps(payload))]
+                ),
+                finish_reason=types.FinishReason.STOP,
+            )])
+
+    def fake_apply(
+        _self: ExecutionPipeline, _intake: IntakeRequest, _pack: object,
+        supplied: ProjectCodeChangeSet, _development_dir: Path,
+        _contract: dict[str, object],
+    ) -> DevelopmentRun:
+        assert '"ready"' in supplied.changes[0].content
+        return DevelopmentRun(
+            status="verified", repository_name="project", base_head_sha="a" * 40,
+            summary=supplied.summary, changed_paths=["Assets/UI/Status.cs"],
+            commands=[], patch_path="development/changes.patch",
+            safety_boundary=["isolated clone only"],
+        )
+
+    gateway = VerifierOnlyGateway()
+    pipeline = ExecutionPipeline(tmp_path / "run", gateway=gateway)
+    monkeypatch.setattr(ExecutionPipeline, "_apply_development_change_set", fake_apply)
+    monkeypatch.setattr(
+        ExecutionPipeline, "_bind_project_change_set",
+        lambda _self, _intake, _pack, change_set, _output: change_set,
+    )
+    monkeypatch.setattr(
+        pipeline, "_development_components",
+        lambda _intake, _output=None: (
+            ProjectCodeChangeSet, object(),
+            DeveloperAgent(
+                gateway, change_set_schema=ProjectCodeChangeSet,
+                source_prefix="project-source/", path_approver=lambda path: path,
+            ),
+        ),
+    )
+    output_dir = tmp_path / "pending-promotion"
+    output_dir.mkdir()
+    (output_dir / "code_change_set.json").write_text(
+        previous.model_dump_json(indent=2), encoding="utf-8"
+    )
+    (output_dir / "development_verification_failure.txt").write_text(
+        feedback, encoding="utf-8"
+    )
+    (output_dir / "development_pending_promotion.json").write_text(
+        pending.model_dump_json(indent=2), encoding="utf-8"
+    )
+    intake = IntakeRequest(
+        goal="Finish the existing project.", output_target=OutputTarget.EXISTING_PROJECT,
+        toolpack_ids=[ToolPackId.PROJECT_DEVELOPMENT], existing_project_id="project",
+    )
+
+    _, report, _ = pipeline._run_adk_development_convergence(
+        intake=intake, requirements=_requirements(), sources=[_source()],
+        source_payload=[{
+            "name": "project-source/Assets/UI/Status.cs", "priority": "mandatory",
+            "requirement_keys": ["repair"], "content": previous.changes[0].content,
+            "sha256": "a" * 64,
+        }],
+        contract={"goal": intake.goal, "acceptance_criteria": ["Tests pass."]},
+        analysis=_analysis(), output_dir=output_dir,
+    )
+
+    assert report.verdict == Verdict.PASS
+    assert gateway.calls == ["independent_verification"]
+    assert (output_dir / "development_consumed_promotion.json").is_file()
+    receipt = json.loads(
+        (output_dir / "development_pending_promotion_receipt.json").read_text("utf-8")
+    )
+    assert receipt["model_call_avoided"] is True
+
+
 def test_budget_block_writes_resumable_checkpoint(tmp_path: Path) -> None:
     intake = IntakeRequest(goal="Create a guide.")
     source = _source()

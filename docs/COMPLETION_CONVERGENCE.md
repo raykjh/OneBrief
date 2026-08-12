@@ -66,6 +66,11 @@ call. One materially different hypothesis may be tested; two different repairs r
 the same boundary stop for diagnosis or an explicit decision. This turns the loop from
 "reject and retry" into "observe, hypothesize, probe, repair, and learn."
 
+If a paid proposal failed only at trusted source promotion, the valid structured proposal
+is preserved as `development_pending_promotion.json`. A continuation first re-promotes
+that exact proposal through the current path, hash, and anchor catalog. It buys no new
+maker call unless deterministic re-promotion still cannot bind safely.
+
 There is no silent authority expansion. `NEEDS_INFORMATION`, `NEEDS_BUDGET`, and
 `NEEDS_AUTHORIZATION` are structured returns to stage 1. The user approves an amended
 plan; OneBrief then resumes from persisted evidence instead of pretending the first run

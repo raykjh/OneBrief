@@ -530,6 +530,22 @@ def create_bounded_repair_resume(
         if source.is_file():
             shutil.copy2(source, child_work / name)
             reused.append(name)
+    pending_candidates = [
+        source_work / "development_pending_promotion.json",
+        *sorted(
+            source_work.glob("development_candidate_promotion_raw_r*.json"),
+            key=lambda path: (
+                int(path.stem.removeprefix("development_candidate_promotion_raw_r"))
+                if path.stem.removeprefix("development_candidate_promotion_raw_r").isdigit()
+                else -1
+            ),
+        ),
+    ]
+    pending_candidates = [path for path in pending_candidates if path.is_file()]
+    if pending_candidates:
+        pending = pending_candidates[-1]
+        shutil.copy2(pending, child_work / "development_pending_promotion.json")
+        reused.append(pending.name)
     system_observation_capability_missing = (
         source_record.status in {JobStatus.NEEDS_INFORMATION, JobStatus.FAILED}
         and (source_work / "development" / "unity_visual_evidence" / "summary.json").is_file()

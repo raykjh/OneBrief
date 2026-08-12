@@ -1333,6 +1333,88 @@ class ExecutionPipeline:
             for item in rejected_change_history
         }
 
+        # A prior run may already have paid for a bounded proposal that failed
+        # only at trusted source promotion.  Re-promote that exact proposal
+        # through the current deterministic runtime before buying another model
+        # turn.  It remains untrusted until every path, selector, and base hash
+        # passes the same promotion boundary.
+        pending_promotion_path = output_dir / "development_pending_promotion.json"
+        if pending_promotion_path.is_file() and previous_change_set is not None:
+            pending_payload: dict[str, object] = {}
+            try:
+                loaded_pending = json.loads(
+                    pending_promotion_path.read_text(encoding="utf-8")
+                )
+                if not isinstance(loaded_pending, dict):
+                    raise ValueError("pending promotion is not a structured object")
+                pending_payload = loaded_pending
+                pending_proposal = ProposedProjectCodeChangeSet.model_validate(
+                    pending_payload
+                )
+                promoted_pending = developer.promote_candidate(
+                    pending_proposal,
+                    prepared_sources,
+                    previous_change_set,
+                    current_exact_edit_anchors,
+                )
+                resumed_candidate = self._merge_development_retry(
+                    previous_change_set, promoted_pending
+                )
+                resumed_candidate = self._bind_project_change_set(
+                    intake, development_pack, resumed_candidate, output_dir
+                )
+                previous_change_set = resumed_candidate
+                self._write(
+                    output_dir / "code_change_set.json",
+                    resumed_candidate.model_dump_json(indent=2),
+                )
+                initial_state[MAKER_STATE_KEY] = resumed_candidate.model_dump(mode="json")
+                initial_state[REVERIFY_EXISTING_STATE_KEY] = True
+                consumed_path = output_dir / "development_consumed_promotion.json"
+                pending_promotion_path.replace(consumed_path)
+                self._write(
+                    output_dir / "development_pending_promotion_receipt.json",
+                    json.dumps({
+                        "schema_version": "onebrief-pending-promotion-receipt-v1",
+                        "proposal_sha256": development_change_fingerprint(pending_payload),
+                        "promoted_candidate_sha256": development_change_fingerprint(
+                            resumed_candidate
+                        ),
+                        "changed_paths": [
+                            str(item.path)
+                            for item in getattr(promoted_pending, "changes", [])
+                        ],
+                        "model_call_avoided": True,
+                    }, ensure_ascii=False, indent=2),
+                )
+            except (OSError, json.JSONDecodeError, ValidationError, ValueError) as exc:
+                pending_contract = record_convergence_failure(
+                    context="development_candidate_promotion",
+                    failure_text=str(exc),
+                    attempt_number=1,
+                    affected_paths=[
+                        str(item.get("path", ""))
+                        for item in pending_payload.get("changes", [])
+                        if isinstance(item, dict) and item.get("path")
+                    ],
+                    strategy_fingerprint=(
+                        development_change_strategy_fingerprint(pending_payload)
+                        if pending_payload else None
+                    ),
+                )
+                initial_state[REPAIR_CONTRACT_STATE_KEY] = (
+                    pending_contract.model_dump(mode="json")
+                )
+                self._write(
+                    output_dir / "development_pending_promotion_failure.txt",
+                    str(exc),
+                )
+                if not pending_contract.execution_allowed:
+                    raise RuntimeError(
+                        "convergence progress gate blocked repeated pending promotion: "
+                        + pending_contract.rationale
+                    ) from exc
+
         def after_maker(raw: object, _ctx, round_number: int) -> dict[str, object]:
             nonlocal previous_change_set, latest_run
             nonlocal best_failed_candidate, best_failure_message, best_failure_quality
@@ -1485,6 +1567,10 @@ class ExecutionPipeline:
                     self._write(
                         output_dir
                         / f"development_candidate_promotion_raw_r{round_number}.json",
+                        raw_text,
+                    )
+                    self._write(
+                        output_dir / "development_pending_promotion.json",
                         raw_text,
                     )
                 raw_payload = (

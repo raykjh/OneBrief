@@ -34,6 +34,8 @@ REUSABLE_WORK_ARTIFACTS = (
     "development_verification_failure.txt",
     "development_best_candidate.json",
     "development_best_failure.txt",
+    "development_pending_promotion.json",
+    *(f"development_candidate_promotion_raw_r{index}.json" for index in range(13)),
     REGISTER_NAME,
     HISTORY_NAME,
     "convergence_ledger.json",
@@ -246,7 +248,12 @@ class GCSJobStore:
                     "development_verification_failure.txt"
                     if name.startswith("development_verification_failure")
                     or name == "development_best_failure.txt"
-                    else name
+                    else (
+                        "development_pending_promotion.json"
+                        if name == "development_pending_promotion.json"
+                        or name.startswith("development_candidate_promotion_raw_r")
+                        else name
+                    )
                 )
             )
             target = (destination_work / target_name).resolve()
