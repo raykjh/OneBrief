@@ -473,6 +473,10 @@ def can_attempt_bounded_repair_resume(job_dir: Path) -> bool:
         or "repeating an identical repair candidate" in message
         or "existing file was not included in approved model context" in message
         or "exactrepairprojectcodechangeset" in message
+        or (
+            "anchoredrangerepairprojectcodechangeset" in message
+            and "string should have at most" in message
+        )
         or "catalog anchor is not approved" in message
         or "edit anchors could not rediscover" in message
         or "independent unity semantic visual observation failed" in message

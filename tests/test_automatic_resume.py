@@ -865,6 +865,25 @@ def test_exact_repair_shape_error_can_resume_after_schema_normalization(tmp_path
     assert can_attempt_bounded_repair_resume(job) is True
 
 
+def test_overlong_anchored_range_can_resume_after_schema_normalization(tmp_path: Path) -> None:
+    job = tmp_path / "anchored-range-too-long"
+    _failed_job(job)
+    record = JobRecord.model_validate_json((job / "job.json").read_text("utf-8"))
+    record = record.model_copy(update={
+        "message": (
+            "ValidationError: AnchoredRangeRepairProjectCodeChangeSet "
+            "changes.0.start_anchor String should have at most 1000 characters"
+        ),
+    })
+    (job / "job.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    (job / "work" / "development_verification_failure.txt").write_text(
+        "Unity visual evidence reused an identical screenshot for lobby desktop and mobile",
+        encoding="utf-8",
+    )
+
+    assert can_attempt_bounded_repair_resume(job) is True
+
+
 def test_invalid_compact_edit_shape_can_resume_from_preserved_candidate(tmp_path: Path) -> None:
     job = tmp_path / "invalid-compact-shape"
     _failed_job(job)
