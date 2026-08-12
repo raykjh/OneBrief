@@ -697,6 +697,28 @@ def test_adk_software_failure_keeps_most_progressed_candidate(
     assert "no control | text same | lang same | one state" in preserved_feedback
 
 
+def test_compact_repair_schema_allows_small_test_and_assembly_pair() -> None:
+    repair = CompactProposedProjectCodeChangeSet.model_validate({
+        "summary": "Complete the executable evidence topology.",
+        "changes": [
+            {
+                "path": "Assets/Tests/PlayMode/OneBriefVisualTests.cs",
+                "base_sha256": None,
+                "content": "namespace OneBrief.Visual { public class Flow {} }\n",
+                "reason": "Add the bounded PlayMode evidence test.",
+            },
+            {
+                "path": "Assets/Tests/PlayMode/OneBrief.Visual.Tests.asmdef",
+                "base_sha256": None,
+                "content": '{"optionalUnityReferences":["TestAssemblies"]}\n',
+                "reason": "Make the PlayMode evidence test discoverable.",
+            },
+        ],
+    })
+
+    assert len(repair.changes) == 2
+
+
 def test_adk_software_continuation_returns_bad_edit_anchor_to_same_maker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

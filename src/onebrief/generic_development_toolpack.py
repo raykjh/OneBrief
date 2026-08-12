@@ -305,7 +305,11 @@ class CompactProposedProjectFileChange(BaseModel):
 class CompactProposedProjectCodeChangeSet(BaseModel):
     schema_version: str = "onebrief-project-code-change-set-v1"
     summary: str = Field(min_length=3, max_length=1000)
-    changes: list[CompactProposedProjectFileChange] = Field(min_length=1, max_length=1)
+    # A finite repair normally touches one file, but some executable evidence
+    # topologies are an indivisible pair (for example a Unity PlayMode test and
+    # its test-only asmdef). Keep the repair compact while allowing that
+    # smallest coherent pair to prevent an impossible one-file repair loop.
+    changes: list[CompactProposedProjectFileChange] = Field(min_length=1, max_length=2)
 
 
 class ExactRepairProjectFileChange(BaseModel):
@@ -1298,19 +1302,31 @@ class ApprovedProjectDevelopmentToolPack:
                 issues.append(
                     "the OneBrief.Visual test must inspect and interact with visible UI objects from the loaded scene"
                 )
-            if (
-                re.search(r"(?:language|locali[sz]ation|다국어|언어)", goal_text, re.IGNORECASE)
-                and not re.search(r"GameObject\.Find\s*\(\s*\"LanguageDropdown\"", combined_source)
-                and "getcomponent<tmp_dropdown" not in structural
-                and "findobjectsoftypeall<tmp_dropdown" not in structural
-                and not re.search(
-                    r"(?:findfirstobjectbytype|findanyobjectbytype|findobjectsbytype)\s*"
-                    r"<\s*(?:tmpro\.)?tmp_dropdown",
+            language_requested = bool(re.search(
+                r"(?:language|locali[sz]ation|다국어|언어)", goal_text, re.IGNORECASE
+            ))
+            dropdown_discovered = bool(
+                re.search(r"GameObject\.Find\s*\(\s*\"LanguageDropdown\"", combined_source)
+                or "getcomponent<tmp_dropdown" in structural
+                or "findobjectsoftypeall<tmp_dropdown" in structural
+                or re.search(
+                    r"(?:findfirstobjectbytype|findanyobjectbytype|findobjectsbytype|"
+                    r"findobjectsoftype)\s*<\s*(?:tmpro\.)?tmp_dropdown",
                     structural,
                 )
-            ):
+            )
+            dropdown_operated = bool(re.search(
+                r"(?:\b[a-z_][a-z0-9_]*dropdown\b|\blangdropdown\b)\s*\.\s*"
+                r"(?:value\s*=|setvaluewithoutnotify\s*\(|onvaluechanged\s*\.\s*invoke\s*\()",
+                structural,
+            ))
+            if language_requested and not dropdown_discovered:
                 issues.append(
-                    "the OneBrief.Visual test must find and operate the real LanguageDropdown control"
+                    "the OneBrief.Visual test must discover the real LanguageDropdown control from the loaded scene"
+                )
+            elif language_requested and not dropdown_operated:
+                issues.append(
+                    "the OneBrief.Visual test must select a real LanguageDropdown value and dispatch its change"
                 )
             if re.search(r"observed_locale\s*=\s*(?:lang|languages\s*\[)", structural):
                 issues.append(
