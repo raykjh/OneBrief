@@ -48,6 +48,11 @@ from onebrief.development_toolpack import (
     RepositoryInspection,
 )
 from onebrief.development_progress import development_failure_quality
+from onebrief.development_change_tracking import (
+    development_change_fingerprint,
+    discover_rejected_change_fingerprints,
+    write_rejected_change_fingerprints,
+)
 from onebrief.generic_development_toolpack import (
     AnchoredRangeRepairProjectCodeChangeSet,
     ApprovedProjectDevelopmentToolPack,
@@ -1183,6 +1188,7 @@ class ExecutionPipeline:
         exact_repair_required = raw_exact_repair_required or bool(exact_edit_anchors)
         current_exact_edit_anchors = exact_edit_anchors
         consecutive_identical_candidates = 0
+        rejected_change_fingerprints = discover_rejected_change_fingerprints(output_dir)
 
         def after_maker(raw: object, _ctx, round_number: int) -> dict[str, object]:
             nonlocal previous_change_set, latest_run
@@ -1344,6 +1350,34 @@ class ExecutionPipeline:
                 output_dir / f"code_change_set_delta_r{round_number}.json",
                 delta.model_dump_json(indent=2),
             )
+            delta_fingerprint = development_change_fingerprint(delta)
+            if not reverify_existing and delta_fingerprint in rejected_change_fingerprints:
+                repeated_warning = (
+                    "Rejected a repair delta that already failed trusted verification in an earlier round. "
+                    "Do not submit the same path and content again; choose a different production path or a "
+                    "different bounded range that addresses the preserved visual evidence."
+                )
+                preserved_failure_path = output_dir / "development_verification_failure.txt"
+                preserved_failure = (
+                    preserved_failure_path.read_text(encoding="utf-8").strip()
+                    if preserved_failure_path.is_file() else ""
+                )
+                feedback = (
+                    f"{preserved_failure} | Repair control: {repeated_warning}"
+                    if preserved_failure else repeated_warning
+                )
+                self._write(
+                    output_dir / f"development_repeated_delta_r{round_number}.txt",
+                    feedback,
+                )
+                self._write(
+                    output_dir / "development_verification_failure.txt", feedback
+                )
+                raise RuntimeError(
+                    "development repair stalled after two identical candidates; "
+                    "the same maker must resume with a different path or bounded range: "
+                    + feedback[:4_000]
+                )
             prior_candidate = previous_change_set
             candidate = previous_change_set if reverify_existing else (
                 self._merge_development_retry(previous_change_set, delta)
@@ -1461,6 +1495,11 @@ class ExecutionPipeline:
                     feedback,
                 )
                 self._write(output_dir / "development_verification_failure.txt", feedback)
+                if not reverify_existing:
+                    rejected_change_fingerprints.add(delta_fingerprint)
+                    write_rejected_change_fingerprints(
+                        output_dir, rejected_change_fingerprints
+                    )
                 quality = development_failure_quality(feedback)
                 if best_failure_quality is None or quality > best_failure_quality:
                     best_failed_candidate = candidate
