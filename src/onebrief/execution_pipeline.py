@@ -48,7 +48,10 @@ from onebrief.development_toolpack import (
     ExchangeDevelopmentToolPack,
     RepositoryInspection,
 )
-from onebrief.development_progress import development_failure_quality
+from onebrief.development_progress import (
+    development_failure_quality,
+    should_repair_regression_candidate,
+)
 from onebrief.development_change_tracking import (
     development_change_fingerprint,
     development_change_strategy_fingerprint,
@@ -1993,20 +1996,36 @@ class ExecutionPipeline:
                     # constraint, otherwise the maker can repeat the same
                     # locally-improving but globally-regressing edit forever.
                     rejected_attempt_feedback = feedback
-                    previous_change_set = best_failed_candidate
-                    feedback = best_failure_message
+                    repair_regression = should_repair_regression_candidate(
+                        checkpoint_failure=best_failure_message,
+                        attempted_failure=rejected_attempt_feedback,
+                    )
+                    previous_change_set = (
+                        candidate if repair_regression else best_failed_candidate
+                    )
+                    feedback = (
+                        rejected_attempt_feedback if repair_regression
+                        else best_failure_message
+                    )
                     if (
                         rejected_attempt_feedback.strip()
                         and rejected_attempt_feedback.strip()
                         != best_failure_message.strip()
                     ):
                         feedback = (
-                            f"{best_failure_message} | Regression guard from the rejected "
-                            f"attempt: {rejected_attempt_feedback}"
+                            (
+                                f"{rejected_attempt_feedback} | Preserve the last runtime-valid "
+                                f"checkpoint after this compiler repair: {best_failure_message}"
+                            )
+                            if repair_regression else
+                            (
+                                f"{best_failure_message} | Regression guard from the rejected "
+                                f"attempt: {rejected_attempt_feedback}"
+                            )
                         )
                     self._write(
                         output_dir / "code_change_set.json",
-                        best_failed_candidate.model_dump_json(indent=2),
+                        previous_change_set.model_dump_json(indent=2),
                     )
                     self._write(
                         output_dir / "development_verification_failure.txt", feedback

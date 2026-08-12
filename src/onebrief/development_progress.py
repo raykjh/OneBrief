@@ -79,3 +79,18 @@ def development_failure_quality(message: str) -> tuple[int, int]:
     )
     # At the same stage, fewer blockers are better.
     return stage, -blockers
+
+
+def should_repair_regression_candidate(
+    *, checkpoint_failure: str, attempted_failure: str,
+) -> bool:
+    """Keep a failed functional delta only long enough to repair its compiler error.
+
+    The last runtime-valid checkpoint remains the rollback candidate.  However,
+    returning the maker to that checkpoint before exposing the exact compiler
+    diagnostic makes it recreate the same broken functional delta repeatedly.
+    """
+
+    checkpoint_stage, _ = development_failure_quality(checkpoint_failure)
+    attempted_stage, _ = development_failure_quality(attempted_failure)
+    return attempted_stage == 6 and checkpoint_stage > attempted_stage

@@ -1,4 +1,7 @@
-from onebrief.development_progress import development_failure_quality
+from onebrief.development_progress import (
+    development_failure_quality,
+    should_repair_regression_candidate,
+)
 
 
 def test_unity_playmode_failure_outranks_static_contract_failure() -> None:
@@ -99,3 +102,17 @@ def test_rejection_audit_suffixes_do_not_make_newer_runtime_evidence_worse() -> 
     )
 
     assert development_failure_quality(with_audit) == development_failure_quality(primary)
+
+
+def test_compile_regression_is_repaired_on_attempted_candidate_before_rollback() -> None:
+    assert should_repair_regression_candidate(
+        checkpoint_failure="Unity visual evidence did not exercise requested locale(s): es",
+        attempted_failure=(
+            "development verification failed: unity_compile (exit_code=1) "
+            "VERIFICATION SIGNALS Assets/Test.cs(84,31): error CS0103: texts does not exist"
+        ),
+    ) is True
+    assert should_repair_regression_candidate(
+        checkpoint_failure="development verification failed: unity_compile (exit_code=1)",
+        attempted_failure="Unity visual evidence did not exercise requested locale(s): es",
+    ) is False
