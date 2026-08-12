@@ -1355,6 +1355,7 @@ class ExecutionPipeline:
             )
             delta_fingerprint = development_change_fingerprint(delta)
             if not reverify_existing and delta_fingerprint in rejected_change_fingerprints:
+                consecutive_identical_candidates += 1
                 repeated_warning = (
                     "Rejected a repair delta that already failed trusted verification in an earlier round. "
                     "Already rejected path(s): "
@@ -1378,11 +1379,36 @@ class ExecutionPipeline:
                 self._write(
                     output_dir / "development_verification_failure.txt", feedback
                 )
-                raise RuntimeError(
-                    "development repair stalled after two identical candidates; "
-                    "the same maker must resume with a different path or bounded range: "
-                    + feedback[:4_000]
-                )
+                if consecutive_identical_candidates >= 2:
+                    raise RuntimeError(
+                        "development repair stalled after two identical candidates; "
+                        "the same maker must resume with a different path or bounded range: "
+                        + feedback[:4_000]
+                    )
+                repeated_paths = {
+                    str(item.path).replace("\\", "/").casefold()
+                    for item in getattr(delta, "changes", [])
+                }
+                current_exact_edit_anchors = [
+                    anchor
+                    for anchor in developer.exact_edit_anchors(
+                        previous_change_set,
+                        self._compact_development_feedback(feedback),
+                    )
+                    if str(anchor.get("path", "")).replace("\\", "/").casefold()
+                    not in repeated_paths
+                ]
+                report = self._development_failure_report(feedback)
+                repair_plan = prepare_repair(report, round_number)
+                return {
+                    MAKER_STATE_KEY: previous_change_set.model_dump(mode="json"),
+                    VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
+                    **({
+                        REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
+                    } if repair_plan is not None else {}),
+                    EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
+                    SKIP_VERIFIER_STATE_KEY: True,
+                }
             prior_candidate = previous_change_set
             candidate = previous_change_set if reverify_existing else (
                 self._merge_development_retry(previous_change_set, delta)

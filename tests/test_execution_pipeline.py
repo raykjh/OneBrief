@@ -636,6 +636,7 @@ def test_adk_software_failure_keeps_most_progressed_candidate(
                 improved.model_dump(mode="json"),
                 regressed.model_dump(mode="json"),
                 regressed.model_dump(mode="json"),
+                regressed.model_dump(mode="json"),
             ]
 
         def generate_adk_response(self, **_kwargs: object) -> types.GenerateContentResponse:
