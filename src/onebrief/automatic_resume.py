@@ -469,6 +469,7 @@ def can_attempt_bounded_repair_resume(job_dir: Path) -> bool:
         or "development verification failed:" in preserved_failure
         or "development repair stalled" in message
         or "convergence progress gate stopped verification" in message
+        or "convergence progress gate requires" in message
         or "repeating an identical repair candidate" in message
         or "existing file was not included in approved model context" in message
         or "exactrepairprojectcodechangeset" in message
@@ -580,7 +581,21 @@ def create_bounded_repair_resume(
         "analysis.json",
     ]
     if not topology_failure:
-        reusable_names.extend(["convergence_ledger.json", "repair_contract.json"])
+        reusable_names.append("convergence_ledger.json")
+        contract_path = source_work / "repair_contract.json"
+        try:
+            reusable_contract = bool(json.loads(
+                contract_path.read_text(encoding="utf-8")
+            ).get("execution_allowed"))
+        except (OSError, json.JSONDecodeError, AttributeError):
+            reusable_contract = False
+        # A bounded continuation is itself a new, budget-bound execution
+        # attempt. Reusing a terminal negative contract would block the
+        # selected newer verifier checkpoint before it can be revalidated.
+        # Keep executable contracts and the audit ledger; discard only a stale
+        # non-executable gate.
+        if reusable_contract:
+            reusable_names.append("repair_contract.json")
     for name in reusable_names:
         source = source_work / name
         if source.is_file():
