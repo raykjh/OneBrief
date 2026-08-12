@@ -132,28 +132,38 @@ def requested_ui_transition(text: str) -> list[str]:
     requested return journey must produce a second, later observation.
     """
 
-    parts = re.split(r"\s*(?:→|->)\s*", text)
-    if len(parts) < 2:
+    marker_to_surface = {
+        "login": "login",
+        "sign in": "login",
+        "로그인": "login",
+        "lobby": "lobby",
+        "main menu": "lobby",
+        "로비": "lobby",
+        "settings": "settings",
+        "setting": "settings",
+        "options": "settings",
+        "설정": "settings",
+    }
+    surface = "(?:" + "|".join(
+        sorted((re.escape(item) for item in marker_to_surface), key=len, reverse=True)
+    ) + ")"
+    chains = re.findall(
+        rf"{surface}(?:\s*(?:→|->)\s*{surface})+",
+        text,
+        re.IGNORECASE,
+    )
+    if not chains:
         return []
-    transition: list[str] = []
-    for index, part in enumerate(parts):
-        mentions: list[tuple[int, str]] = []
-        for surface, markers in {
-            "login": ("login", "sign in", "로그인"),
-            "lobby": ("lobby", "main menu", "로비"),
-            "settings": ("settings", "setting", "options", "설정"),
-        }.items():
-            for marker in markers:
-                for match in re.finditer(re.escape(marker), part, re.IGNORECASE):
-                    mentions.append((match.start(), surface))
-        if not mentions:
-            return []
-        mentions.sort()
-        # The first segment may contain prose and earlier surface mentions;
-        # the one adjacent to the first arrow is the final mention.  Every
-        # later segment begins at its arrow-delimited state.
-        transition.append(mentions[-1][1] if index == 0 else mentions[0][1])
-    return transition
+    normalized_chains = [
+        [
+            marker_to_surface[item.casefold()]
+            for item in re.findall(surface, chain, re.IGNORECASE)
+        ]
+        for chain in chains
+    ]
+    # A continuation package can repeat the same goal in several audit files.
+    # Select one longest explicit chain rather than concatenating those copies.
+    return max(normalized_chains, key=len)
 
 
 def _contains_ordered_surface_journey(observed: list[str], requested: list[str]) -> bool:

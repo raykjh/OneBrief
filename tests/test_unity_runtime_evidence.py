@@ -199,6 +199,14 @@ def test_requested_ui_transition_preserves_repeated_return_destination() -> None
     assert requested_ui_transition(goal) == ["login", "lobby", "settings", "lobby"]
 
 
+def test_requested_ui_transition_does_not_join_repeated_audit_copies() -> None:
+    copied_goal = "로그인→로비→설정→로비 이동을 검증한다."
+
+    assert requested_ui_transition(copied_goal + "\n" + copied_goal) == [
+        "login", "lobby", "settings", "lobby",
+    ]
+
+
 def test_ordered_ui_journey_requires_the_final_return_evidence(tmp_path: Path) -> None:
     results = tmp_path / "results.xml"
     write_results(results)
