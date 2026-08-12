@@ -399,6 +399,40 @@ def test_generic_inspection_understands_korean_localization_goal(tmp_path: Path)
     )
 
 
+def test_generic_inspection_retargets_context_for_a_new_multiarea_ui_goal(tmp_path: Path) -> None:
+    root, registry = _approved_node_project(tmp_path)
+    additions = {
+        "src/Login/LoginSceneController.cs": "public class LoginSceneController {}\n",
+        "src/Lobby/LobbyResponsiveLayout.cs": "public class LobbyResponsiveLayout {}\n",
+        "src/Lobby/LobbySettingsPanel.cs": "public class LobbySettingsPanel {}\n",
+        "src/Shared/AudioVolumeController.cs": "public class AudioVolumeController {}\n",
+    }
+    for relative, content in additions.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "add ui surfaces"], cwd=root, check=True)
+
+    ExternalProjectImporter(registry).import_bytes((root / MANIFEST_NAME).read_bytes())
+    lifecycle = ProjectToolPackLifecycle("generic-node", registry)
+    state = lifecycle.generate_and_qualify()
+    lifecycle.approve(state.qualification.toolpack_sha256)
+    inspection, _sources = ApprovedProjectDevelopmentToolPack(
+        "generic-node", registry
+    ).inspect(
+        tmp_path / "ui-focused",
+        "로그인 로비 설정 화면을 현대화하고 음량과 화면 이동을 검증한다",
+    )
+
+    first_paths = [item.path for item in inspection.context_files[:8]]
+    assert "src/Login/LoginSceneController.cs" in first_paths
+    assert "src/Lobby/LobbyResponsiveLayout.cs" in first_paths
+    assert "src/Lobby/LobbySettingsPanel.cs" in first_paths
+    assert "src/Shared/AudioVolumeController.cs" in first_paths
+    assert first_paths.index("src/localization-manager.js") > 3
+
+
 def test_unity_visual_preflight_requires_discoverable_test_and_evidence(tmp_path: Path) -> None:
     _root, registry = _approved_node_project(tmp_path)
     pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)

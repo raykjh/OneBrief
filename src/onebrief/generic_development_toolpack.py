@@ -394,32 +394,111 @@ class ApprovedProjectDevelopmentToolPack:
         tracked = [item for item in self._git("ls-files", "-z").split("\0") if item]
 
         focus_terms = {
-            item for item in re.findall(r"[a-z0-9][a-z0-9_-]{2,}", focus_text.casefold())
+            item for item in re.findall(r"[a-z0-9가-힣][a-z0-9가-힣_-]{1,}", focus_text.casefold())
             if item not in {
                 "the", "and", "for", "with", "from", "this", "that", "project",
                 "existing", "safely", "improve", "complete", "result", "unity",
             }
         }
-        localization_markers = (
-            "localization", "language", "locale", "i18n", "translation",
-            "언어", "다국어", "번역", "현지화", "중국어", "일본어", "스페인어",
-        )
-        if any(marker in focus_text.casefold() for marker in localization_markers):
-            focus_terms.update({"localization", "language", "locale", "i18n", "string", "translation"})
-        intrinsic = ("localization", "language", "locale", "i18n", "string", "translation")
-        localization_focus = any(term in focus_text.casefold() for term in localization_markers)
+        concept_terms = {
+            ("localization", "language", "locale", "i18n", "translation", "언어", "다국어", "번역", "현지화"):
+                {"localization", "language", "locale", "i18n", "string", "translation"},
+            ("login", "signin", "auth", "account", "로그인", "인증", "계정"):
+                {"login", "signin", "auth", "account", "start"},
+            ("lobby", "home", "main menu", "로비", "메인 메뉴"):
+                {"lobby", "home", "main", "menu"},
+            ("settings", "setting", "option", "preference", "설정", "옵션"):
+                {"settings", "setting", "option", "preference", "config"},
+            ("audio", "sound", "volume", "music", "bgm", "sfx", "음향", "소리", "볼륨", "배경음", "효과음"):
+                {"audio", "sound", "volume", "music", "bgm", "sfx"},
+            ("navigation", "transition", "route", "flow", "scene", "화면 이동", "전환", "이동"):
+                {"navigation", "transition", "router", "route", "flow", "scene"},
+            ("ui", "ux", "screen", "visual", "layout", "responsive", "화면", "시각", "디자인", "반응형"):
+                {"ui", "ux", "screen", "visual", "layout", "responsive", "canvas", "panel", "popup", "style"},
+        }
+        lowered_focus = focus_text.casefold()
+        active_concepts: list[set[str]] = []
+        for markers, related in concept_terms.items():
+            if any(marker in lowered_focus for marker in markers):
+                focus_terms.update(related)
+                active_concepts.append(related)
         code_suffixes = {".cs", ".js", ".jsx", ".mjs", ".py", ".ts", ".tsx"}
 
-        def rank(relative: str) -> tuple[int, int, int, int, int, str]:
+        def path_terms(relative: str) -> set[str]:
+            separated = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", relative)
+            return {
+                token.casefold()
+                for token in re.findall(r"[A-Za-z0-9가-힣]+", separated)
+                if len(token) > 1
+            }
+
+        vendor_markers = {
+            "editor", "externaldependencymanager", "generatedlocalrepo",
+            "googlemobileads", "googleplaygames", "packages", "plugins",
+            "samples", "thirdparty", "vendor",
+        }
+
+        def rank(relative: str) -> tuple[int, int, int, int, int, int, str]:
             lowered = relative.casefold()
-            hits = sum(term in lowered for term in focus_terms)
+            tokens = path_terms(relative)
+            hits = sum(term in tokens for term in focus_terms)
+            concept_hits = sum(bool(tokens & terms) for terms in active_concepts)
+            vendor = bool(tokens & vendor_markers)
             editable = any(relative.startswith(prefix) for prefix in write_prefixes)
-            intrinsic_hits = sum(term in lowered for term in intrinsic) if localization_focus else 0
             suffix = PurePosixPath(relative).suffix.casefold()
             filename_length = len(PurePosixPath(relative).name)
-            return (-intrinsic_hits, 0 if suffix in code_suffixes else 1, filename_length, -hits, 0 if editable else 1, lowered)
+            # Goal fit must dominate generic filename length.  The previous
+            # order let a past localization task monopolize a later UI task's
+            # bounded context merely because those filenames were short.
+            return (-concept_hits, -hits, 1 if vendor else 0, 0 if suffix in code_suffixes else 1, 0 if editable else 1, filename_length, lowered)
 
         tracked.sort(key=rank)
+        # Preserve cross-surface coverage in a small context window. A broad
+        # goal such as login + lobby + settings + audio previously spent the
+        # entire 120 KiB allowance on several near-identical files from the
+        # first matching directory. Greedily cover each active goal concept
+        # before filling the remaining space by ordinary relevance.
+        eligible: list[str] = []
+        for relative in tracked:
+            pure = PurePosixPath(relative)
+            normalized = pure.as_posix()
+            if not any(normalized.startswith(prefix) for prefix in read_prefixes):
+                continue
+            if pure.suffix.casefold() not in allowed_suffixes:
+                continue
+            source_path = (self.root / Path(*pure.parts)).resolve()
+            if (
+                not source_path.is_relative_to(self.root)
+                or source_path.is_symlink()
+                or not source_path.is_file()
+                or source_path.stat().st_size > MAX_CONTEXT_FILE_BYTES
+            ):
+                continue
+            eligible.append(relative)
+        if active_concepts:
+            covered: set[int] = set()
+            diversified: list[str] = []
+            remaining = list(eligible)
+            while remaining:
+                def coverage_key(relative: str) -> tuple[int, int, tuple[int, int, int, int, int, int, str]]:
+                    tokens = path_terms(relative)
+                    matches = {
+                        index for index, terms in enumerate(active_concepts)
+                        if tokens & terms
+                    }
+                    return (-len(matches - covered), -len(matches), rank(relative))
+
+                best = min(remaining, key=coverage_key)
+                remaining.remove(best)
+                diversified.append(best)
+                tokens = path_terms(best)
+                covered.update(
+                    index for index, terms in enumerate(active_concepts)
+                    if tokens & terms
+                )
+            tracked = diversified
+        else:
+            tracked = eligible
         records: list[RepositoryContextFile] = []
         sources: list[InternalSource] = []
         total = 0

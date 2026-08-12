@@ -159,6 +159,7 @@ def can_attempt_bounded_repair_resume(job_dir: Path) -> bool:
     message = record.message.casefold()
     repairable_failure = (
         "development verification failed:" in message
+        or "repeating an identical repair candidate" in message
         or (
             "compactproposedprojectcodechangeset" in message
             and (
@@ -170,7 +171,7 @@ def can_attempt_bounded_repair_resume(job_dir: Path) -> bool:
         )
     )
     return (
-        record.status == JobStatus.FAILED
+        record.status in {JobStatus.FAILED, JobStatus.PARTIAL}
         and remaining > 0
         and repairable_failure
         and (work / "code_change_set.json").is_file()
