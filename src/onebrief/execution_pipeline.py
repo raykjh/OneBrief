@@ -1309,6 +1309,13 @@ class ExecutionPipeline:
             except (ValidationError, ValueError) as exc:
                 if previous_change_set is None:
                     raise
+                raw_dump = getattr(raw, "model_dump_json", None)
+                if callable(raw_dump):
+                    self._write(
+                        output_dir
+                        / f"development_candidate_promotion_raw_r{round_number}.json",
+                        raw_dump(indent=2),
+                    )
                 decision = self.recovery_policy.decide(
                     exc,
                     context="development_candidate_promotion",

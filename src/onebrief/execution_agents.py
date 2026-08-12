@@ -271,13 +271,35 @@ class DeveloperAgent:
                     if match is None and change.get("start_anchor") and change.get("end_anchor"):
                         start_anchor = str(change["start_anchor"])
                         end_anchor = str(change["end_anchor"])
+
+                        def anchor_spans(anchor: str, candidate: str, *, end: bool) -> list[int]:
+                            exact = list(re.finditer(re.escape(anchor), candidate))
+                            if exact:
+                                return [item.end() if end else item.start() for item in exact]
+                            # Models sometimes preserve every token in a copied
+                            # C#/JS range but normalize indentation or line
+                            # breaks. Accept that formatting-only difference
+                            # only when the complete anchor remains uniquely
+                            # rediscoverable in an approved baseline.
+                            chunks = re.findall(r"\S+", anchor)
+                            if not chunks:
+                                return []
+                            flexible = list(re.finditer(
+                                r"\s+".join(re.escape(chunk) for chunk in chunks),
+                                candidate,
+                            ))
+                            return [
+                                item.end() if end else item.start()
+                                for item in flexible
+                            ]
+
                         for candidate in (
                             pending_baseline,
                             previous_baseline,
                             approved_baseline,
                         ):
-                            starts = [m.start() for m in re.finditer(re.escape(start_anchor), candidate)]
-                            ends = [m.end() for m in re.finditer(re.escape(end_anchor), candidate)]
+                            starts = anchor_spans(start_anchor, candidate, end=False)
+                            ends = anchor_spans(end_anchor, candidate, end=True)
                             spans = [(start, end) for start in starts for end in ends if end >= start]
                             if len(spans) == 1:
                                 baseline = candidate

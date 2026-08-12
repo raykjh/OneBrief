@@ -1268,6 +1268,41 @@ def test_project_developer_promotes_dedicated_anchored_range_repair() -> None:
     assert "old rows" not in result.changes[0].content
 
 
+def test_project_developer_anchored_range_tolerates_formatting_only_reflow() -> None:
+    previous = ProjectCodeChangeSet(
+        summary="Existing generated UI source.",
+        changes=[{
+            "path": "Assets/JULPAE/Scripts/UI/Lobby.cs",
+            "base_sha256": None,
+            "content": (
+                "before\n    private void ApplyLayout()\n    {\n"
+                "        old();\n    }\nafter\n"
+            ),
+            "reason": "Prior candidate.",
+        }],
+    )
+    proposal = AnchoredRangeRepairProjectCodeChangeSet(
+        summary="Repair the layout range.",
+        changes=[{
+            "path": "Assets/JULPAE/Scripts/UI/Lobby.cs",
+            "base_sha256": None,
+            "start_anchor": "private void ApplyLayout() {",
+            "end_anchor": "old(); }",
+            "replace": "private void ApplyLayout()\n    {\n        fixedLayout();\n    }",
+            "reason": "Preserve tokens while normalizing copied indentation.",
+        }],
+    )
+    developer = DeveloperAgent(
+        object(), change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/", path_approver=lambda path: path,
+    )
+
+    result = developer.promote_candidate(proposal, [], previous, [])
+
+    assert "fixedLayout();" in result.changes[0].content
+    assert "old();" not in result.changes[0].content
+
+
 def test_semantic_visual_candidate_repairs_use_bounded_ranges() -> None:
     assert development_repair_requires_anchored_range(
         multi_state_evidence_repair=False,
