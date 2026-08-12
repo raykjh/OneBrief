@@ -1612,6 +1612,26 @@ def test_compact_repair_schema_allows_only_two_coherent_changed_paths() -> None:
         })
 
 
+def test_anchored_repair_bounds_copied_whole_range_before_validation() -> None:
+    copied_range = "BEGIN\n" + ("x" * 2_400) + "\nEND"
+
+    proposal = AnchoredRangeRepairProjectCodeChangeSet.model_validate({
+        "summary": "Repair one coherent range.",
+        "changes": [{
+            "path": "Assets/Tests/PlayMode/Flow.cs",
+            "base_sha256": None,
+            "start_anchor": copied_range,
+            "end_anchor": copied_range,
+            "replace": "BEGIN\nfixed\nEND",
+            "reason": "The provider copied the entire selected range as both boundaries.",
+        }],
+    })
+
+    change = proposal.changes[0]
+    assert change.start_anchor == copied_range[:1000]
+    assert change.end_anchor == copied_range[-1000:]
+
+
 def test_project_developer_compact_retry_rejects_full_existing_file_replacement() -> None:
     source = "export const label = 'old';\n"
     proposal = CompactProposedProjectCodeChangeSet.model_validate({

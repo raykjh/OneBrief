@@ -50,6 +50,24 @@ from onebrief.toolpack_lifecycle import AdapterId, ProjectToolPackLifecycle
 # do not force the model to rewrite or split the existing file just to satisfy a
 # transport-oriented response cap.
 MAX_BOUND_PROJECT_CHANGE_BYTES = 256_000
+MAX_REPAIR_ANCHOR_CHARS = 1_000
+
+
+def _bounded_repair_anchor(value: object, *, keep: str) -> str | None:
+    """Keep a deterministic boundary when a provider copies an entire range.
+
+    The shortened selector is still untrusted: promotion must find it uniquely
+    in the approved candidate before any isolated clone can be changed.
+    """
+
+    if value is None:
+        return None
+    text = str(value)
+    if len(text) <= MAX_REPAIR_ANCHOR_CHARS:
+        return text
+    if keep == "start":
+        return text[:MAX_REPAIR_ANCHOR_CHARS]
+    return text[-MAX_REPAIR_ANCHOR_CHARS:]
 
 
 def _csharp_code_only(value: str) -> str:
@@ -251,6 +269,16 @@ class CompactProposedProjectFileChange(BaseModel):
         # bounded edit because a provider over-explained it.
         return str(value)[:500]
 
+    @field_validator("start_anchor", mode="before")
+    @classmethod
+    def bound_start_anchor(cls, value: object) -> str | None:
+        return _bounded_repair_anchor(value, keep="start")
+
+    @field_validator("end_anchor", mode="before")
+    @classmethod
+    def bound_end_anchor(cls, value: object) -> str | None:
+        return _bounded_repair_anchor(value, keep="end")
+
     @model_validator(mode="after")
     def validate_edit_mode(self) -> "CompactProposedProjectFileChange":
         # Gemini occasionally includes a redundant ``content`` field while also
@@ -343,6 +371,16 @@ class ExactRepairProjectFileChange(BaseModel):
     def bound_explanatory_reason(cls, value: object) -> str:
         return str(value)[:500]
 
+    @field_validator("start_anchor", mode="before")
+    @classmethod
+    def bound_start_anchor(cls, value: object) -> str | None:
+        return _bounded_repair_anchor(value, keep="start")
+
+    @field_validator("end_anchor", mode="before")
+    @classmethod
+    def bound_end_anchor(cls, value: object) -> str | None:
+        return _bounded_repair_anchor(value, keep="end")
+
     @model_validator(mode="after")
     def validate_edit_mode(self) -> "ExactRepairProjectFileChange":
         # Prefer the most deterministic selector if a provider redundantly
@@ -415,6 +453,16 @@ class AnchoredRangeRepairProjectFileChange(BaseModel):
     @classmethod
     def bound_explanatory_reason(cls, value: object) -> str:
         return str(value)[:500]
+
+    @field_validator("start_anchor", mode="before")
+    @classmethod
+    def bound_start_anchor(cls, value: object) -> str | None:
+        return _bounded_repair_anchor(value, keep="start")
+
+    @field_validator("end_anchor", mode="before")
+    @classmethod
+    def bound_end_anchor(cls, value: object) -> str | None:
+        return _bounded_repair_anchor(value, keep="end")
 
 
 class AnchoredRangeRepairProjectCodeChangeSet(BaseModel):
