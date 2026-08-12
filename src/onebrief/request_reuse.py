@@ -99,6 +99,20 @@ def _inspection_head(job_dir: Path) -> str | None:
             continue
         if isinstance(value, str) and len(value) == 40:
             return value
+    # A budget or authorization gate can stop a continuation before the
+    # ToolPack inspection is copied into its work directory.  Its verified
+    # snapshot provenance is still an exact source-revision receipt and must
+    # remain eligible for reuse; otherwise amendment falls back to an older
+    # job and repeats expensive deterministic verification.
+    provenance = job_dir / "work" / "project_snapshot" / "restore_evidence.json"
+    try:
+        value = json.loads(provenance.read_text(encoding="utf-8")).get(
+            "source_head_sha"
+        )
+    except (OSError, json.JSONDecodeError, AttributeError):
+        value = None
+    if isinstance(value, str) and len(value) == 40:
+        return value
     return None
 
 
