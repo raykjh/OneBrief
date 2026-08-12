@@ -156,8 +156,10 @@ def test_adk_llm_retries_max_token_response_as_compact_increment() -> None:
         "long_form_draft", "long_form_draft_compact_retry"
     ]
     retry_text = gateway.calls[1][1][-1].parts[0].text
-    assert "exact search/replace only" in retry_text
-    assert "under 12000 characters" in retry_text
+    assert "exactly one changed path" in retry_text
+    assert "obey the selector fields offered by the current schema" in retry_text
+    assert "complete existing or candidate-file contents" in retry_text
+    assert "under 6000 characters" in retry_text
     assert "narrative artifact" in retry_text
     assert "under 8000 characters" in retry_text
 

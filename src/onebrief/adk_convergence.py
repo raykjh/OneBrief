@@ -69,9 +69,9 @@ class BudgetedAdkLlm(BaseLlm):
                 parts=[types.Part(text=(
                     "The previous structured response was truncated or invalid JSON and was discarded. "
                     "Return a valid, much smaller response in the required schema. If the schema is a "
-                    "code change set, return at most two changed files, use exact search/replace only "
-                    "for existing files, and keep every search and replacement under 12000 characters; "
-                    "do not return complete existing-file contents. If the schema is a narrative artifact, "
+                    "code change set, return exactly one changed path, obey the selector fields offered by "
+                    "the current schema, and replace only one coherent range under 6000 characters; do not "
+                    "return complete existing or candidate-file contents. If the schema is a narrative artifact, "
                     "keep its body under 8000 characters while covering every acceptance criterion with "
                     "concise evidence. Implement the highest-priority verified slice now; later maker "
                     "rounds can add remaining detail. Return only the required schema."

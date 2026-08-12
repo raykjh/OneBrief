@@ -159,6 +159,27 @@ def is_unity_evidence_contract_feedback(feedback: str) -> bool:
     ))
 
 
+def development_repair_requires_anchored_range(
+    *,
+    multi_state_evidence_repair: bool,
+    unity_evidence_topology_repair: bool,
+    semantic_visual_repair: bool,
+) -> bool:
+    """Use bounded ranges for every repair against an existing candidate.
+
+    A semantic visual repair used to return the complete generated candidate file.
+    Large structured responses then hit the same token ceiling even after a compact
+    retry.  The prior candidate is already authoritative ADK state, so a unique
+    start/end range is both smaller and safer for committed and uncommitted files.
+    """
+
+    return any((
+        multi_state_evidence_repair,
+        unity_evidence_topology_repair,
+        semantic_visual_repair,
+    ))
+
+
 def visual_repair_production_candidate(change_set):
     """Return the candidate view a visual repair maker may inspect."""
 
@@ -1082,12 +1103,10 @@ class ExecutionPipeline:
             semantic_visual_repair
             and visual_repair_has_uncommitted_product_candidate(previous_change_set)
         )
-        anchored_range_repair = (
-            multi_state_evidence_repair
-            or unity_evidence_topology_repair
-            or (
-            semantic_visual_repair and not candidate_file_visual_repair
-            )
+        anchored_range_repair = development_repair_requires_anchored_range(
+            multi_state_evidence_repair=multi_state_evidence_repair,
+            unity_evidence_topology_repair=unity_evidence_topology_repair,
+            semantic_visual_repair=semantic_visual_repair,
         )
         raw_exact_repair_required = (
             "namespace/full name begins" in prior_failure_text.casefold()
@@ -1644,12 +1663,12 @@ class ExecutionPipeline:
             )
         elif semantic_visual_repair and candidate_file_visual_repair:
             maker_instruction += (
-                "\nCANDIDATE-FILE PRODUCTION REPAIR: The independent observer found a real rendered UI "
+                "\nANCHORED-RANGE CANDIDATE PRODUCTION REPAIR: The independent observer found a real rendered UI "
                 "defect and previous_artifact contains newly generated production files that do not exist in "
-                "the source repository yet. Choose exactly one production UI path. If that path has a null "
-                "base_sha256, return its complete corrected candidate content with null base_sha256; do not use "
-                "repository anchors for it. If you instead choose a committed source path, use one verbatim exact "
-                "or anchored edit. Never select tests, screenshots, evidence metadata, or assertions."
+                "the source repository yet. Choose exactly one production UI path and return start_anchor and "
+                "end_anchor copied verbatim from that file in previous_artifact plus one replacement for only "
+                "that coherent range. Retain its null base_sha256. Never return the complete file and never select "
+                "tests, screenshots, evidence metadata, or assertions."
             )
         elif exact_repair_required and semantic_visual_repair:
             maker_instruction += (
@@ -1732,10 +1751,8 @@ class ExecutionPipeline:
             maker_output_tokens=(
                 min(
                     DEVELOPER_OUTPUT_CAP,
-                    8_000 if candidate_file_visual_repair else (
-                        5_000 if anchored_range_repair else (
+                    5_000 if anchored_range_repair else (
                         3_000 if exact_repair_required else 8_000
-                        )
                     ),
                 )
                 if prior_failure.is_file()

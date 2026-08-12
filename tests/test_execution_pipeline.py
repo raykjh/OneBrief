@@ -12,6 +12,7 @@ from onebrief.generic_development_toolpack import (
 from onebrief.budget_guard import BudgetExceeded, BudgetStore, RunStatus
 from onebrief.execution_pipeline import (
     ExecutionPipeline,
+    development_repair_requires_anchored_range,
     development_repair_difficulty,
     visual_repair_production_candidate,
     visual_repair_has_uncommitted_product_candidate,
@@ -1264,6 +1265,19 @@ def test_project_developer_promotes_dedicated_anchored_range_repair() -> None:
 
     assert "login.png" in result.changes[0].content
     assert "old rows" not in result.changes[0].content
+
+
+def test_semantic_visual_candidate_repairs_use_bounded_ranges() -> None:
+    assert development_repair_requires_anchored_range(
+        multi_state_evidence_repair=False,
+        unity_evidence_topology_repair=False,
+        semantic_visual_repair=True,
+    )
+    assert not development_repair_requires_anchored_range(
+        multi_state_evidence_repair=False,
+        unity_evidence_topology_repair=False,
+        semantic_visual_repair=False,
+    )
 
 
 def test_project_developer_compact_retry_keeps_existing_files_as_exact_edits() -> None:
