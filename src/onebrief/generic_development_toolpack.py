@@ -1244,6 +1244,20 @@ class ApprovedProjectDevelopmentToolPack:
                         "responsive Unity visual evidence must define and capture both a measured "
                         "mobile/portrait viewport and a desktop/landscape viewport before PlayMode execution"
                     )
+                if (
+                    "screen.setresolution" in structural
+                    and re.search(
+                        r"new\s+(?:unityengine\.)?rendertexture\s*\(\s*"
+                        r"(?:unityengine\.)?screen\.width\s*,\s*(?:unityengine\.)?"
+                        r"screen\.height\s*,",
+                        structural,
+                    )
+                ):
+                    issues.append(
+                        "responsive Unity batchmode evidence must pass each requested viewport width and height "
+                        "directly into the synchronous RenderTexture capture; Screen.SetResolution plus "
+                        "Screen.width/Screen.height can reuse one batchmode render size"
+                    )
             if "scenemanager.loadscene" not in structural and "scenemanager.loadsceneasync" not in structural:
                 issues.append(
                     "the OneBrief.Visual test must load and exercise an actual project scene, not an empty test scene"

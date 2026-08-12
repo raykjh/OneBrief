@@ -721,6 +721,13 @@ class ExecutionPipeline:
                     "return the Texture2D/PNG width and height actually written, then serialize those measured "
                     "values into viewport_width and viewport_height for that exact scenario."
                 )
+            if "screen.setresolution plus screen.width/screen.height" in lowered:
+                return (
+                    "Change the synchronous capture helper to accept the requested width and height for each "
+                    "scenario and use those arguments directly for RenderTexture, Texture2D, and ReadPixels. "
+                    "Return the dimensions of that written texture. Do not rely on Screen.SetResolution changing "
+                    "Screen.width or Screen.height in Unity batchmode."
+                )
             if "unity visual test contract" in lowered and "duplicate unitytest methods" in lowered:
                 return (
                     "Remove the duplicated UnityTest method or class created by the previous repair and keep one "
@@ -1932,7 +1939,12 @@ class ExecutionPipeline:
                     rejected_change_history = discover_rejected_change_history(output_dir)
                     write_rejected_change_history(output_dir, rejected_change_history)
                 quality = development_failure_quality(feedback)
-                if best_failure_quality is None or quality > best_failure_quality:
+                if best_failure_quality is None or quality >= best_failure_quality:
+                    # At the same verifier-owned stage and blocker count, the
+                    # latest trusted result supersedes the older checkpoint.
+                    # This commonly means one scenario pair was fixed and the
+                    # next pair is now exposed; retaining the older failure
+                    # would send the maker back to an already solved defect.
                     best_failed_candidate = candidate
                     best_failure_message = feedback
                     best_failure_quality = quality

@@ -614,7 +614,7 @@ def test_adk_software_continuation_restores_previous_change_set(
 
     assert report.verdict == Verdict.PASS
     assert observed_previous == [previous]
-    assert gateway.output_caps[0] == 8_000
+    assert gateway.output_caps[0] == 10_000
 
 
 def test_adk_software_failure_keeps_most_progressed_candidate(
@@ -1594,7 +1594,7 @@ def test_project_developer_compact_retry_can_add_bounded_new_evidence_files() ->
     assert "TestAssemblies" in result.changes[0].content
 
 
-def test_compact_repair_schema_allows_only_one_changed_path() -> None:
+def test_compact_repair_schema_allows_only_two_coherent_changed_paths() -> None:
     item = {
         "path": "Assets/Tests/One.cs",
         "base_sha256": None,
@@ -1604,7 +1604,11 @@ def test_compact_repair_schema_allows_only_one_changed_path() -> None:
     with pytest.raises(Exception):
         CompactProposedProjectCodeChangeSet.model_validate({
             "summary": "Too many repair paths.",
-            "changes": [item, {**item, "path": "Assets/Tests/Two.cs"}],
+            "changes": [
+                item,
+                {**item, "path": "Assets/Tests/Two.cs"},
+                {**item, "path": "Assets/Tests/Three.cs"},
+            ],
         })
 
 
