@@ -1569,6 +1569,54 @@ def test_playmode_anchor_normalizes_javascript_style_csharp_interpolation() -> N
     assert "var scenarios" not in result.changes[0].content
 
 
+def test_project_developer_normalizes_complete_javascript_wrapped_csharp_json_selector() -> None:
+    current = (
+        'before\n            string json = $"{{\\"schema_version\\":'
+        '\\"onebrief-unity-visual-evidence-v1\\",\\"scenarios\\":['
+        '{string.Join(",", scenarios)}],\\"missing_glyph_count\\":'
+        '{missingGlyphs}}}";\n'
+        '            File.WriteAllText("onebrief-evidence/runtime-evidence.json", json);\n'
+        '        }\nafter\n'
+    )
+    javascript_selector = (
+        '            string json = ${"{\\"schema_version\\":'
+        '\\"onebrief-unity-visual-evidence-v1\\",\\"scenarios\\":['
+        '{string.Join(",", scenarios)}],\\"missing_glyph_count\\":'
+        '{missingGlyphs}}"};\n'
+        '            File.WriteAllText("onebrief-evidence/runtime-evidence.json", json);\n'
+        '        }'
+    )
+    previous = ProjectCodeChangeSet(
+        summary="Existing generated evidence source.",
+        changes=[{
+            "path": "Assets/Tests/PlayMode/VisualFlowTest.cs",
+            "base_sha256": None,
+            "content": current,
+            "reason": "Prior generated candidate.",
+        }],
+    )
+    proposal = AnchoredRangeRepairProjectCodeChangeSet(
+        summary="Repair locale evidence.",
+        changes=[{
+            "path": "Assets/Tests/PlayMode/VisualFlowTest.cs",
+            "base_sha256": None,
+            "start_anchor": javascript_selector,
+            "end_anchor": javascript_selector,
+            "replace": "            WriteMeasuredLocaleEvidence();",
+            "reason": "Promote a uniquely rediscovered generated C# range.",
+        }],
+    )
+    developer = DeveloperAgent(
+        object(), change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/", path_approver=lambda path: path,
+    )
+
+    result = developer.promote_candidate(proposal, [], previous, [])
+
+    assert "WriteMeasuredLocaleEvidence();" in result.changes[0].content
+    assert "schema_version" not in result.changes[0].content
+
+
 def test_semantic_visual_candidate_repairs_use_bounded_ranges() -> None:
     assert development_repair_requires_anchored_range(
         multi_state_evidence_repair=False,

@@ -299,8 +299,24 @@ class DeveloperAgent:
                             # unambiguous C# `$"` token. Normalize only the
                             # selector (never product code or replacement bytes)
                             # before the same unique-range proof below.
-                            start_anchor = start_anchor.replace('${"', '$"')
-                            end_anchor = end_anchor.replace('${"', '$"')
+                            def normalize_csharp_selector(anchor: str) -> str:
+                                # A model may wrap an interpolated JSON string in
+                                # JavaScript's ${"..."} form.  Converting only
+                                # the prefix still leaves the outer JS brace and
+                                # loses C#'s doubled literal JSON braces.  This
+                                # narrowly repairs that complete schema selector;
+                                # the unique approved-baseline proof below still
+                                # decides whether it is safe to use.
+                                if (
+                                    "onebrief-unity-visual-evidence-v1" in anchor
+                                    and '${"{' in anchor
+                                ):
+                                    anchor = anchor.replace('${"{', '$"{{', 1)
+                                    anchor = anchor.replace('}}"};', '}}}";', 1)
+                                return anchor.replace('${"', '$"')
+
+                            start_anchor = normalize_csharp_selector(start_anchor)
+                            end_anchor = normalize_csharp_selector(end_anchor)
 
                         def anchor_spans(anchor: str, candidate: str, *, end: bool) -> list[int]:
                             exact = list(re.finditer(re.escape(anchor), candidate))
