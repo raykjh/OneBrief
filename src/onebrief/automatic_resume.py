@@ -160,6 +160,7 @@ def can_attempt_bounded_repair_resume(job_dir: Path) -> bool:
     repairable_failure = (
         "development verification failed:" in message
         or "repeating an identical repair candidate" in message
+        or "existing file was not included in approved model context" in message
         or (
             "compactproposedprojectcodechangeset" in message
             and (
@@ -171,7 +172,7 @@ def can_attempt_bounded_repair_resume(job_dir: Path) -> bool:
         )
     )
     return (
-        record.status in {JobStatus.FAILED, JobStatus.PARTIAL}
+        record.status in {JobStatus.FAILED, JobStatus.PARTIAL, JobStatus.NEEDS_AUTHORIZATION}
         and remaining > 0
         and repairable_failure
         and (work / "code_change_set.json").is_file()
