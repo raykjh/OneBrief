@@ -78,12 +78,17 @@ class BudgetedAdkLlm(BaseLlm):
                     "rounds can add remaining detail. Return only the required schema."
                 ))],
             )]
+            retry_config = llm_request.config.model_copy(deep=True)
+            retry_config.max_output_tokens = min(
+                20_000,
+                max(6_000, int(retry_config.max_output_tokens or 0) * 2),
+            )
             response = await asyncio.to_thread(
                 self.gateway.generate_adk_response,
                 stage=f"{self.stage}_compact_retry",
                 model=self.model,
                 contents=compact_contents,
-                config=llm_request.config,
+                config=retry_config,
             )
         yield LlmResponse.create(response)
 

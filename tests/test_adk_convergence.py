@@ -208,6 +208,43 @@ def test_adk_llm_retries_invalid_structured_json_even_when_model_reports_stop() 
     assert "truncated or invalid JSON" in gateway.calls[1][1][-1].parts[0].text
 
 
+def test_adk_llm_compact_retry_receives_a_larger_structured_output_envelope() -> None:
+    class Gateway:
+        def __init__(self):
+            self.output_caps = []
+
+        def generate_adk_response(self, *, config, **_kwargs):
+            self.output_caps.append(config.max_output_tokens)
+            text = '{"value":"cut"' if len(self.output_caps) == 1 else '{"value":"complete"}'
+            return types.GenerateContentResponse(
+                candidates=[types.Candidate(
+                    finish_reason=types.FinishReason.STOP,
+                    content=types.Content(role="model", parts=[types.Part(text=text)]),
+                )]
+            )
+
+    async def collect():
+        gateway = Gateway()
+        model = BudgetedAdkLlm(
+            model="gemini-3.5-flash", gateway=gateway, stage="long_form_draft"
+        )
+        request = LlmRequest(
+            model="gemini-3.5-flash",
+            contents=[types.Content(role="user", parts=[types.Part(text="repair")])],
+            config=types.GenerateContentConfig(
+                max_output_tokens=3_000,
+                response_mime_type="application/json",
+            ),
+        )
+        responses = [item async for item in model.generate_content_async(request)]
+        return gateway, responses
+
+    gateway, responses = asyncio.run(collect())
+
+    assert gateway.output_caps == [3_000, 6_000]
+    assert responses[0].content.parts[0].text == '{"value":"complete"}'
+
+
 def test_contextual_maker_receives_current_exact_edit_anchors() -> None:
     agent = build_text_convergence_agent(
         gateway=object(),

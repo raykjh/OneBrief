@@ -2239,8 +2239,8 @@ class ExecutionPipeline:
             maker_output_tokens=(
                 min(
                     DEVELOPER_OUTPUT_CAP,
-                    5_000 if anchored_range_repair else (
-                        3_000 if exact_repair_required else 8_000
+                    8_000 if anchored_range_repair else (
+                        8_000 if exact_repair_required else 10_000
                     ),
                 )
                 if prior_failure.is_file()
