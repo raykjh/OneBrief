@@ -37,6 +37,18 @@ product UI. When visual verification fails, the maker receives the smallest rele
 hierarchy evidence so the next repair can target one diagnosed ancestry instead of making
 another global scaler guess.
 
+### Verified Julpae diagnostic baseline
+
+On 2026-08-13 the fixed observer compiled and exited with code 0 against an isolated
+Julpae candidate clone. The evidence was bound to source revision
+`cb3ed328ab5af9bc883b86cb6d660691f5d169be` and candidate digest
+`579328c6d60dddf5d317f94f3944f73b02e3f5a9f90668a88c6daad87f4ae22e`.
+It observed 2 scenes, 1 Canvas, and the bounded maximum of 800 RectTransforms. The report
+identified StorePopup content-height and child-boundary risks plus several abnormal stretch
+deltas. The source repository remained unchanged. After capability-pack composition and
+diagnostic integration, the complete local regression suite passed 489 tests with no
+failures.
+
 ## Exchange V1
 
 Exchange is the first executable ToolPack. It is read-only and has no brokerage, account, credential, or order interface.
