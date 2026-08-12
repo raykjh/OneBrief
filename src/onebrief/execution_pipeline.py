@@ -792,6 +792,8 @@ class ExecutionPipeline:
         exact_edit_anchors = developer.exact_edit_anchors(
             previous_change_set, repair_feedback
         )
+        if exact_repair_required:
+            exact_edit_anchors = []
         current_exact_edit_anchors = exact_edit_anchors
 
         def after_maker(raw: object, _ctx, round_number: int) -> dict[str, object]:
@@ -912,6 +914,8 @@ class ExecutionPipeline:
                 current_exact_edit_anchors = developer.exact_edit_anchors(
                     prior_candidate, feedback
                 )
+                if exact_repair_required:
+                    current_exact_edit_anchors = []
                 repair_plan = prepare_repair(report, round_number)
                 return {
                     MAKER_STATE_KEY: prior_candidate.model_dump(mode="json"),
@@ -988,6 +992,8 @@ class ExecutionPipeline:
                 current_exact_edit_anchors = developer.exact_edit_anchors(
                     previous_change_set, feedback
                 )
+                if exact_repair_required:
+                    current_exact_edit_anchors = []
                 repair_plan = prepare_repair(report, round_number)
                 return {
                     MAKER_STATE_KEY: previous_change_set.model_dump(mode="json"),
@@ -1060,7 +1066,9 @@ class ExecutionPipeline:
                 *report.revision_instructions,
             ])[:12_000]
             ctx.session.state[EXACT_EDIT_ANCHORS_STATE_KEY] = (
-                developer.exact_edit_anchors(previous_change_set, feedback)
+                [] if exact_repair_required else developer.exact_edit_anchors(
+                    previous_change_set, feedback
+                )
             )
             self._write(
                 output_dir / f"verification_r{round_number}.json",
@@ -1109,6 +1117,11 @@ class ExecutionPipeline:
                 "PlayMode test, add one minimal test source below 6,000 characters that loads and interacts with "
                 "the real project scene. Do not echo previous_artifact, explanatory comments, helper frameworks, "
                 "or unrelated acceptance criteria. Later repair turns will address later blockers."
+            )
+        if exact_repair_required:
+            maker_instruction += (
+                "\nEXACT-EDIT ONLY: Use one exact search/replace copied verbatim from previous_artifact. "
+                "Do not return anchor_id or full-file content."
             )
         verifier_instruction = (
             "You are OneBrief's independent software verifier. You did not author the code. Compare every "

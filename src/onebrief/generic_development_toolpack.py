@@ -261,7 +261,6 @@ class ExactRepairProjectFileChange(BaseModel):
     base_sha256: str | None = None
     search: str | None = Field(default=None, min_length=1, max_length=3000)
     replace: str = Field(max_length=8000)
-    anchor_id: str | None = Field(default=None, pattern=r"^A[0-9a-f]{12}$")
     start_anchor: str | None = Field(default=None, min_length=1, max_length=1000)
     end_anchor: str | None = Field(default=None, min_length=1, max_length=1000)
     reason: str = Field(min_length=3, max_length=500)
@@ -280,23 +279,17 @@ class ExactRepairProjectFileChange(BaseModel):
     def validate_edit_mode(self) -> "ExactRepairProjectFileChange":
         # Prefer the most deterministic selector if a provider redundantly
         # fills several optional selector fields in structured output.
-        if self.anchor_id is not None:
-            self.search = None
+        if self.search is not None:
             self.start_anchor = None
             self.end_anchor = None
-        elif self.search is not None:
-            self.start_anchor = None
-            self.end_anchor = None
-        catalog = self.anchor_id is not None and self.search is None
-        exact = self.anchor_id is None and self.search is not None
+        exact = self.search is not None
         anchored = (
-            self.anchor_id is None
-            and self.search is None
+            self.search is None
             and self.start_anchor is not None
             and self.end_anchor is not None
         )
-        if sum((catalog, exact, anchored)) != 1:
-            raise ValueError("provide exactly one catalog, exact, or anchored repair edit")
+        if sum((exact, anchored)) != 1:
+            raise ValueError("provide exactly one exact or anchored repair edit")
         return self
 
 
