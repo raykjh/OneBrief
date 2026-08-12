@@ -982,6 +982,15 @@ def test_declared_unity_viewports_reads_direct_screen_resolution_calls() -> None
     assert _declared_unity_viewports(source) == [(1920, 1080), (1080, 2340)]
 
 
+def test_declared_unity_viewports_reads_explicit_synchronous_capture_calls() -> None:
+    source = (
+        'var desktop = CaptureScreenshot("onebrief-evidence/lobby_desktop.png", 1920, 1080);\n'
+        'var mobile = CaptureScreenshot("onebrief-evidence/lobby_mobile.png", 1080, 2340);\n'
+    )
+
+    assert _declared_unity_viewports(source) == [(1920, 1080), (1080, 2340)]
+
+
 def test_unity_visual_preflight_rejects_batchmode_capture_that_reuses_screen_size(
     tmp_path: Path,
 ) -> None:

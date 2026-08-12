@@ -92,6 +92,15 @@ def _declared_unity_viewports(source: str) -> list[tuple[int, int]]:
         )
     ]
     structural = _csharp_code_only(source)
+    measured.extend(
+        (int(width), int(height))
+        for width, height in re.findall(
+            r"\b[A-Za-z_][A-Za-z0-9_]*(?:capture|screenshot)[A-Za-z0-9_]*\s*\(\s*"
+            r'"[^"\r\n]*\.png"\s*,\s*(\d{2,5})\s*,\s*(\d{2,5})\s*\)',
+            source,
+            re.IGNORECASE,
+        )
+    )
     if "screen.setresolution" not in structural.casefold():
         return measured
     measured.extend(
