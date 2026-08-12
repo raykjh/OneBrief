@@ -14,6 +14,7 @@ from onebrief.budget_guard import BudgetExceeded, BudgetStore, RunStatus
 from onebrief.execution_pipeline import (
     ExecutionPipeline,
     development_repair_requires_anchored_range,
+    evidence_repair_has_bounded_uncommitted_candidate,
     development_repair_difficulty,
     visual_repair_production_candidate,
     visual_repair_has_uncommitted_product_candidate,
@@ -138,6 +139,41 @@ def test_visual_repair_committed_source_does_not_use_candidate_file_mode() -> No
     )
 
     assert visual_repair_has_uncommitted_product_candidate(candidate) is False
+
+
+def test_small_generated_unity_evidence_file_uses_candidate_file_mode() -> None:
+    candidate = ProjectCodeChangeSet(
+        summary="Generated PlayMode evidence.",
+        changes=[{
+            "path": "Assets/Tests/PlayMode/VisualFlowTest.cs",
+            "base_sha256": None,
+            "content": "namespace OneBrief.Visual { class Flow {} }\n",
+            "reason": "Current generated evidence candidate.",
+        }],
+    )
+
+    assert evidence_repair_has_bounded_uncommitted_candidate(candidate) is True
+
+
+def test_committed_or_large_unity_evidence_file_stays_anchored() -> None:
+    committed = ProjectCodeChangeSet(
+        summary="Committed PlayMode evidence.",
+        changes=[{
+            "path": "Assets/Tests/PlayMode/VisualFlowTest.cs",
+            "base_sha256": "a" * 64,
+            "content": "namespace OneBrief.Visual { class Flow {} }\n",
+            "reason": "Committed evidence candidate.",
+        }],
+    )
+    large = committed.model_copy(update={
+        "changes": [committed.changes[0].model_copy(update={
+            "base_sha256": None,
+            "content": "x" * 8_001,
+        })],
+    })
+
+    assert evidence_repair_has_bounded_uncommitted_candidate(committed) is False
+    assert evidence_repair_has_bounded_uncommitted_candidate(large) is False
 
 
 def test_existing_unity_multi_surface_repair_is_classified_complex() -> None:

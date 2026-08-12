@@ -232,6 +232,19 @@ def visual_repair_has_uncommitted_product_candidate(change_set) -> bool:
     )
 
 
+def evidence_repair_has_bounded_uncommitted_candidate(change_set) -> bool:
+    """A small generated proof file is safer to replace whole than re-anchor."""
+
+    if change_set is None:
+        return False
+    return any(
+        getattr(item, "base_sha256", None) is None
+        and unity_evidence_contract_target_allowed(str(getattr(item, "path", "")))
+        and len(str(getattr(item, "content", "")).encode("utf-8")) <= 8_000
+        for item in getattr(change_set, "changes", [])
+    )
+
+
 def development_repair_difficulty(
     intake: IntakeRequest,
     requirements: RequirementsAnalysis,
@@ -1289,11 +1302,15 @@ class ExecutionPipeline:
             semantic_visual_repair
             and visual_repair_has_uncommitted_product_candidate(previous_change_set)
         )
+        candidate_file_evidence_repair = (
+            (multi_state_evidence_repair or unity_evidence_topology_repair)
+            and evidence_repair_has_bounded_uncommitted_candidate(previous_change_set)
+        )
         anchored_range_repair = development_repair_requires_anchored_range(
             multi_state_evidence_repair=multi_state_evidence_repair,
             unity_evidence_topology_repair=unity_evidence_topology_repair,
             semantic_visual_repair=semantic_visual_repair,
-        )
+        ) and not candidate_file_evidence_repair
         raw_exact_repair_required = not missing_unity_evidence_harness and (
             "namespace/full name begins" in prior_failure_text.casefold()
             or "the onebrief.visual test must" in prior_failure_text.casefold()
@@ -2171,7 +2188,15 @@ class ExecutionPipeline:
                 "to solve the underlying visual defect in this cleanup turn; trusted verification will expose "
                 "that production defect again on the next turn."
             )
-        if exact_repair_required and (
+        if exact_repair_required and candidate_file_evidence_repair:
+            maker_instruction += (
+                "\nBOUNDED CANDIDATE-FILE REPAIR: The failing PlayMode evidence source is a generated file "
+                "that is still new relative to the approved repository and is below 8,000 UTF-8 bytes. Return "
+                "exactly that one path with base_sha256 null and its complete corrected content. Do not return "
+                "search, anchor_id, start_anchor, end_anchor, or replace. Preserve the namespace, class, all "
+                "previously passing scenarios, and every closing brace."
+            )
+        elif exact_repair_required and (
             multi_state_evidence_repair or unity_evidence_topology_repair
         ):
             maker_instruction += (
