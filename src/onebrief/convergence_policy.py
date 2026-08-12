@@ -388,6 +388,19 @@ class ConvergencePolicy:
         *,
         preserve_criterion_ids: list[str] | None = None,
     ) -> RepairContract:
+        exact_replay = next((
+            item for item in reversed(ledger.observations)
+            if item.model_dump(mode="json") == observation.model_dump(mode="json")
+        ), None)
+        if exact_replay is not None:
+            existing_contract = next((
+                item for item in reversed(ledger.repair_contracts)
+                if item.observation_id == exact_replay.observation_id
+            ), None)
+            if existing_contract is not None:
+                # Verification and checkpoint hooks may request the same
+                # contract. That is an idempotent read, not another experiment.
+                return existing_contract
         matches = [
             item for item in ledger.observations
             if _same_causal_boundary(item, observation)
@@ -514,6 +527,11 @@ class ConvergencePolicy:
         observation: FailureObservation,
         contract: RepairContract,
     ) -> ConvergenceLedger:
+        if any(
+            item.model_dump(mode="json") == observation.model_dump(mode="json")
+            for item in ledger.observations
+        ):
+            return ledger
         return ledger.model_copy(update={
             "observations": [*ledger.observations, observation][-64:],
             "repair_contracts": [*ledger.repair_contracts, contract][-64:],

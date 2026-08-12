@@ -116,6 +116,27 @@ def test_same_failure_and_same_strategy_is_blocked_as_no_progress() -> None:
     assert repeated_contract.escalation_required is True
 
 
+def test_exact_observation_replay_is_idempotent_not_a_new_failure() -> None:
+    policy = ConvergencePolicy()
+    ledger = ConvergenceLedger()
+    observation = policy.observe(
+        context="development_verification",
+        failure_text="runtime evidence viewport does not match its PNG",
+        attempt_number=1,
+        affected_paths=["Assets/Tests/PlayMode/VisualFlowTest.cs"],
+        strategy_fingerprint="measured-png",
+    )
+    first = policy.issue_contract(ledger, observation)
+    ledger = policy.record(ledger, observation, first)
+
+    replay = policy.issue_contract(ledger, observation)
+    replayed_ledger = policy.record(ledger, observation, replay)
+
+    assert replay.contract_id == first.contract_id
+    assert replay.execution_allowed is True
+    assert replayed_ledger == ledger
+
+
 def test_one_materially_different_hypothesis_is_allowed() -> None:
     policy = ConvergencePolicy()
     ledger = ConvergenceLedger()
