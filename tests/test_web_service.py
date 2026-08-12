@@ -19,7 +19,7 @@ from onebrief.schemas import (
 from onebrief.toolpacks import attach_toolpack_descriptors
 from onebrief.web_service import (
     ExecutionLink, InMemoryWebSessionStore, LocalWebSessionStore, WebSession, app, get_session_store,
-    _local_project_cloud_configured, validate_approval,
+    _local_project_cloud_configured, _project_requires_approved_host, validate_approval,
 )
 
 
@@ -620,6 +620,61 @@ def test_imported_project_development_uses_cloud_snapshot_when_configured(
     link = store.read_execution("cloud-development")
     assert link.operation_name == "operations/cloud-development"
     assert link.job_uri.startswith("gs://job-bucket/")
+
+
+def test_imported_unity_project_stays_on_approved_host_when_cloud_is_configured(
+    monkeypatch, tmp_path
+) -> None:
+    store = LocalWebSessionStore(tmp_path / "sessions")
+    project = RegisteredProject(
+        project_id="unity-project", name="Unity", summary="Unity client",
+        root_path=str(tmp_path / "project"), project_type="unity multiplayer",
+        branch="main", head_sha="b" * 40, worktree_status="clean",
+        ready_for_isolated_edit=True, toolpack_id=ToolPackId.PROJECT_DEVELOPMENT,
+        origin="imported", toolpack_status="approved",
+    )
+    intake = IntakeRequest(
+        goal="Modernize the approved Unity client.",
+        output_target=OutputTarget.EXISTING_PROJECT,
+        existing_project_id="unity-project",
+        toolpack_ids=[ToolPackId.PROJECT_DEVELOPMENT],
+        public_research_allowed=True,
+        budget_limit_usd=2.0,
+    )
+    analysis = requirements(True)
+    budget = estimate_budget(intake, analysis)
+    store.create(WebSession(
+        session_id="host-bound-unity", created_at="2026-08-13T00:00:00+00:00",
+        intake=intake, requirements=analysis, budget=budget,
+    ))
+
+    class FakeCatalog:
+        def get(self, project_id):
+            assert project_id == "unity-project"
+            return project
+
+    def fail_cloud_submit(*_args, **_kwargs):
+        raise AssertionError("host-bound Unity work must not be submitted to Cloud Run")
+
+    monkeypatch.setenv("ONEBRIEF_JOB_BUCKET", "job-bucket")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv("ONEBRIEF_LOCAL_JOBS_ROOT", str(tmp_path / "jobs"))
+    monkeypatch.setattr("onebrief.web_service.ProjectCatalog", FakeCatalog)
+    monkeypatch.setattr("onebrief.web_service.run_job", lambda _job_dir: None)
+    monkeypatch.setattr("onebrief.web_service.submit_cloud_job", fail_cloud_submit)
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).post(
+            "/api/sessions/host-bound-unity/run",
+            json={"approved_usd": budget.recommended_approval_usd},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    link = store.read_execution("host-bound-unity")
+    assert link.operation_name == "local"
+    assert _project_requires_approved_host(project) is True
 
 
 def test_local_project_cloud_configuration_accepts_legacy_bucket_name(monkeypatch) -> None:

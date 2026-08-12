@@ -24,6 +24,18 @@ class CapabilityPackId(StrEnum):
     PYTHON_CONTROL = "python-control"
 
 
+class ExecutionPlacement(StrEnum):
+    """Where deterministic adapters may execute.
+
+    The placement is part of a capability pack's versioned semantics.  Host
+    bound packs rely on an explicitly approved local runtime (for example the
+    project's Unity Editor) and must not be moved to a generic Cloud worker.
+    """
+
+    PORTABLE = "portable"
+    APPROVED_HOST = "approved_host"
+
+
 class CapabilityPackDefinition(BaseModel):
     schema_version: str = "onebrief-capability-pack-v1"
     pack_id: CapabilityPackId
@@ -77,7 +89,7 @@ BUILTIN_CAPABILITY_PACKS: dict[CapabilityPackId, CapabilityPackDefinition] = {
     ),
     CapabilityPackId.UNITY_CONTROL: CapabilityPackDefinition(
         pack_id=CapabilityPackId.UNITY_CONTROL,
-        version="1.0.0",
+        version="1.1.0",
         title="Unity compile and runtime control",
         ecosystems=["unity"],
         adapter_ids=[
@@ -98,7 +110,7 @@ BUILTIN_CAPABILITY_PACKS: dict[CapabilityPackId, CapabilityPackDefinition] = {
     ),
     CapabilityPackId.UNITY_LAYOUT_DIAGNOSTICS: CapabilityPackDefinition(
         pack_id=CapabilityPackId.UNITY_LAYOUT_DIAGNOSTICS,
-        version="1.0.0",
+        version="1.1.0",
         title="Unity Canvas and RectTransform diagnostics",
         ecosystems=["unity"],
         adapter_ids=["unity_layout_diagnostics"],
@@ -147,6 +159,27 @@ BUILTIN_CAPABILITY_PACKS: dict[CapabilityPackId, CapabilityPackDefinition] = {
         blocked_boundaries=_COMMON_BLOCKS,
     ),
 }
+
+
+_HOST_BOUND_PACKS = frozenset({
+    CapabilityPackId.UNITY_CONTROL,
+    CapabilityPackId.UNITY_LAYOUT_DIAGNOSTICS,
+})
+
+
+def capability_pack_execution_placement(pack_id: CapabilityPackId) -> ExecutionPlacement:
+    """Return the versioned execution boundary for a reusable capability."""
+
+    if pack_id in _HOST_BOUND_PACKS:
+        return ExecutionPlacement.APPROVED_HOST
+    return ExecutionPlacement.PORTABLE
+
+
+def capability_pack_refs_require_approved_host(refs: list[CapabilityPackRef]) -> bool:
+    return any(
+        capability_pack_execution_placement(ref.pack_id) is ExecutionPlacement.APPROVED_HOST
+        for ref in refs
+    )
 
 
 def capability_pack_refs_for_adapter_ids(adapter_ids: list[str]) -> list[CapabilityPackRef]:

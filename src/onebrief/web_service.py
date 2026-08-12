@@ -29,6 +29,7 @@ from onebrief.cloud_jobs import (
     submit_cloud_job,
     upload_cloud_job,
 )
+from onebrief.capability_packs import capability_pack_refs_require_approved_host
 from onebrief.agent_platform_client import dispatch_approved_job_via_agent_platform
 from onebrief.automatic_resume import (
     can_attempt_automatic_resume,
@@ -550,6 +551,28 @@ def _service_config() -> tuple[str, str, str, str]:
 def _local_project_cloud_configured() -> bool:
     bucket = os.environ.get("ONEBRIEF_JOB_BUCKET") or os.environ.get("ONEBRIEF_BUCKET")
     return bool(bucket and os.environ.get("GOOGLE_CLOUD_PROJECT"))
+
+
+def _project_requires_approved_host(project: RegisteredProject | None) -> bool:
+    """Keep host-bound adapters on the machine whose runtime was qualified."""
+
+    if project is None:
+        return False
+    if "unity" in project.project_type.casefold():
+        return True
+    if project.origin != "imported":
+        return False
+    try:
+        generated = ProjectToolPackLifecycle(project.project_id).state().generated
+    except (FileNotFoundError, OSError, ValueError):
+        # An imported project with an unreadable binding is safer on its
+        # approved host; normal authorization checks will still reject stale
+        # or missing ToolPack state before execution.
+        return True
+    return bool(
+        generated
+        and capability_pack_refs_require_approved_host(generated.capability_packs)
+    )
 
 
 app = FastAPI(title="OneBrief", version="0.1.0", docs_url=None, redoc_url=None)
@@ -1138,10 +1161,15 @@ async def run_session(
             for item in (ToolPackId.EXCHANGE_DEVELOPMENT, ToolPackId.PROJECT_DEVELOPMENT)
         )
         snapshot_development = ToolPackId.PROJECT_DEVELOPMENT in session.intake.toolpack_ids
+        cloud_snapshot_allowed = bool(
+            snapshot_development
+            and _local_project_cloud_configured()
+            and not _project_requires_approved_host(selected_project)
+        )
         if development_job and not (
-            snapshot_development and _local_project_cloud_configured()
+            cloud_snapshot_allowed
         ):
-            if not isinstance(store, InMemoryWebSessionStore):
+            if isinstance(store, GCSWebSessionStore):
                 raise RuntimeError(
                     "Imported-project development is local-only because the approved repository is on this PC."
                 )
