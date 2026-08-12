@@ -1552,6 +1552,25 @@ class ApprovedProjectDevelopmentToolPack:
                 issues.append(
                     "the OneBrief.Visual test must select a real LanguageDropdown value and dispatch its change"
                 )
+            if language_requested and re.search(
+                r"findobjectsoftype\s*<\s*(?:tmpro\.)?tmp_dropdown\s*>\s*\(\s*true\s*\)",
+                structural,
+            ) and not any(token in structural for token in (
+                ".isactiveandenabled", ".activeinhierarchy",
+            )):
+                issues.append(
+                    "the OneBrief.Visual test searches inactive LanguageDropdown objects but never proves the selected "
+                    "control is active and visible; filter by isActiveAndEnabled/activeInHierarchy before interaction"
+                )
+            if language_requested and dropdown_discovered and not re.search(
+                r"assert\s*\.\s*[a-z0-9_]+\s*\([^;\n]*dropdown",
+                structural,
+                re.IGNORECASE,
+            ):
+                issues.append(
+                    "the OneBrief.Visual test must Assert that the selected real LanguageDropdown exists and is visible "
+                    "instead of silently skipping its evidence"
+                )
             if re.search(r"observed_locale\s*=\s*(?:lang|languages\s*\[)", structural):
                 issues.append(
                     "observed_locale must come from the running localization state (for example reflected GetLanguage), "

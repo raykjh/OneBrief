@@ -645,6 +645,7 @@ def test_unity_visual_preflight_requires_discoverable_test_and_evidence(tmp_path
         "UnityEngine.SceneManagement.SceneManager.LoadScene(\"Lobby\"); "
         "var languageDropdown = UnityEngine.GameObject.Find(\"LanguageDropdown\")"
         ".GetComponent<TMPro.TMP_Dropdown>(); "
+        "Assert.IsNotNull(languageDropdown); "
         "languageDropdown.value = 1; "
         "languageDropdown.onValueChanged.Invoke(languageDropdown.value); "
         "var glyphOk = font.HasCharacter('A'); "
@@ -824,7 +825,9 @@ def test_unity_visual_preflight_accepts_semantic_dropdown_enumeration_and_select
         "UnityEngine.SceneManagement.SceneManager.LoadScene(\"Lobby\"); "
         "var dropdowns = UnityEngine.Object.FindObjectsOfType<TMPro.TMP_Dropdown>(true); "
         "TMPro.TMP_Dropdown langDropdown = null; foreach (var item in dropdowns) "
-        "{ if (item.name.Contains(\"Language\")) langDropdown = item; } "
+        "{ if (item.name.Contains(\"Language\") && item.isActiveAndEnabled "
+        "&& item.gameObject.activeInHierarchy) langDropdown = item; } "
+        "Assert.IsNotNull(langDropdown); "
         "langDropdown.value = 1; langDropdown.onValueChanged.Invoke(langDropdown.value); "
         "var glyph = TMPro.TMP_Settings.defaultFontAsset.HasCharacter('A'); "
         "var json = \"onebrief-evidence/runtime-evidence.json\"; "
@@ -871,6 +874,38 @@ def test_unity_visual_preflight_rejects_dropdown_show_without_language_selection
     issues = pack._unity_visual_contract_issues(profile, clone, "Unity language UI")
 
     assert any("select a real LanguageDropdown value" in issue for issue in issues)
+
+
+def test_unity_visual_preflight_rejects_inactive_unasserted_dropdown_selection(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-inactive-dropdown"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Check() { "
+        'SceneManager.LoadScene("Lobby"); '
+        "var dropdowns = Object.FindObjectsOfType<TMPro.TMP_Dropdown>(true); "
+        "TMPro.TMP_Dropdown langDropdown = dropdowns[0]; "
+        "langDropdown.value = 1; langDropdown.onValueChanged.Invoke(langDropdown.value); "
+        "langDropdown.Show(); var glyph = langDropdown.captionText.font.HasCharacter('A'); "
+        'var json = "runtime-evidence.json onebrief-unity-visual-evidence-v1 scenarios"; '
+        'var png = "onebrief-evidence/language.png"; } }',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(profile, clone, "Unity language UI")
+
+    assert any("active and visible" in issue for issue in issues)
+    assert any("Assert that the selected real LanguageDropdown" in issue for issue in issues)
 
 
 def test_unity_visual_preflight_rejects_async_batchmode_screenshot(tmp_path: Path) -> None:
