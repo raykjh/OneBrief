@@ -216,8 +216,9 @@ def find_reuse_candidate(
             and not (job_dir / "work" / "code_change_set_retry_delta_r1.json").is_file()
         )
         candidates.append((
+            int(has_code),
             int(preferred is not None and job_dir.resolve() == preferred),
-            int(has_code), quality[0], quality[1], int(not legacy_delta_risk),
+            quality[0], quality[1], int(not legacy_delta_risk),
             job_dir.stat().st_mtime, candidate,
         ))
     return max(candidates, key=lambda item: item[:6])[6] if candidates else None

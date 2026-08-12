@@ -209,6 +209,45 @@ def test_current_failed_candidate_is_reused_without_numbered_round_pair(
     )
 
 
+def test_analysis_only_preferred_job_never_outranks_compatible_code(
+    tmp_path: Path,
+) -> None:
+    head = "9" * 40
+    for name, with_code in (("code-job", True), ("analysis-only", False)):
+        job = tmp_path / name
+        (job / "inputs").mkdir(parents=True)
+        evidence = job / "work" / "toolpacks" / "exchange_development" / "evidence"
+        evidence.mkdir(parents=True)
+        (job / "inputs" / "intake.json").write_text(
+            _intake().model_dump_json(), encoding="utf-8"
+        )
+        (job / "job.json").write_text(
+            json.dumps({"job_id": name, "status": "failed"}), encoding="utf-8"
+        )
+        (evidence / "repository_inspection.json").write_text(
+            json.dumps({"head_sha": head}), encoding="utf-8"
+        )
+        (job / "work" / "analysis.json").write_text("{}", encoding="utf-8")
+        if with_code:
+            (job / "work" / "code_change_set.json").write_text(
+                '{"summary":"checkpoint"}', encoding="utf-8"
+            )
+            (job / "work" / "development_verification_failure.txt").write_text(
+                "development verification failed: unity_playmode_visual_tests",
+                encoding="utf-8",
+            )
+
+    candidate = find_reuse_candidate(
+        tmp_path,
+        _intake(),
+        _project(head),
+        preferred_job_dir=tmp_path / "analysis-only",
+    )
+
+    assert candidate is not None
+    assert candidate.job_id == "code-job"
+
+
 def test_reuse_prefers_playmode_checkpoint_over_newer_static_failure(
     tmp_path: Path,
 ) -> None:
