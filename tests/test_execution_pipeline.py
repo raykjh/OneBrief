@@ -1397,6 +1397,18 @@ def test_duplicate_unity_screenshot_feedback_requires_capture_at_each_real_state
     assert "do not relabel one final-state PNG" in instruction
 
 
+def test_duplicate_responsive_screenshot_feedback_repairs_render_target_dimensions() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "Unity visual evidence reused an identical screenshot for lobby_desktop and lobby_mobile; "
+        "the capture does not prove the visible UI changed between scenarios"
+    )
+
+    instruction = " ".join(report.revision_instructions)
+    assert "accept the requested width and height" in instruction
+    assert "RenderTexture, Texture2D, and ReadPixels" in instruction
+    assert "Do not rely on Screen.SetResolution" in instruction
+
+
 def test_project_developer_promotes_dedicated_anchored_range_repair() -> None:
     previous = ProjectCodeChangeSet(
         summary="Existing generated verification source.",

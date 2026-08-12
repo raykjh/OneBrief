@@ -126,6 +126,37 @@ def _declared_unity_viewports(source: str) -> list[tuple[int, int]]:
     return measured
 
 
+def _uses_screen_sized_render_target(structural_source: str) -> bool:
+    """Detect batchmode capture targets derived from Screen.width/height."""
+
+    if re.search(
+        r"new\s+(?:unityengine\.)?rendertexture\s*\(\s*"
+        r"(?:unityengine\.)?screen\.width\s*,\s*(?:unityengine\.)?"
+        r"screen\.height\s*,",
+        structural_source,
+    ):
+        return True
+    width_vars = re.findall(
+        r"\b(?:int|var)\s+([a-z_][a-z0-9_]*)\s*=\s*"
+        r"(?:unityengine\.)?screen\.width\b",
+        structural_source,
+    )
+    height_vars = re.findall(
+        r"\b(?:int|var)\s+([a-z_][a-z0-9_]*)\s*=\s*"
+        r"(?:unityengine\.)?screen\.height\b",
+        structural_source,
+    )
+    return any(
+        re.search(
+            rf"new\s+(?:unityengine\.)?rendertexture\s*\(\s*"
+            rf"{re.escape(width)}\s*,\s*{re.escape(height)}\s*,",
+            structural_source,
+        )
+        for width in width_vars
+        for height in height_vars
+    )
+
+
 def generic_safe_relative(value: str) -> PurePosixPath:
     path = PurePosixPath(value.replace("\\", "/"))
     if path.is_absolute() or not path.parts or any(part in {"", ".", ".."} for part in path.parts):
@@ -1294,12 +1325,7 @@ class ApprovedProjectDevelopmentToolPack:
                     )
                 if (
                     "screen.setresolution" in structural
-                    and re.search(
-                        r"new\s+(?:unityengine\.)?rendertexture\s*\(\s*"
-                        r"(?:unityengine\.)?screen\.width\s*,\s*(?:unityengine\.)?"
-                        r"screen\.height\s*,",
-                        structural,
-                    )
+                    and _uses_screen_sized_render_target(structural)
                 ):
                     issues.append(
                         "responsive Unity batchmode evidence must pass each requested viewport width and height "

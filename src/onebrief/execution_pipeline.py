@@ -700,6 +700,18 @@ class ExecutionPipeline:
                     "runtime-evidence scenario per surface with a surface-specific scenario_id and observed_state. "
                     "A combined final-state name such as LoginToLobbyToSettings is not distinct evidence."
                 )
+            if (
+                "reused an identical screenshot" in lowered
+                and "desktop" in lowered
+                and "mobile" in lowered
+            ):
+                return (
+                    "The same UI state was captured for desktop and mobile with identical bytes. Change the "
+                    "synchronous capture helper to accept the requested width and height for each scenario and "
+                    "use them directly for RenderTexture, Texture2D, and ReadPixels. Return those written texture "
+                    "dimensions in the evidence. Do not rely on Screen.SetResolution, Screen.width, or extra frame "
+                    "delays changing Unity batchmode output."
+                )
             if "reused an identical screenshot" in lowered:
                 return (
                     "Replace the existing capture region so every scenario writes a unique PNG immediately while "

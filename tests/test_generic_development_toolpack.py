@@ -1027,6 +1027,52 @@ def test_unity_visual_preflight_rejects_batchmode_capture_that_reuses_screen_siz
     assert any("pass each requested viewport width and height" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_traces_screen_size_through_capture_variables(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    tests = tmp_path / "unity-screen-variable-capture" / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'UnityEngine.SceneManagement.SceneManager.LoadScene("Login"); '
+        "UnityEngine.Screen.SetResolution(1920, 1080, false); Capture(); "
+        "UnityEngine.Screen.SetResolution(1080, 2340, false); Capture(); "
+        "var button = UnityEngine.GameObject.Find(\"SettingsButton\")"
+        ".GetComponent<UnityEngine.UI.Button>(); button.onClick.Invoke(); "
+        "var dropdown = UnityEngine.Object.FindObjectOfType<TMPro.TMP_Dropdown>(); "
+        "dropdown.value = 1; dropdown.onValueChanged.Invoke(dropdown.value); "
+        "var glyph = TMPro.TMP_Settings.defaultFontAsset.HasCharacter('A'); "
+        "var schema = \"runtime-evidence.json onebrief-unity-visual-evidence-v1 scenarios "
+        "scenario_id observed_state interaction assertion_count viewport_width viewport_height "
+        "screenshot_path desktop.png mobile.png\"; } "
+        "void Capture() { var camera = UnityEngine.Camera.main; "
+        "var canvas = UnityEngine.Object.FindObjectOfType<UnityEngine.Canvas>(); "
+        "canvas.renderMode = UnityEngine.RenderMode.ScreenSpaceCamera; canvas.worldCamera = camera; "
+        "int width = UnityEngine.Screen.width; int height = UnityEngine.Screen.height; "
+        "var rt = new UnityEngine.RenderTexture(width, height, 24); "
+        "camera.targetTexture = rt; camera.Render(); var tex = new UnityEngine.Texture2D(width, height); "
+        "tex.ReadPixels(new UnityEngine.Rect(0, 0, width, height), 0, 0); "
+        "System.IO.File.WriteAllBytes(\"onebrief-evidence/desktop.png\", tex.EncodeToPNG()); } }",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile,
+        tests.parents[2],
+        "Modernize the Unity UI and verify it on mobile and desktop.",
+    )
+
+    assert any("pass each requested viewport width and height" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_rejects_overlay_ui_rendered_without_canvas_routing(
     tmp_path: Path,
 ) -> None:
