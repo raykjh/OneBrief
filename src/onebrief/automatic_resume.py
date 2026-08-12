@@ -101,6 +101,33 @@ def _remaining_approval(job_dir: Path) -> tuple[float, float]:
     return micros_to_dollars(max(remaining, 0)), micros_to_dollars(ledger.actual_usd_micros)
 
 
+def _continuation_budget_estimate(
+    estimate: BudgetEnvelope, remaining_approved_usd: float
+) -> BudgetEnvelope:
+    """Describe a bounded repair using only its inherited remaining cap.
+
+    A repair can have less approval left than the original whole-pipeline
+    minimum. Job creation must still succeed; the per-call gateway remains the
+    final authority and requests more budget before any call that does not fit.
+    """
+
+    cap = max(float(remaining_approved_usd), 0.000001)
+    minimum = min(float(estimate.minimum_cost_usd), cap)
+    recommended = min(max(minimum, float(estimate.recommended_cost_usd)), cap)
+    maximum = min(max(recommended, float(estimate.maximum_cost_usd)), cap)
+    return estimate.model_copy(update={
+        "minimum_cost_usd": minimum,
+        "recommended_cost_usd": recommended,
+        "maximum_cost_usd": maximum,
+        "recommended_approval_usd": cap,
+        "budget_limit_usd": cap,
+        "notes": [
+            *estimate.notes,
+            "Continuation envelope is bounded by unused parent approval; per-call reservations remain authoritative.",
+        ],
+    })
+
+
 def _trusted_seeded_development_dir(job_dir: Path) -> Path | None:
     """Return already-revalidated evidence only when its receipt still binds the candidate."""
     work = job_dir / "work"
@@ -386,7 +413,7 @@ def create_bounded_repair_resume(
             intake=intake,
             requirements=requirements,
             sources=sources,
-            estimate=estimate,
+            estimate=_continuation_budget_estimate(estimate, remaining),
             approved_usd=remaining,
             benchmark_variant=source_record.benchmark_variant,
             embed_project_snapshot=False,

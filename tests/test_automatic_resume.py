@@ -6,6 +6,7 @@ import pytest
 
 from onebrief.automatic_resume import (
     AutomaticResumePlan,
+    _continuation_budget_estimate,
     can_attempt_automatic_resume,
     can_attempt_bounded_repair_resume,
     can_attempt_structural_resume,
@@ -57,6 +58,23 @@ def _estimate() -> BudgetEnvelope:
         estimated_minutes_maximum=1,
         notes=[],
     )
+
+
+def test_continuation_budget_can_use_less_than_the_full_run_minimum() -> None:
+    original = _estimate().model_copy(update={
+        "minimum_cost_usd": 0.99,
+        "recommended_cost_usd": 2.0,
+        "maximum_cost_usd": 4.0,
+        "recommended_approval_usd": 2.0,
+    })
+
+    continuation = _continuation_budget_estimate(original, 0.88)
+
+    assert continuation.minimum_cost_usd == 0.88
+    assert continuation.recommended_cost_usd == 0.88
+    assert continuation.maximum_cost_usd == 0.88
+    assert continuation.recommended_approval_usd == 0.88
+    assert continuation.budget_limit_usd == 0.88
 
 
 def _failed_job(root: Path) -> None:
