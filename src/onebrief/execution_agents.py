@@ -184,6 +184,10 @@ class DeveloperAgent:
                 str(getattr(item, "path", "")): str(getattr(item, "content", ""))
                 for item in getattr(previous_change_set, "changes", [])
             }
+            previous_base_map = {
+                str(getattr(item, "path", "")): getattr(item, "base_sha256", None)
+                for item in getattr(previous_change_set, "changes", [])
+            }
             catalog = {
                 (str(group.get("path", "")), str(anchor.get("anchor_id", ""))): str(
                     anchor.get("text", "")
@@ -201,7 +205,9 @@ class DeveloperAgent:
                 if self.path_approver(path) is None:
                     continue
                 if compact_repair and change.get("content") is not None:
-                    if path in source_map or path in previous_map:
+                    if path in source_map or (
+                        path in previous_map and previous_base_map.get(path) is not None
+                    ):
                         raise ValueError(
                             f"compact full-file repair may only add a new file: {path}"
                         )

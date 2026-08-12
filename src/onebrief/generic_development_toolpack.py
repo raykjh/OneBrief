@@ -259,8 +259,9 @@ class ExactRepairProjectFileChange(BaseModel):
 
     path: str
     base_sha256: str | None = None
+    content: str | None = Field(default=None, max_length=8000)
     search: str | None = Field(default=None, min_length=1, max_length=3000)
-    replace: str = Field(max_length=8000)
+    replace: str | None = Field(default=None, max_length=8000)
     start_anchor: str | None = Field(default=None, min_length=1, max_length=1000)
     end_anchor: str | None = Field(default=None, min_length=1, max_length=1000)
     reason: str = Field(min_length=3, max_length=500)
@@ -282,14 +283,19 @@ class ExactRepairProjectFileChange(BaseModel):
         if self.search is not None:
             self.start_anchor = None
             self.end_anchor = None
-        exact = self.search is not None
+        full = self.content is not None and self.search is None and self.replace is None
+        exact = self.content is None and self.search is not None and self.replace is not None
         anchored = (
-            self.search is None
+            self.content is None
+            and self.search is None
             and self.start_anchor is not None
             and self.end_anchor is not None
+            and self.replace is not None
         )
-        if sum((exact, anchored)) != 1:
-            raise ValueError("provide exactly one exact or anchored repair edit")
+        if sum((full, exact, anchored)) != 1:
+            raise ValueError("provide exactly one bounded candidate-file, exact, or anchored repair edit")
+        if full and self.base_sha256 is not None:
+            raise ValueError("a full candidate-file repair must retain a null base hash")
         return self
 
 

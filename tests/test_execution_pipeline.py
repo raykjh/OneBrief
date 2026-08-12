@@ -1127,6 +1127,37 @@ def test_project_developer_compact_retry_rejects_full_existing_file_replacement(
         }])
 
 
+def test_exact_repair_can_replace_a_bounded_generated_candidate_file() -> None:
+    from onebrief.generic_development_toolpack import ExactRepairProjectCodeChangeSet
+
+    previous = ProjectCodeChangeSet(
+        summary="Generated test candidate.",
+        changes=[{
+            "path": "Assets/Tests/PlayMode/OneBriefVisualTests.cs",
+            "base_sha256": None,
+            "content": "namespace Old { public class Test {} }\n",
+            "reason": "Initial generated test.",
+        }],
+    )
+    proposal = ExactRepairProjectCodeChangeSet.model_validate({
+        "summary": "Correct the generated test.",
+        "changes": [{
+            "path": "Assets/Tests/PlayMode/OneBriefVisualTests.cs",
+            "base_sha256": None,
+            "content": "namespace OneBrief.Visual { public class Test {} }\n",
+            "reason": "Repair only the bounded generated candidate file.",
+        }],
+    })
+    developer = DeveloperAgent(
+        object(), change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/", path_approver=lambda path: path,
+    )
+
+    result = developer.promote_candidate(proposal, [], previous)
+
+    assert result.changes[0].content.startswith("namespace OneBrief.Visual")
+
+
 def test_deterministic_development_failures_become_independent_repair_slices() -> None:
     report = ExecutionPipeline._development_failure_report(
         "development verification failed: missing PNG | missing scene interaction | missing glyph check"

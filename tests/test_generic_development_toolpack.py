@@ -111,17 +111,16 @@ def test_compact_proposal_schema_prevents_prevalidation_output_overflow() -> Non
 
 
 def test_exact_repair_schema_cannot_emit_a_full_file() -> None:
-    with pytest.raises(ValueError):
-        ExactRepairProjectCodeChangeSet.model_validate({
-            "summary": "Repair one namespace declaration.",
-            "changes": [{
-                "path": "Assets/Tests/PlayMode/OneBriefVisualTests.cs",
-                "base_sha256": None,
-                "content": "namespace OneBrief.Visual { }",
-                "replace": "namespace OneBrief.Visual",
-                "reason": "The repair must be an exact edit, not a full-file echo.",
-            }],
-        })
+    bounded_new_candidate = ExactRepairProjectCodeChangeSet.model_validate({
+        "summary": "Repair one generated candidate file.",
+        "changes": [{
+            "path": "Assets/Tests/PlayMode/OneBriefVisualTests.cs",
+            "base_sha256": None,
+            "content": "namespace OneBrief.Visual { }",
+            "reason": "A generated candidate file may be replaced within the 8k cap.",
+        }],
+    })
+    assert bounded_new_candidate.changes[0].content is not None
 
     proposal = ExactRepairProjectCodeChangeSet.model_validate({
         "summary": "Repair one namespace declaration.",
