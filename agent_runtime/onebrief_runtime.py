@@ -108,7 +108,6 @@ def return_tool_receipt_without_summarization(
 
 def build_agent_engine_app():
     from agentplatform.agent_engines import AdkApp
-    from google.adk.sessions import InMemorySessionService
 
     settings = RuntimeSettings.from_env()
     root_agent = LlmAgent(
@@ -128,11 +127,12 @@ def build_agent_engine_app():
         tools=[start_approved_onebrief_job, inspect_onebrief_job],
         after_tool_callback=return_tool_receipt_without_summarization,
     )
-    # This dispatcher is deliberately one-shot and stores no conversation data.
-    # A custom ephemeral session also avoids granting the runtime permission to
-    # create or read managed Agent Platform Sessions for immutable work orders.
+    # Do not override the deployed runtime's managed session service.  Agent
+    # Platform owns the durable session and event records used by its Sessions,
+    # dashboard, trace, model, and tool views.  OneBrief still treats each
+    # dispatch as an immutable one-shot work order; managed persistence here is
+    # observability evidence, not mutable project memory.
     return AdkApp(
         agent=root_agent,
         enable_tracing=True,
-        session_service_builder=InMemorySessionService,
     )

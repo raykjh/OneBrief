@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any
-from uuid import uuid4
 
 
 @dataclass(frozen=True)
@@ -33,6 +32,21 @@ def _find_value(value: Any, key: str) -> str | None:
     return None
 
 
+def _managed_session_id(value: Any) -> str:
+    """Return the exact Agent Platform session ID from an SDK response."""
+
+    if isinstance(value, dict):
+        for key in ("id", "session_id", "sessionId"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate:
+                return candidate
+    for key in ("id", "session_id", "sessionId"):
+        candidate = getattr(value, key, None)
+        if isinstance(candidate, str) and candidate:
+            return candidate
+    raise RuntimeError("Agent Platform created no identifiable managed session")
+
+
 def dispatch_approved_job_via_agent_platform(
     *,
     resource_name: str,
@@ -49,10 +63,11 @@ def dispatch_approved_job_via_agent_platform(
 
         client = agentplatform.Client(project=project, location=location)
     engine = client.agent_engines.get(name=resource_name)
-    # The project-owner dispatcher is a stateless one-shot Agent Platform app.
-    # Keeping URI + receipt in OneBrief's durable execution link is safer than
-    # granting this tiny routing agent access to managed conversation state.
-    dispatch_id = f"ephemeral-{uuid4()}"
+    # The project-owner remains a one-shot dispatcher, but the exact managed
+    # session is retained so Agent Platform can expose turns, models, tools,
+    # traces, and invocation evidence in its native observability views.
+    session = engine.create_session(user_id=user_id)
+    dispatch_id = _managed_session_id(session)
     message = json.dumps(
         {
             "action": "start_approved_onebrief_job",
@@ -67,7 +82,11 @@ def dispatch_approved_job_via_agent_platform(
     # Tool receipts can arrive before the model's final prose. Return as soon as
     # the exact immutable job URI and Cloud Run operation are observed instead
     # of waiting indefinitely for the managed stream to close.
-    for event in engine.stream_query(user_id=user_id, message=message):
+    for event in engine.stream_query(
+        user_id=user_id,
+        session_id=dispatch_id,
+        message=message,
+    ):
         event_count += 1
         operation = operation or _find_value(event, "operation_name")
         returned_uri = returned_uri or _find_value(event, "job_uri")
