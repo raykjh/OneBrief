@@ -111,6 +111,16 @@ def _failed_development_pair(job_dir: Path) -> tuple[str, str, tuple[int, int]] 
         if (work / candidate).is_file() and (work / failure).is_file():
             message = (work / failure).read_text(encoding="utf-8", errors="replace")
             pairs.append((development_failure_quality(message), index, candidate, failure))
+    current_candidate = work / "code_change_set.json"
+    current_failure = work / "development_verification_failure.txt"
+    if current_candidate.is_file() and current_failure.is_file():
+        message = current_failure.read_text(encoding="utf-8", errors="replace")
+        pairs.append((
+            development_failure_quality(message),
+            13,
+            current_candidate.name,
+            current_failure.name,
+        ))
     if not pairs:
         return None
     quality, _round, candidate, failure = max(

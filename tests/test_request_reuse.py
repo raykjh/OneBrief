@@ -175,6 +175,40 @@ def test_unverified_code_proposal_is_never_reused(tmp_path: Path) -> None:
     assert candidate.reusable_artifacts == ("analysis.json",)
 
 
+def test_current_failed_candidate_is_reused_without_numbered_round_pair(
+    tmp_path: Path,
+) -> None:
+    head = "f" * 40
+    old = tmp_path / "current-failed-job"
+    (old / "inputs").mkdir(parents=True)
+    evidence = old / "work" / "toolpacks" / "exchange_development" / "evidence"
+    evidence.mkdir(parents=True)
+    (old / "inputs" / "intake.json").write_text(
+        _intake().model_dump_json(), encoding="utf-8"
+    )
+    (old / "job.json").write_text(
+        '{"job_id":"current-failed-job","status":"failed"}', encoding="utf-8"
+    )
+    (evidence / "repository_inspection.json").write_text(
+        json.dumps({"head_sha": head}), encoding="utf-8"
+    )
+    (old / "work" / "code_change_set.json").write_text(
+        '{"summary":"current"}', encoding="utf-8"
+    )
+    (old / "work" / "development_verification_failure.txt").write_text(
+        "Unity visual evidence requires a distinct rendered scenario for settings",
+        encoding="utf-8",
+    )
+
+    candidate = find_reuse_candidate(tmp_path, _intake(), _project(head))
+
+    assert candidate is not None
+    assert candidate.reusable_artifacts == (
+        "code_change_set.json",
+        "development_verification_failure.txt",
+    )
+
+
 def test_reuse_prefers_playmode_checkpoint_over_newer_static_failure(
     tmp_path: Path,
 ) -> None:
