@@ -1324,11 +1324,16 @@ class ExecutionPipeline:
                 if previous_change_set is None:
                     raise
                 raw_dump = getattr(raw, "model_dump_json", None)
+                raw_text: str | None = None
                 if callable(raw_dump):
+                    raw_text = raw_dump(indent=2)
+                elif isinstance(raw, (dict, list)):
+                    raw_text = json.dumps(raw, ensure_ascii=False, indent=2)
+                if raw_text is not None:
                     self._write(
                         output_dir
                         / f"development_candidate_promotion_raw_r{round_number}.json",
-                        raw_dump(indent=2),
+                        raw_text,
                     )
                 decision = self.recovery_policy.decide(
                     exc,
@@ -1782,19 +1787,19 @@ class ExecutionPipeline:
             )
         elif semantic_visual_repair and candidate_file_visual_repair:
             maker_instruction += (
-                "\nANCHORED-RANGE CANDIDATE PRODUCTION REPAIR: The independent observer found a real rendered UI "
-                "defect and previous_artifact contains newly generated production files that do not exist in "
-                "the source repository yet. Choose exactly one production UI path and return start_anchor and "
-                "end_anchor copied verbatim from that file in previous_artifact plus one replacement for only "
-                "that coherent range. Retain its null base_sha256. Never return the complete file and never select "
-                "tests, screenshots, evidence metadata, or assertions."
+                "\nCATALOG-ANCHORED CANDIDATE PRODUCTION REPAIR: The independent observer found a real rendered "
+                "UI defect and previous_artifact contains newly generated production files that do not exist in "
+                "the source repository yet. Choose exactly one anchor_id displayed in exact_edit_anchors for a "
+                "currently failing production UI path and replace that complete displayed window. Retain its null "
+                "base_sha256. Do not return start_anchor, end_anchor, the complete file, tests, screenshots, "
+                "evidence metadata, or assertions."
             )
         elif exact_repair_required and semantic_visual_repair:
             maker_instruction += (
-                "\nANCHORED-RANGE PRODUCTION REPAIR: The independent observer found a real rendered UI "
-                "defect. Return one change with start_anchor and end_anchor copied verbatim from one "
-                "production UI file in previous_artifact, and replace that coherent range. Fix the "
-                "highest-priority observed defect in shipped UI code. Do not edit tests, screenshots, "
+                "\nCATALOG-ANCHORED PRODUCTION REPAIR: The independent observer found a real rendered UI defect. "
+                "Choose exactly one anchor_id displayed in exact_edit_anchors for a currently failing production "
+                "UI path and replace that complete displayed window. Do not return start_anchor or end_anchor. "
+                "Fix the highest-priority observed defect in shipped UI code; do not edit tests, screenshots, "
                 "evidence metadata, or assertions. Preserve server protocol and existing behavior."
             )
         elif exact_repair_required:
