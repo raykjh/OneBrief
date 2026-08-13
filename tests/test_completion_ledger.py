@@ -264,3 +264,35 @@ def test_unity_screenshot_failure_preserves_bound_compile_and_behavior_passes() 
     assert dimensions[EvidenceKind.COMPILE] == CompletionStatus.PASSED
     assert dimensions[EvidenceKind.BEHAVIOR] == CompletionStatus.PASSED
     assert dimensions[EvidenceKind.VISUAL] == CompletionStatus.REVISE
+
+
+def test_compile_receipt_cannot_satisfy_mixed_behavior_criterion() -> None:
+    mixed_contract = CompletionContract(
+        target_state="Login reaches Lobby.",
+        quality_criteria=[
+            QualityCriterion(
+                criterion_id="Q91",
+                description="Login surface and preserved authentication transition work",
+                evaluation_mode=EvaluationMode.DETERMINISTIC,
+                evidence_required="Unity compilation and PlayMode interaction evidence for Login to Lobby.",
+            ),
+        ],
+    )
+    receipt = DevelopmentVerificationReceipt(
+        repository_name="julpae", base_head_sha="a" * 40,
+        candidate_sha256="b" * 64,
+        commands=[],
+        evidence_bindings=[create_evidence_binding(
+            criterion_id=None, kind=EvidenceKind.COMPILE,
+            status=EvidenceStatus.PASSED, summary="Unity compile exited 0.",
+            command_id="unity_compile",
+        )],
+    )
+
+    report = ExecutionPipeline._development_failure_report(
+        "Unity visual scenario login screenshot is unavailable",
+        mixed_contract,
+        receipt,
+    )
+
+    assert all(check.criterion_id != "Q91" for check in report.criterion_checks)

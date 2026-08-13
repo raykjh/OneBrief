@@ -1755,7 +1755,15 @@ class ApprovedProjectDevelopmentToolPack:
         changed_paths: list[str] | None = None,
     ) -> list[str]:
         intent_text = self._unity_verification_intent(goal_text)
-        if not self._requires_unity_visual_runtime(intent_text):
+        # The compact milestone contract may omit words such as "visual" even
+        # when the authoritative goal still requires rendered evidence.  The
+        # command planner consumes the full payload, so the preflight contract
+        # must use the same union or it can launch PlayMode with a known-invalid
+        # evidence harness.
+        if not (
+            self._requires_unity_visual_runtime(goal_text)
+            or self._requires_unity_visual_runtime(intent_text)
+        ):
             return []
         if not any(
             item.enabled and item.adapter_id == AdapterId.UNITY_PLAYMODE_VISUAL_TESTS
@@ -1868,7 +1876,9 @@ class ApprovedProjectDevelopmentToolPack:
         if not test_sources:
             issues.append(
                 "add a discoverable Unity PlayMode test whose namespace/full name begins "
-                "with OneBrief.Visual"
+                "with OneBrief.Visual; in that same atomic test bundle, capture every rendered state with the "
+                "trusted OneBriefAtomicScreenshot.Capture helper and publish the measured scenarios only with "
+                "OneBriefAtomicScreenshot.WriteManifestAtomically"
             )
         else:
             combined_source = "\n".join(test_sources)

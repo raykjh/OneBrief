@@ -340,3 +340,32 @@ def test_invalid_manifest_exposes_actionable_schema_failure(tmp_path: Path) -> N
     assert "scenario_id" in message
     assert "screenshot_path" in message
     assert "Generate the manifest and PNG captures during the test run" in message
+
+
+def test_missing_png_is_reported_before_placeholder_assertion_count(tmp_path: Path) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results)
+    evidence = tmp_path / "onebrief-evidence"
+    evidence.mkdir()
+    (evidence / "runtime-evidence.json").write_text(
+        json.dumps({
+            "schema_version": "onebrief-unity-visual-evidence-v1",
+            "scenarios": [{
+                "scenario_id": "login_surface",
+                "observed_state": "Login UI loaded",
+                "interaction": "load login",
+                "assertion_count": 0,
+                "viewport_width": 1920,
+                "viewport_height": 1080,
+                "screenshot_path": "login.png",
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="screenshot is unavailable") as failure:
+        validate_and_copy_unity_visual_evidence(
+            tmp_path, results, tmp_path / "packaged", "Modernize Login UI"
+        )
+
+    assert "passing runtime assertion" not in str(failure.value)

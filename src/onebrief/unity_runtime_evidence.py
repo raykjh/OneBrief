@@ -254,6 +254,26 @@ def validate_and_copy_unity_visual_evidence(
     screenshot_sources: list[tuple[Path, str]] = []
     screenshot_digests: dict[str, UnityVisualScenario] = {}
     for scenario in manifest.scenarios:
+        # Materialization is the lowest-level prerequisite for every semantic
+        # claim below.  Check it first so an absent asynchronous screenshot is
+        # owned by the evidence runtime rather than misreported as a product or
+        # interaction defect merely because the same manifest also contains a
+        # placeholder assertion_count.
+        source = (evidence_root / Path(*PurePosixPath(scenario.screenshot_path).parts)).resolve()
+        if not source.is_relative_to(evidence_root) or not source.is_file():
+            raise RuntimeError(
+                f"Unity visual scenario {scenario.scenario_id} screenshot is unavailable"
+            )
+        width, height = _png_dimensions(source)
+        if scenario.viewport_width is not None and scenario.viewport_width != width:
+            raise RuntimeError(
+                f"Unity visual scenario {scenario.scenario_id} viewport width does not match its PNG"
+            )
+        if scenario.viewport_height is not None and scenario.viewport_height != height:
+            raise RuntimeError(
+                f"Unity visual scenario {scenario.scenario_id} viewport height does not match its PNG"
+            )
+
         has_locale_measurement = any(value is not None for value in (
             scenario.expected_locale,
             scenario.observed_locale,
@@ -292,20 +312,6 @@ def validate_and_copy_unity_visual_evidence(
                 )
             observed_states.add(scenario.observed_state.casefold())
             observed_state_sequence.append(scenario.observed_state)
-        source = (evidence_root / Path(*PurePosixPath(scenario.screenshot_path).parts)).resolve()
-        if not source.is_relative_to(evidence_root) or not source.is_file():
-            raise RuntimeError(
-                f"Unity visual scenario {scenario.scenario_id} screenshot is unavailable"
-            )
-        width, height = _png_dimensions(source)
-        if scenario.viewport_width is not None and scenario.viewport_width != width:
-            raise RuntimeError(
-                f"Unity visual scenario {scenario.scenario_id} viewport width does not match its PNG"
-            )
-        if scenario.viewport_height is not None and scenario.viewport_height != height:
-            raise RuntimeError(
-                f"Unity visual scenario {scenario.scenario_id} viewport height does not match its PNG"
-            )
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
         previous_scenario = screenshot_digests.get(digest)
         if previous_scenario is not None:

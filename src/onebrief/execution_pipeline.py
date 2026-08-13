@@ -1199,7 +1199,14 @@ class ExecutionPipeline:
             def matching_criteria(kind: EvidenceKind) -> list[str]:
                 def criterion_kind(item) -> EvidenceKind | None:
                     text = f"{item.description} {item.evidence_required}".casefold()
-                    if any(marker in text for marker in (
+                    # Compilation may be named as a prerequisite for a richer
+                    # interaction or rendered-state criterion. Never let the
+                    # weaker receipt satisfy that mixed semantic outcome.
+                    semantic_markers = (
+                        "visual", "screenshot", "rendered png", "layout", "png",
+                        "behavior", "interaction", "transition", "navigation", "playmode",
+                    )
+                    if not any(marker in text for marker in semantic_markers) and any(marker in text for marker in (
                         "compile", "compilation", "build", "컴파일", "빌드",
                     )):
                         return EvidenceKind.COMPILE
@@ -1653,6 +1660,7 @@ class ExecutionPipeline:
             context: str,
             failure_text: str,
             attempt_number: int,
+            execution_round: int | None = None,
             affected_paths: list[str] | None = None,
             failed_criterion_ids: list[str] | None = None,
             preserve_criterion_ids: list[str] | None = None,
@@ -1745,7 +1753,15 @@ class ExecutionPipeline:
                     if self.execution_graph is not None else output_dir.parent.name
                 ),
                 milestone_id=milestone_id,
-                round_number=max(0, attempt_number - 1),
+                # Failure recurrence and ADK execution round are different
+                # counters. A newly classified failure has recurrence 1 even
+                # when it occurs on revision round 4; the handoff must identify
+                # the actual maker/verifier turn.
+                round_number=(
+                    max(0, execution_round)
+                    if execution_round is not None
+                    else max(0, attempt_number - 1)
+                ),
                 sender_agent_id=sender_id,
                 recipient_agent_id=recipient_id,
                 stage=stage,
@@ -2175,6 +2191,7 @@ class ExecutionPipeline:
                             context="development_phase_scope_mismatch",
                             failure_text=feedback,
                             attempt_number=round_number + 1,
+                            execution_round=round_number,
                             affected_paths=deferred_paths,
                             strategy_fingerprint=development_change_strategy_fingerprint(raw),
                         )
@@ -2248,6 +2265,7 @@ class ExecutionPipeline:
                     context="development_evidence_topology",
                     failure_text=active_feedback + " | " + feedback,
                     attempt_number=round_number + 1,
+                    execution_round=round_number,
                     affected_paths=proposed_paths,
                     strategy_fingerprint=development_change_strategy_fingerprint(raw),
                 )
@@ -2289,6 +2307,7 @@ class ExecutionPipeline:
                         context="development_evidence_topology",
                         failure_text=feedback,
                         attempt_number=round_number + 1,
+                        execution_round=round_number,
                         affected_paths=forbidden,
                         strategy_fingerprint=development_change_strategy_fingerprint(raw),
                     )
@@ -2346,6 +2365,7 @@ class ExecutionPipeline:
                         context="development_visual_target",
                         failure_text=feedback,
                         attempt_number=round_number + 1,
+                        execution_round=round_number,
                         affected_paths=forbidden,
                         strategy_fingerprint=development_change_strategy_fingerprint(raw),
                     )
@@ -2443,6 +2463,7 @@ class ExecutionPipeline:
                     context="development_candidate_promotion",
                     failure_text=str(exc),
                     attempt_number=failure_attempt,
+                    execution_round=round_number,
                     affected_paths=[
                         str(item.get("path", "")) for item in raw_changes
                         if item.get("path")
@@ -2544,6 +2565,7 @@ class ExecutionPipeline:
                     context="development_rejected_strategy",
                     failure_text=feedback,
                     attempt_number=consecutive_identical_candidates,
+                    execution_round=round_number,
                     affected_paths=[
                         str(item.path) for item in getattr(delta, "changes", [])
                     ],
@@ -2645,6 +2667,7 @@ class ExecutionPipeline:
                     context="development_identical_candidate",
                     failure_text=feedback,
                     attempt_number=consecutive_identical_candidates,
+                    execution_round=round_number,
                     affected_paths=[
                         str(item.path) for item in getattr(delta, "changes", [])
                     ],
@@ -2865,6 +2888,7 @@ class ExecutionPipeline:
                         context="development_verification",
                         failure_text=str(exc),
                         attempt_number=same_failure_count + 1,
+                        execution_round=round_number,
                         # A cross-phase observation has not yet identified the
                         # product file to edit.  Bind authority to the new phase
                         # and let the smallest source anchor be selected there;

@@ -681,6 +681,36 @@ def test_unity_visual_preflight_requires_discoverable_test_and_evidence(tmp_path
     assert any("never be placed above production scripts" in issue for issue in unsafe_issues)
 
 
+def test_visual_preflight_uses_authoritative_goal_when_compact_contract_omits_visual_word(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-authoritative-goal"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Login() { "
+        "UnityEngine.ScreenCapture.CaptureScreenshot(\"login.png\"); } }\n",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True,
+        adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+    goal = json.dumps({
+        "goal": "Complete rendered key-screen evidence for the Login UI.",
+        "completion_contract": {"target_state": "Login surface works"},
+    })
+
+    issues = pack._unity_visual_contract_issues(profile, clone, goal)
+
+    assert any("OneBriefAtomicScreenshot.Capture" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_does_not_leak_future_language_contract_into_login_slice(
     tmp_path: Path,
 ) -> None:
