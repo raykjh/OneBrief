@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -16,6 +17,7 @@ from onebrief.milestones import (
     build_milestone_plan,
     canonical_sha256,
     execute_milestone_plan,
+    prepare_milestone_workspace,
     requirements_for_milestone,
 )
 from onebrief.execution_schemas import ExecutionCheckpoint, PipelineStatus, Verdict
@@ -29,6 +31,7 @@ from onebrief.schemas import (
     ToolPackId,
 )
 from onebrief.producer import estimate_budget
+from onebrief.project_import import MANIFEST_NAME, ProjectManifest
 
 
 def _requirements() -> RequirementsAnalysis:
@@ -187,6 +190,75 @@ def test_budget_reserves_every_milestone_before_owner_approval() -> None:
         24, intake.max_revision_rounds * executions
     )
     assert any("vertical-slice passes" in item for item in estimate.notes)
+
+
+def test_workspace_clone_enables_windows_long_paths_before_checkout(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    baseline = tmp_path / "baseline"
+    baseline.mkdir()
+    subprocess.run(["git", "init"], cwd=baseline, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=baseline, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=baseline, check=True)
+    manifest = ProjectManifest(
+        project_id="julpae",
+        name="JULPAE",
+        project_type="unity project",
+        project_root=str(baseline),
+        canonical_goal="Verify the exact milestone clone configuration.",
+    )
+    (baseline / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+    (baseline / "Assets").mkdir()
+    (baseline / "Assets" / "App.cs").write_text("class App {}\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=baseline, check=True)
+    subprocess.run(["git", "commit", "-m", "baseline"], cwd=baseline, check=True, capture_output=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=baseline, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+
+    class FakeLifecycle:
+        def __init__(self, _project_id, _registry_root):
+            pass
+
+        def state(self):
+            return SimpleNamespace(
+                execution_ready=True,
+                generated=SimpleNamespace(project_root=str(baseline), repository_head_sha=head),
+            )
+
+        def generate_and_qualify(self):
+            return SimpleNamespace(
+                qualification=SimpleNamespace(status="passed", toolpack_sha256="a" * 64),
+            )
+
+        def approve(self, _sha256):
+            return SimpleNamespace(execution_ready=True)
+
+    class FakeImporter:
+        def __init__(self, _root):
+            pass
+
+        def import_bytes(self, _payload):
+            return None
+
+    monkeypatch.setattr("onebrief.milestones.ProjectToolPackLifecycle", FakeLifecycle)
+    monkeypatch.setattr("onebrief.milestones.ExternalProjectImporter", FakeImporter)
+    workspace = prepare_milestone_workspace(
+        work_dir=tmp_path / "work",
+        project_id="julpae",
+        baseline_registry_root=tmp_path / "baseline-registry",
+    )
+    integration = Path(workspace.integration_root)
+
+    def config(name: str) -> str:
+        return subprocess.run(
+            ["git", "config", "--get", name], cwd=integration, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+
+    assert config("core.longpaths") == "true"
+    assert config("core.autocrlf") == "false"
 
 
 def test_checkpoints_are_idempotent_and_dependency_bound(tmp_path: Path) -> None:

@@ -637,7 +637,13 @@ def run_local_capability_worker(
     remote = repository or GCSJobStore(job_uri)
     local_job: Path | None = None
     try:
-        with tempfile.TemporaryDirectory(prefix="onebrief_capability_") as temp:
+        runtime_root = Path(
+            os.environ.get("ONEBRIEF_LOCAL_RUNTIME_ROOT", "")
+        ).expanduser() if os.environ.get("ONEBRIEF_LOCAL_RUNTIME_ROOT") else (
+            Path.home() / ".onebrief-runtime"
+        )
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="cap_", dir=runtime_root) as temp:
             local_job = remote.download_job(Path(temp) / "job")
             handoff = remote.read_runtime_handoff()
             verify_runtime_handoff(local_job, job_uri=job_uri, handoff=handoff)

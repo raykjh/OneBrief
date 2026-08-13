@@ -646,7 +646,13 @@ def prepare_milestone_workspace(
     integration_registry = workspace_root / "registry"
     if not integration_root.exists():
         workspace_root.mkdir(parents=True, exist_ok=True)
-        _git(workspace_root, "clone", "--local", "--no-hardlinks", str(baseline_root), str(integration_root))
+        _git(
+            workspace_root,
+            "-c", "core.longpaths=true",
+            "-c", "core.autocrlf=false",
+            "clone", "--local", "--no-hardlinks",
+            str(baseline_root), str(integration_root),
+        )
         resident = baseline_root / MANIFEST_NAME
         manifest = ProjectManifest.model_validate_json(resident.read_text(encoding="utf-8"))
         adjusted = manifest.model_copy(update={"project_root": str(integration_root.resolve())})
@@ -655,6 +661,8 @@ def prepare_milestone_workspace(
         )
         _git(integration_root, "config", "user.name", "OneBrief Milestone Runtime")
         _git(integration_root, "config", "user.email", "onebrief-milestone@example.invalid")
+        _git(integration_root, "config", "core.longpaths", "true")
+        _git(integration_root, "config", "core.autocrlf", "false")
         _git(integration_root, "add", MANIFEST_NAME)
         _git(integration_root, "commit", "-m", "Bind isolated milestone workspace")
         ExternalProjectImporter(integration_registry).import_bytes(
