@@ -193,6 +193,20 @@ def test_incomplete_atomic_unity_evidence_bundle_escalates_same_maker() -> None:
     assert decision.selected_model == ApprovedModel.GEMINI_3_1_PRO_PREVIEW
 
 
+def test_cross_phase_repeat_escalates_same_maker_to_pro() -> None:
+    decision = _escalation_policy().select_after_failure(
+        "long_form_draft",
+        failure_text=(
+            "The trusted failure is owned by evidence_construction, but the proposal "
+            "changed only the other phase. Record the requested ordered UI journey."
+        ),
+        difficulty="complex",
+    )
+
+    assert decision.escalated is True
+    assert decision.selected_model == ApprovedModel.GEMINI_3_1_PRO_PREVIEW
+
+
 def test_first_missing_evidence_harness_stays_on_flash() -> None:
     decision = _escalation_policy().select_after_failure(
         "long_form_draft",

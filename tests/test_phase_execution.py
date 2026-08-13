@@ -152,7 +152,7 @@ def test_unity_visual_contract_remains_evidence_owned_with_mixed_candidate() -> 
     assert decision.next_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
 
 
-def test_real_scene_missing_control_transfers_from_evidence_to_product() -> None:
+def test_real_scene_missing_control_stays_with_executed_evidence_probe() -> None:
     decision = decide_repair_phase(
         context="development_verification",
         failure_text=(
@@ -166,8 +166,8 @@ def test_real_scene_missing_control_transfers_from_evidence_to_product() -> None
         affected_paths=["Assets/Tests/PlayMode/OneBriefVisualTest.cs"],
     )
 
-    assert decision.failure_owner == FailureOwner.PRODUCT
-    assert decision.next_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+    assert decision.failure_owner == FailureOwner.EVIDENCE
+    assert decision.next_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
     assert decision.model_repair_allowed
 
 

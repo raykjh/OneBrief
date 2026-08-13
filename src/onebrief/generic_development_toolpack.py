@@ -197,6 +197,22 @@ def _unity_literal_scenarios(source: str) -> list[tuple[str, str, int, int]]:
         if state and interaction:
             results.append((state, interaction, previous_end, match.start()))
         previous_end = match.end()
+    # Compact evidence harnesses often build one JSON string directly instead
+    # of accumulating ``scenarios.Add`` rows. Those literal claims are still
+    # auditable and must not bypass the ordered journey contract merely because
+    # their transport syntax differs.
+    direct_pattern = re.compile(
+        r'\\?"observed_state\\?"\s*:\s*\\?"([^"\\]+)\\?"'
+        r'.{0,500}?'
+        r'\\?"interaction\\?"\s*:\s*\\?"([^"\\]+)\\?"',
+        re.IGNORECASE | re.DOTALL,
+    )
+    direct = list(direct_pattern.finditer(source))
+    if direct and not results:
+        previous_end = 0
+        for match in direct:
+            results.append((match.group(1), match.group(2), previous_end, match.start()))
+            previous_end = match.end()
     return results
 
 

@@ -1380,6 +1380,45 @@ def test_unity_visual_preflight_requires_ordered_return_scenario(tmp_path: Path)
     assert any("login -> lobby -> settings -> lobby" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_parses_direct_json_scenario_array(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-direct-json-navigation"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (clone / "Assets" / "Login.unity").write_text("Login", encoding="utf-8")
+    (clone / "Assets" / "Lobby.unity").write_text(
+        "--- !u!1 &1\nGameObject:\n  m_Name: LanguageDropdown\n",
+        encoding="utf-8",
+    )
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'SceneManager.LoadScene("Login"); Assert.IsNotNull(button); '
+        'button.onClick.Invoke(); var dropdown = GameObject.Find("LanguageDropdown"); '
+        'dropdown.GetComponent<TMPro.TMP_Dropdown>().value = 1; '
+        'var json = "{\\\"schema_version\\\":\\\"onebrief-unity-visual-evidence-v1\\\",'
+        '\\\"scenarios\\\":[{\\\"scenario_id\\\":\\\"lobby\\\",'
+        '\\\"observed_state\\\":\\\"Lobby screen\\\",'
+        '\\\"interaction\\\":\\\"login_click\\\",\\\"assertion_count\\\":1,'
+        '\\\"viewport_width\\\":1920,\\\"viewport_height\\\":1080,'
+        '\\\"screenshot_path\\\":\\\"lobby.png\\\"}]}"; '
+        'var evidence="runtime-evidence.json"; var png="lobby.png"; } }',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile, clone, "Verify Login -> Lobby -> Settings -> Lobby UI flow."
+    )
+
+    assert any("login -> lobby -> settings -> lobby" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_rejects_first_arbitrary_button_fallback(tmp_path: Path) -> None:
     _root, registry = _approved_node_project(tmp_path)
     pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)

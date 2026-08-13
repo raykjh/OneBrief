@@ -110,19 +110,6 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
         "eof while parsing", "invalid json", "json_invalid", "max_tokens",
     )):
         return FailureLayer.STRUCTURED_OUTPUT
-    # A real PlayMode assertion can be emitted together with older evidence-
-    # harness audit text.  Once the trusted test has loaded the shipped scene
-    # and proves that a requested control is absent, the next repair belongs to
-    # the product rather than to the test that observed it.  Keep this precise
-    # signal ahead of the broader ``Unity visual test contract`` classifier so
-    # a durable continuation cannot remain trapped in evidence construction.
-    if (
-        any(marker in text for marker in (
-            "unity test failures", "unity_playmode_visual_tests",
-        ))
-        and re.search(r"\b[^|\n]{1,120}\bnot found in [a-z0-9_ -]*scene\b", text)
-    ):
-        return FailureLayer.SEMANTIC_PRODUCT
     if any(marker in text for marker in (
         "unity visual test contract: add",
         "unity visual test contract:",

@@ -1730,6 +1730,14 @@ class ExecutionPipeline:
                 compact = dict(source)
                 repository_path = str(compact.get("repository_path", ""))
                 if repository_path not in visible_repair_paths:
+                    # Repair turns still need the immutable scene/object map
+                    # that explains where real Unity controls live. Without
+                    # it, a test failure such as an inactive Settings control
+                    # looks indistinguishable from a missing product feature
+                    # and the maker guesses at the wrong surface.
+                    source_name = str(compact.get("name", "")).replace("\\", "/")
+                    if source_name.endswith("/unity-scene-catalog.json"):
+                        maker_sources.append(compact)
                     continue
                 if repository_path in changed_paths:
                     compact["content"] = (
@@ -2512,6 +2520,9 @@ class ExecutionPipeline:
                     context="development_verification",
                     failure_text=str(exc),
                     round_number=round_number,
+                    affected_paths=[
+                        str(item.path) for item in getattr(delta, "changes", [])
+                    ],
                 )
                 self._write(
                     output_dir / f"phase_decision_deterministic_r{round_number}.json",
