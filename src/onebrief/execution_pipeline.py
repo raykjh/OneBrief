@@ -2502,6 +2502,28 @@ class ExecutionPipeline:
                     feedback,
                 )
                 self._write(output_dir / "development_verification_failure.txt", feedback)
+                # Deterministic verification may turn a valid evidence-harness
+                # repair into a newly observed product defect (for example, a
+                # real PlayMode test proving that a requested scene control is
+                # absent).  Re-route the *same* maker before the next turn;
+                # otherwise the stale evidence phase keeps editing the proof
+                # instead of the shipped product indefinitely.
+                failure_phase_decision = decide_repair_phase(
+                    context="development_verification",
+                    failure_text=str(exc),
+                    round_number=round_number,
+                )
+                self._write(
+                    output_dir / f"phase_decision_deterministic_r{round_number}.json",
+                    failure_phase_decision.model_dump_json(indent=2),
+                )
+                _ctx.session.state[PHASE_DECISION_STATE_KEY] = (
+                    failure_phase_decision.model_dump(mode="json")
+                )
+                if failure_phase_decision.next_phase is not None:
+                    _ctx.session.state[PHASE_STATE_KEY] = (
+                        failure_phase_decision.next_phase.value
+                    )
                 if not reverify_existing:
                     rejected_change_fingerprints.add(delta_fingerprint)
                     rejected_strategy_fingerprints.add(delta_strategy_fingerprint)
@@ -2592,6 +2614,10 @@ class ExecutionPipeline:
                 # already-issued repair contract and expose the fresh trusted
                 # failure as feedback. A real maker delta below is still
                 # fingerprinted and counted normally.
+                phase_changed = bool(
+                    failure_phase_decision.next_phase is not None
+                    and failure_phase_decision.next_phase != active_phase
+                )
                 convergence_contract = (
                     latest_repair_contract
                     if reverify_existing and latest_repair_contract is not None
@@ -2599,9 +2625,14 @@ class ExecutionPipeline:
                         context="development_verification",
                         failure_text=str(exc),
                         attempt_number=same_failure_count + 1,
-                        affected_paths=[
+                        # A cross-phase observation has not yet identified the
+                        # product file to edit.  Bind authority to the new phase
+                        # and let the smallest source anchor be selected there;
+                        # retaining the prior test path would create an
+                        # impossible product contract.
+                        affected_paths=([] if phase_changed else [
                             str(item.path) for item in getattr(delta, "changes", [])
-                        ],
+                        ]),
                         strategy_fingerprint=delta_strategy_fingerprint,
                     )
                 )
@@ -2623,6 +2654,14 @@ class ExecutionPipeline:
                 current_exact_edit_anchors = developer.exact_edit_anchors(
                     previous_change_set, self._compact_development_feedback(feedback)
                 )
+                if failure_phase_decision.next_phase is not None:
+                    current_exact_edit_anchors = [
+                        anchor for anchor in current_exact_edit_anchors
+                        if path_allowed_for_phase(
+                            str(anchor.get("path", "")),
+                            failure_phase_decision.next_phase,
+                        )
+                    ]
                 repair_plan = prepare_repair(report, round_number)
                 return {
                     MAKER_STATE_KEY: previous_change_set.model_dump(mode="json"),

@@ -278,8 +278,15 @@ def classify_failure_owner(
     normalized = failure_text.casefold()
     paths = affected_paths or []
     evidence_targeted = bool(paths) and all(is_evidence_path(path) for path in paths)
+    # Layer classification is authoritative when runtime evidence has already
+    # identified a shipped product defect.  Audit suffixes from the evidence
+    # phase must not pull that defect back into the test-harness wallet.
+    if layer == FailureLayer.SEMANTIC_PRODUCT:
+        return FailureOwner.PRODUCT
+    if layer in {FailureLayer.EVIDENCE_TOPOLOGY, FailureLayer.EVIDENCE_INTEGRITY}:
+        return FailureOwner.EVIDENCE
     if any(marker in normalized for marker in (
-        "evidence harness", "evidence topology", "unity visual test contract",
+        "evidence harness", "evidence topology",
         "missing playmode test",
         "add a discoverable unity playmode test", "testassemblies",
         "runtime-evidence.json", "screenshot capture is missing",
@@ -295,8 +302,6 @@ def classify_failure_owner(
         return FailureOwner.CONTRACT
     if layer in {FailureLayer.PROVIDER, FailureLayer.STRUCTURED_OUTPUT}:
         return FailureOwner.ENVIRONMENT
-    if layer in {FailureLayer.EVIDENCE_TOPOLOGY, FailureLayer.EVIDENCE_INTEGRITY}:
-        return FailureOwner.EVIDENCE
     if layer in {FailureLayer.BUILD, FailureLayer.RUNTIME, FailureLayer.SOURCE_BINDING}:
         return FailureOwner.EVIDENCE if evidence_targeted else FailureOwner.PRODUCT
     return FailureOwner.PRODUCT

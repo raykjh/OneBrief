@@ -152,6 +152,25 @@ def test_unity_visual_contract_remains_evidence_owned_with_mixed_candidate() -> 
     assert decision.next_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
 
 
+def test_real_scene_missing_control_transfers_from_evidence_to_product() -> None:
+    decision = decide_repair_phase(
+        context="development_verification",
+        failure_text=(
+            "development verification failed: unity_playmode_visual_tests (exit_code=2) "
+            "UNITY TEST FAILURES OneBrief.Visual.Flow: LanguageDropdown not found in "
+            "LobbyScene. Expected: not null But was: null | Rejected repair delta changed "
+            "path(s): Assets/Tests/PlayMode/OneBriefVisualTest.cs | Unity visual test "
+            "contract: the test must interact with the real scene UI"
+        ),
+        round_number=5,
+        affected_paths=["Assets/Tests/PlayMode/OneBriefVisualTest.cs"],
+    )
+
+    assert decision.failure_owner == FailureOwner.PRODUCT
+    assert decision.next_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+    assert decision.model_repair_allowed
+
+
 def test_phase_repair_limit_blocks_before_provider_call(tmp_path: Path) -> None:
     store = BudgetStore(tmp_path)
     store.approve(_estimate(repair_limit=1), 0.1)
