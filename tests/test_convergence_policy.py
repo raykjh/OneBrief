@@ -3,6 +3,7 @@ from onebrief.convergence_policy import (
     ConvergencePolicy,
     FailureLayer,
     ProgressKind,
+    repair_contract_blocks_resume,
 )
 from onebrief.handoff_protocol import FailureCode, FailureOwner
 
@@ -25,6 +26,36 @@ def test_source_binding_failure_uses_deterministic_probe_without_model_escalatio
     assert contract.execution_allowed is True
     assert contract.hypothesis.requires_model_reasoning is False
     assert contract.verification_ladder[0] == "schema_and_selector_probe"
+
+
+def test_stopped_repair_contract_allows_only_verifier_revalidation() -> None:
+    policy = ConvergencePolicy()
+    ledger = ConvergenceLedger()
+    for attempt, strategy in enumerate(("strategy-a", "strategy-b"), start=1):
+        observation = policy.observe(
+            context="development_verification",
+            failure_text="the same trusted runtime boundary failed",
+            attempt_number=attempt,
+            strategy_fingerprint=strategy,
+        )
+        ledger = policy.record(
+            ledger, observation, policy.issue_contract(ledger, observation)
+        )
+    third = policy.observe(
+        context="development_verification",
+        failure_text="the same trusted runtime boundary failed",
+        attempt_number=3,
+        strategy_fingerprint="strategy-c",
+    )
+    stopped = policy.issue_contract(ledger, third)
+
+    assert stopped.execution_allowed is False
+    assert repair_contract_blocks_resume(
+        stopped, verifier_only_revalidation=False
+    )
+    assert not repair_contract_blocks_resume(
+        stopped, verifier_only_revalidation=True
+    )
 
 
 def test_missing_unity_playmode_harness_is_evidence_topology_not_product_runtime() -> None:

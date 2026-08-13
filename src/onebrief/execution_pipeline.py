@@ -110,6 +110,7 @@ from onebrief.convergence_policy import (
     ConvergenceLedger,
     ConvergencePolicy,
     RepairContract,
+    repair_contract_blocks_resume,
 )
 from onebrief.execution_profile import (
     compact_work_contract,
@@ -1671,6 +1672,10 @@ class ExecutionPipeline:
         previous_change_set: BaseModel | None = self._load(
             output_dir / "code_change_set.json", change_schema
         )
+        verifier_only_revalidation = (
+            previous_change_set is not None
+            and (output_dir / "reverify_existing_candidate.json").is_file()
+        )
         best_failed_candidate: BaseModel | None = self._load(
             output_dir / "development_best_candidate.json", change_schema
         )
@@ -1938,13 +1943,32 @@ class ExecutionPipeline:
                     attempt_number=1,
                 )
         if latest_repair_contract is not None:
-            initial_state[REPAIR_CONTRACT_STATE_KEY] = (
-                latest_repair_contract.model_dump(mode="json")
-            )
-            if not latest_repair_contract.execution_allowed:
+            if repair_contract_blocks_resume(
+                latest_repair_contract,
+                verifier_only_revalidation=verifier_only_revalidation,
+            ):
                 raise RuntimeError(
                     "convergence progress gate requires a new diagnosis or explicit decision before resume: "
                     + latest_repair_contract.rationale
+                )
+            if latest_repair_contract.execution_allowed:
+                initial_state[REPAIR_CONTRACT_STATE_KEY] = (
+                    latest_repair_contract.model_dump(mode="json")
+                )
+            else:
+                self._write(
+                    output_dir / "verifier_only_revalidation_receipt.json",
+                    json.dumps({
+                        "schema_version": "onebrief-verifier-only-revalidation-v1",
+                        "repair_contract_id": latest_repair_contract.contract_id,
+                        "action": "rerun deterministic tools and independent verifier",
+                        "maker_mutation_allowed": False,
+                        "reason": (
+                            "The stopped repair contract remains authoritative for maker "
+                            "changes, but does not block read-only revalidation of the "
+                            "preserved candidate."
+                        ),
+                    }, ensure_ascii=False, indent=2),
                 )
         multi_state_evidence_repair = "reused an identical screenshot" in prior_failure_text.casefold()
         unity_evidence_topology_repair = is_unity_evidence_contract_feedback(
@@ -1980,7 +2004,7 @@ class ExecutionPipeline:
         )
         if previous_change_set is not None:
             initial_state[MAKER_STATE_KEY] = previous_change_set.model_dump(mode="json")
-            if (output_dir / "reverify_existing_candidate.json").is_file():
+            if verifier_only_revalidation:
                 initial_state[REVERIFY_EXISTING_STATE_KEY] = True
             changed_paths = {
                 str(getattr(item, "path", ""))

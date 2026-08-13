@@ -95,6 +95,20 @@ class ConvergenceLedger(BaseModel):
     repair_contracts: list[RepairContract] = Field(default_factory=list, max_length=64)
 
 
+def repair_contract_blocks_resume(
+    contract: RepairContract, *, verifier_only_revalidation: bool
+) -> bool:
+    """Keep repair stops authoritative without blocking a read-only recheck.
+
+    ``execution_allowed`` governs another maker mutation.  A continuation that
+    already holds a candidate may still rerun the independent verifier and
+    deterministic tools; that action neither explores a new repair strategy
+    nor expands write authority.
+    """
+
+    return not contract.execution_allowed and not verifier_only_revalidation
+
+
 def _normalize(value: str) -> str:
     normalized = value.casefold().replace("\\", "/")
     normalized = re.sub(r"\b[0-9a-f]{8}-[0-9a-f-]{27,}\b", "<uuid>", normalized)
