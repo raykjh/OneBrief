@@ -12,6 +12,7 @@ from onebrief.generic_development_toolpack import (
     CompactProposedProjectCodeChangeSet, ExactRepairProjectCodeChangeSet,
     ProjectCodeChangeSet, ProposedProjectCodeChangeSet,
     UnityEvidenceSourceRepair,
+    UnityEvidenceAssemblyRepair,
 )
 from onebrief.budget_guard import BudgetExceeded, BudgetStore, RunStatus
 from onebrief.execution_pipeline import (
@@ -1732,6 +1733,31 @@ def test_unity_evidence_source_repair_rejects_asmdef() -> None:
                 "reason": "Invalid post-pair target",
             },
         })
+
+
+def test_trusted_unity_test_compile_reference_failure_unlocks_only_asmdef() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "development verification failed: unity_compile (exit_code=1) "
+        "Assets\\Tests\\PlayMode\\OneBriefVisualTest.cs(8,7): error CS0246: "
+        "The type or namespace name 'TMPro' could not be found"
+    )
+
+    assert development_maker_schema_for(report, None) is UnityEvidenceAssemblyRepair
+    repair = UnityEvidenceAssemblyRepair.model_validate({
+        "summary": "Add the compiler-proven test assembly reference",
+        "test_assembly": {
+            "path": "Assets/Tests/PlayMode/Tests.PlayMode.asmdef",
+            "content": '{"references":["Unity.TextMeshPro"],"optionalUnityReferences":["TestAssemblies"]}',
+            "reason": "Resolve the trusted CS0246 test assembly failure",
+        },
+    })
+    restored = normalize_atomic_unity_evidence_bundle(
+        repair.model_dump(mode="json")
+    )
+
+    assert [item.path for item in restored.changes] == [
+        "Assets/Tests/PlayMode/Tests.PlayMode.asmdef"
+    ]
 
 
 @pytest.mark.parametrize("feedback", [

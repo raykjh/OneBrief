@@ -69,6 +69,7 @@ from onebrief.generic_development_toolpack import (
     ExactRepairProjectCodeChangeSet,
     ProjectCodeChangeSet,
     ProposedProjectCodeChangeSet,
+    UnityEvidenceAssemblyRepair,
     UnityEvidenceSourceRepair,
 )
 from onebrief.greenfield_web_toolpack import GreenfieldWebDevelopmentToolPack
@@ -243,6 +244,17 @@ def normalize_atomic_unity_evidence_bundle(raw: object) -> object:
         return AtomicUnityEvidenceBundle.model_validate(raw).as_change_set()
     if isinstance(raw, UnityEvidenceSourceRepair):
         return raw.as_change_set()
+    if isinstance(raw, UnityEvidenceAssemblyRepair):
+        return raw.as_change_set()
+    if isinstance(raw, dict) and (
+        raw.get("schema_version") == "onebrief-unity-evidence-assembly-repair-v1"
+        or (
+            "test_assembly" in raw
+            and "playmode_test" not in raw
+            and "changes" not in raw
+        )
+    ):
+        return UnityEvidenceAssemblyRepair.model_validate(raw).as_change_set()
     if isinstance(raw, dict) and (
         raw.get("schema_version") == "onebrief-unity-evidence-source-repair-v1"
         or (
@@ -266,6 +278,13 @@ def development_maker_schema_for(
         *report.blocking_issues,
         *report.revision_instructions,
     ])
+    normalized_feedback = " ".join(feedback.split()).casefold()
+    if (
+        "unity_compile" in normalized_feedback
+        and "tests\\playmode\\" in normalized_feedback
+        and "error cs0246" in normalized_feedback
+    ):
+        return UnityEvidenceAssemblyRepair
     current_candidate = None
     if current_payload is not None:
         try:

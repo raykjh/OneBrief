@@ -543,6 +543,31 @@ class UnityEvidenceSourceRepair(BaseModel):
         )
 
 
+class UnityEvidenceAssemblyRepair(BaseModel):
+    """One-file assembly repair unlocked only by trusted compiler evidence."""
+
+    schema_version: str = "onebrief-unity-evidence-assembly-repair-v1"
+    summary: str = Field(min_length=3, max_length=500)
+    test_assembly: AtomicUnityEvidenceFile
+
+    @model_validator(mode="after")
+    def validate_test_assembly(self) -> "UnityEvidenceAssemblyRepair":
+        if PurePosixPath(self.test_assembly.path).suffix.casefold() != ".asmdef":
+            raise ValueError("test_assembly must be an asmdef")
+        return self
+
+    def as_change_set(self) -> CompactProposedProjectCodeChangeSet:
+        return CompactProposedProjectCodeChangeSet(
+            summary=self.summary,
+            changes=[{
+                "path": self.test_assembly.path,
+                "base_sha256": None,
+                "content": self.test_assembly.content,
+                "reason": self.test_assembly.reason,
+            }],
+        )
+
+
 class ExactRepairProjectFileChange(BaseModel):
     """One existing-candidate edit; full-file output is structurally impossible."""
 
