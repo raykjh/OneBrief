@@ -26,7 +26,9 @@ from onebrief.schemas import (
     QualityCriterion,
     RequirementsAnalysis,
     IntakeRequest,
+    ToolPackId,
 )
+from onebrief.producer import estimate_budget
 
 
 def _requirements() -> RequirementsAnalysis:
@@ -151,6 +153,40 @@ def test_unity_flow_is_decomposed_into_real_vertical_slices() -> None:
     assert [item.criterion_id for item in scoped.completion_contract.quality_criteria] == [
         "Q01", "Q91", "Q92"
     ]
+
+
+def test_budget_reserves_every_milestone_before_owner_approval() -> None:
+    requirements = _requirements()
+    intake = IntakeRequest(
+        goal="Modernize JULPAE Login, Lobby, and Settings in Unity.",
+        existing_project_id="julpae",
+        toolpack_ids=[ToolPackId.PROJECT_DEVELOPMENT],
+        max_revision_rounds=3,
+    )
+    plan = build_milestone_plan(
+        project_id="julpae",
+        goal=intake.goal,
+        requirements=requirements,
+        source_revision="approval-pending",
+        minimum_cost_usd=0.0,
+        maximum_cost_usd=0.0,
+    )
+    estimate = estimate_budget(intake, requirements)
+    by_name = {item.stage: item for item in estimate.stages}
+    implementations = sum(
+        item.kind == MilestoneKind.IMPLEMENTATION for item in plan.milestones
+    )
+    executions = len(plan.milestones) - 1
+
+    assert by_name["team_planning"].minimum_calls == 1
+    assert by_name["long_form_draft"].minimum_calls == implementations
+    assert by_name["evidence_analysis"].minimum_calls == executions
+    assert by_name["independent_verification"].minimum_calls == executions
+    assert by_name["final_approval"].minimum_calls == executions
+    assert max(item.max_ai_repair_calls for item in estimate.phase_budgets) == min(
+        24, intake.max_revision_rounds * executions
+    )
+    assert any("vertical-slice passes" in item for item in estimate.notes)
 
 
 def test_checkpoints_are_idempotent_and_dependency_bound(tmp_path: Path) -> None:

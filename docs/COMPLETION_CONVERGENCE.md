@@ -129,6 +129,10 @@ it from the original approved snapshot and the bounded, hash-checked milestone c
 sets. The final accumulated candidate is then tested once more against the clean
 baseline, preventing incremental drift from being mislabeled as completion.
 
+The approval quote expands model-call counts, phase wallets, repair-call limits, and
+time ranges for every planned vertical slice plus the final clean-baseline integration
+pass. A legacy one-pass estimate therefore cannot silently starve a later milestone.
+
 The user still approves one hard minimum-to-maximum project envelope. Milestone weights
 are internal planning allocations, not independent approvals; the global circuit breaker
 remains authoritative and the reserve is available only inside that envelope.

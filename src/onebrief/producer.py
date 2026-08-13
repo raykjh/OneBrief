@@ -180,6 +180,62 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
             2,
         ),
     ])
+    milestone_execution_count = 1
+    milestone_implementation_count = 1
+    if (
+        intake.existing_project_id
+        and ToolPackId.PROJECT_DEVELOPMENT in intake.toolpack_ids
+        and analysis.completion_contract is not None
+        and len(analysis.completion_contract.quality_criteria) >= 4
+    ):
+        # The durable runtime executes every independently verifiable slice and
+        # one final clean-baseline integration pass.  Quote those calls before
+        # approval instead of letting a legacy whole-project estimate starve a
+        # later milestone.  The preview uses no source access and cannot widen
+        # the already-approved completion contract.
+        from onebrief.milestones import MilestoneKind, build_milestone_plan
+
+        preview = build_milestone_plan(
+            project_id=intake.existing_project_id,
+            goal=intake.goal,
+            requirements=analysis,
+            source_revision="approval-pending",
+            minimum_cost_usd=0.0,
+            maximum_cost_usd=0.0,
+        )
+        milestone_implementation_count = sum(
+            item.kind == MilestoneKind.IMPLEMENTATION for item in preview.milestones
+        )
+        milestone_execution_count = sum(
+            item.kind != MilestoneKind.BASELINE for item in preview.milestones
+        )
+
+        scaled_stages: list[StageEstimate] = []
+        for stage in stages:
+            if stage.stage == "team_planning":
+                scaled_stages.append(stage)
+                continue
+            # The final integration normally reuses the accumulated candidate,
+            # so it needs analysis/verification but not a fresh initial draft.
+            factor = (
+                milestone_implementation_count
+                if stage.stage == "long_form_draft"
+                else milestone_execution_count
+            )
+            scaled_stages.append(_stage(
+                stage.stage,
+                stage.model,
+                stage.input_tokens_per_call,
+                stage.output_tokens_per_call,
+                (
+                    stage.minimum_calls * factor,
+                    stage.recommended_calls * factor,
+                    stage.maximum_calls * factor,
+                ),
+                stage.estimated_minutes_per_call,
+                fixed_cost_usd=stage.fixed_cost_usd_per_call,
+            ))
+        stages = scaled_stages
     raw_minimum = sum(stage.minimum_cost_usd for stage in stages)
     raw_recommended = sum(stage.recommended_cost_usd for stage in stages)
     raw_maximum = sum(stage.maximum_cost_usd for stage in stages)
@@ -239,7 +295,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
                 recommended_cost_usd=round(recommended_phase[phase], 6),
                 maximum_cost_usd=round(maximum_phase[phase], 6),
                 max_ai_repair_calls=(
-                    revisions
+                    min(24, revisions * milestone_execution_count)
                     if phase in {
                         ExecutionPhase.PRODUCT_IMPLEMENTATION,
                         ExecutionPhase.EVIDENCE_CONSTRUCTION,
@@ -247,7 +303,7 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
                     else 0
                 ),
                 max_deterministic_attempts=(
-                    2 + revisions
+                    min(100, (2 + revisions) * milestone_execution_count)
                     if phase in {
                         ExecutionPhase.PRODUCT_IMPLEMENTATION,
                         ExecutionPhase.EVIDENCE_CONSTRUCTION,
@@ -324,6 +380,12 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
             "Public research reserves one Gemini 3.5 grounded prompt with a $0.035 Google Search fee cap.",
             "Actual execution records provider-reported usage and stops at the approved limit.",
             "Software runs use separate non-borrowable product, evidence, verification, and reserve wallets inside the total approval.",
+            (
+                f"Milestone execution reserves {milestone_implementation_count} vertical-slice passes "
+                f"and {milestone_execution_count - milestone_implementation_count} clean-baseline integration pass."
+                if milestone_execution_count > 1
+                else "This run uses one whole-contract execution pass."
+            ),
         ],
         phase_budgets=phase_budgets,
     )

@@ -62,6 +62,10 @@ the complete contract. Ephemeral repository clones are excluded from Cloud trans
 result packages; only bounded change sets, evidence, checkpoint receipts, and the final
 verified result are durable.
 
+Budget approval remains project-wide but is milestone-aware: all expected slice and
+integration calls are reserved in the estimate before approval, while the hard cost
+ledger still stops actual spend at the exact owner-approved cap.
+
 Software execution now has two modification phases. The initial maker owns product
 implementation. After trusted verification, `phase_decision_rN.json` classifies the
 failure and routes the same persistent maker to either a product-repair or
