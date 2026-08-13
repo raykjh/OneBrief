@@ -133,6 +133,25 @@ def test_trusted_failure_selects_product_or_evidence_owner() -> None:
     assert not environment.model_repair_allowed
 
 
+def test_unity_visual_contract_remains_evidence_owned_with_mixed_candidate() -> None:
+    decision = decide_repair_phase(
+        context="development_acceptance_verification",
+        failure_text=(
+            "Unity visual test contract: each scenario must contain scenario_id, "
+            "observed_state, interaction, assertion_count, viewport_width, "
+            "viewport_height, and screenshot_path"
+        ),
+        round_number=4,
+        affected_paths=[
+            "Assets/JULPAE/Scripts/Localization/JulpaeLanguageSelectorGroup.cs",
+            "Assets/Tests/PlayMode/OneBriefVisualTest.cs",
+        ],
+    )
+
+    assert decision.failure_owner == FailureOwner.EVIDENCE
+    assert decision.next_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
+
+
 def test_phase_repair_limit_blocks_before_provider_call(tmp_path: Path) -> None:
     store = BudgetStore(tmp_path)
     store.approve(_estimate(repair_limit=1), 0.1)

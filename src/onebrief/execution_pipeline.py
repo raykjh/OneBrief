@@ -1152,8 +1152,9 @@ class ExecutionPipeline:
                 atomic_bundle_instruction
                 + [blocker_action(item) for item in blockers]
                 + [
-                    "Resolve the related Unity blockers as one coherent product-and-evidence repair; "
-                    "do not submit only tests or only an assembly wrapper."
+                    "Resolve the related Unity blockers as one coherent evidence-harness repair. "
+                    "Do not edit product UI unless a trusted semantic observation identifies a product defect; "
+                    "do not submit only an assembly wrapper."
                 ]
             ))[:8]
         else:

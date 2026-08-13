@@ -2556,7 +2556,8 @@ def test_related_unity_contract_failures_remain_one_coherent_repair_scope() -> N
 
     assert len(report.criterion_checks) == 1
     assert len(report.revision_instructions) >= 2
-    assert "product-and-evidence" in report.revision_instructions[-1]
+    assert "coherent evidence-harness repair" in report.revision_instructions[-1]
+    assert "Do not edit product UI" in report.revision_instructions[-1]
 
 
 def test_unity_discovery_failure_targets_test_namespace_not_asmdef() -> None:

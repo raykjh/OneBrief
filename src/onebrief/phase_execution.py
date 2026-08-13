@@ -279,7 +279,8 @@ def classify_failure_owner(
     paths = affected_paths or []
     evidence_targeted = bool(paths) and all(is_evidence_path(path) for path in paths)
     if any(marker in normalized for marker in (
-        "evidence harness", "evidence topology", "missing playmode test",
+        "evidence harness", "evidence topology", "unity visual test contract",
+        "missing playmode test",
         "add a discoverable unity playmode test", "testassemblies",
         "runtime-evidence.json", "screenshot capture is missing",
     )):
