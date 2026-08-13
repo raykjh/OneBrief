@@ -1043,6 +1043,15 @@ class ExecutionPipeline:
                     "the existing requested panel, then assert the destination state. Scene loading and object "
                     "presence alone are not a transition test."
                 )
+            if "must not remove or replace the product control" in lowered or (
+                "must not install a replacement onclick listener" in lowered
+            ):
+                return (
+                    "Delete RemoveAllListeners and any test-added listener that loads the destination. Invoke the "
+                    "existing Button.onClick listeners exactly as shipped, wait for the real transition, then assert "
+                    "and capture the observed destination. If the shipped transition cannot run in isolation, report "
+                    "the missing product dependency as a product/runtime blocker instead of fabricating success."
+                )
             if "unity visual test contract" in lowered and "scenarios array" in lowered:
                 return (
                     "Rewrite runtime-evidence.json with schema_version onebrief-unity-visual-evidence-v1 and a "

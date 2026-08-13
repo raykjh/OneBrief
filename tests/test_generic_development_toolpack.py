@@ -1680,6 +1680,41 @@ def test_unity_visual_preflight_rejects_relabelled_direct_scene_load(tmp_path: P
     assert any("hard-coded assertion_count is not proof" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_rejects_replaced_product_click_listener(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-replaced-click-listener"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'SceneManager.LoadScene("Login"); Assert.IsNotNull(button); '
+        "button.onClick.RemoveAllListeners(); "
+        'button.onClick.AddListener(() => SceneManager.LoadScene("Lobby")); '
+        "button.onClick.Invoke(); Assert.IsTrue(SceneManager.GetActiveScene().name == \"Lobby\"); "
+        "var receipt = OneBriefAtomicScreenshot.CaptureScenario(\"login_to_lobby\", "
+        "SceneManager.GetActiveScene().name, \"Click Start\", 1, \"lobby.png\", "
+        "Camera.main, 1920, 1080, Object.FindObjectsOfType<Canvas>()); "
+        "OneBriefAtomicScreenshot.WriteManifestAtomically(receipt); } }",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile, clone, "Modernize login and lobby UI."
+    )
+
+    assert any("must not remove or replace the product control" in issue for issue in issues)
+    assert any("must not install a replacement onClick listener" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_binds_batched_json_rows_to_capture_actions(
     tmp_path: Path,
 ) -> None:

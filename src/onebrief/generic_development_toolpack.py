@@ -2153,6 +2153,28 @@ class ApprovedProjectDevelopmentToolPack:
                         + "; alternatively reach it through a real UI action and assert the active scene"
                     )
             requested_surfaces = requested_ui_surfaces(intent_text)
+            # Invoking ``Button.onClick`` is not proof when the test first
+            # deletes the product listeners or installs its own destination
+            # loader. Reject that evidence bypass before another Unity import.
+            if re.search(
+                r"\.\s*onClick\s*\.\s*RemoveAllListeners\s*\(",
+                structural,
+                re.IGNORECASE,
+            ):
+                issues.append(
+                    "the OneBrief.Visual test must not remove or replace the product control's "
+                    "onClick listeners; invoke the shipped navigation behavior unchanged"
+                )
+            if re.search(
+                r"\.\s*onClick\s*\.\s*AddListener\s*\(.{0,900}?"
+                r"SceneManager\s*\.\s*LoadScene\s*\(",
+                structural,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                issues.append(
+                    "the OneBrief.Visual test must not install a replacement onClick listener "
+                    "that loads the destination scene; invoke the shipped navigation behavior unchanged"
+                )
             if len(requested_surfaces) >= 2 and not any(token in structural for token in (
                 ".onclick.invoke", "executeevents.execute", ".setactive(true)",
                 "pointerclickevent", "submitEvent",

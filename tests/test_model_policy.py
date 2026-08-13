@@ -237,6 +237,22 @@ def test_relabelled_scene_load_escalates_same_maker_to_pro() -> None:
     assert decision.selected_model == ApprovedModel.GEMINI_3_1_PRO_PREVIEW
 
 
+def test_replaced_product_click_listener_escalates_same_maker_to_pro() -> None:
+    decision = _escalation_policy().select_after_failure(
+        "long_form_draft",
+        failure_text=(
+            "Unity visual test contract: the OneBrief.Visual test must not remove or "
+            "replace the product control's onClick listeners"
+        ),
+        difficulty="complex",
+        attempt=2,
+    )
+
+    assert decision.escalated is True
+    assert decision.selected_model == ApprovedModel.GEMINI_3_1_PRO_PREVIEW
+    assert decision.call_stage == "long_form_draft_reasoning_escalation_r2"
+
+
 def test_first_missing_evidence_harness_stays_on_flash() -> None:
     decision = _escalation_policy().select_after_failure(
         "long_form_draft",

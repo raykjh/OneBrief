@@ -216,15 +216,23 @@ def allocate_phase_policy(
     remaining = fill_toward(minimums, remaining)
     remaining = fill_toward(recommended, remaining)
     remaining = fill_toward(maximums, remaining)
+    implicit_reserve = 0
     if remaining:
         reserve_index = next(
             (
                 index for index, estimate in enumerate(estimates)
                 if estimate.phase == ExecutionPhase.RESERVE
             ),
-            len(estimates) - 1,
+            None,
         )
-        assigned_caps[reserve_index] += remaining
+        if reserve_index is None:
+            # Approval above every phase's declared maximum is contingency,
+            # not extra final-verification money. Keep it non-editing so a
+            # policy-approved repair escalation can borrow it without starving
+            # another phase or expanding authority.
+            implicit_reserve = remaining
+        else:
+            assigned_caps[reserve_index] += remaining
 
     allocations: list[PhaseBudgetAllocation] = []
     for estimate, cap in zip(estimates, assigned_caps, strict=True):
@@ -234,6 +242,14 @@ def allocate_phase_policy(
             max_ai_repair_calls=estimate.max_ai_repair_calls,
             max_deterministic_attempts=estimate.max_deterministic_attempts,
             editable_scope=list(estimate.editable_scope),
+        ))
+    if implicit_reserve:
+        allocations.append(PhaseBudgetAllocation(
+            phase=ExecutionPhase.RESERVE,
+            approved_usd_micros=implicit_reserve,
+            max_ai_repair_calls=0,
+            max_deterministic_attempts=0,
+            editable_scope=[],
         ))
     policy = PhaseBudgetPolicy(
         approval_id=approval_id,

@@ -189,6 +189,8 @@ class ModelExecutionPolicy(BaseModel):
             "proposal changed only the other phase",
             "requested ordered ui journey",
             "do not relabel a direct scene load as a click",
+            "must not remove or replace the product control's onclick listeners",
+            "must not install a replacement onclick listener",
             "selected real languagedropdown exists and is visible",
             "stalled after two identical candidates",
             "identical candidate",

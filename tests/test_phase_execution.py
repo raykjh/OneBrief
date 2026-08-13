@@ -522,3 +522,35 @@ def test_phase_policy_fills_asymmetric_escalation_headroom_before_surplus() -> N
     assert caps[ExecutionPhase.PRODUCT_IMPLEMENTATION] == 550_000
     assert caps[ExecutionPhase.EVIDENCE_CONSTRUCTION] == 300_000
     assert caps[ExecutionPhase.FINAL_VERIFICATION] == 400_000
+
+
+def test_phase_policy_keeps_above_maximum_approval_as_borrowable_reserve() -> None:
+    estimates = [
+        PhaseBudgetEstimate(
+            phase=ExecutionPhase.EVIDENCE_CONSTRUCTION,
+            minimum_cost_usd=0.10,
+            recommended_cost_usd=0.12,
+            maximum_cost_usd=0.15,
+            max_ai_repair_calls=2,
+        ),
+        PhaseBudgetEstimate(
+            phase=ExecutionPhase.FINAL_VERIFICATION,
+            minimum_cost_usd=0.10,
+            recommended_cost_usd=0.12,
+            maximum_cost_usd=0.15,
+        ),
+    ]
+
+    policy = allocate_phase_policy(
+        approval_id="approval",
+        budget_estimate_sha256="b" * 64,
+        approved_usd_micros=2_000_000,
+        estimates=estimates,
+    )
+
+    assert policy is not None
+    caps = {item.phase: item.approved_usd_micros for item in policy.allocations}
+    assert caps[ExecutionPhase.EVIDENCE_CONSTRUCTION] == 150_000
+    assert caps[ExecutionPhase.FINAL_VERIFICATION] == 150_000
+    assert caps[ExecutionPhase.RESERVE] == 1_700_000
+    assert sum(caps.values()) == 2_000_000
