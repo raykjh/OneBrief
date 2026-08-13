@@ -661,11 +661,7 @@ class DeveloperAgent:
                     instruction += " Exact validation failure: " + last_contract_error
             try:
                 provider_schema = (
-                    (
-                        CompactProposedProjectCodeChangeSet
-                        if attempt
-                        else ProposedProjectCodeChangeSet
-                    )
+                    CompactProposedProjectCodeChangeSet
                     if self.change_set_schema is ProjectCodeChangeSet
                     else self.change_set_schema
                 )

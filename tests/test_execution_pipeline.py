@@ -2227,7 +2227,10 @@ def test_project_developer_compact_retry_keeps_existing_files_as_exact_edits() -
         previous_change_set=previous,
     )
 
-    assert gateway.schemas == [ProposedProjectCodeChangeSet, CompactProposedProjectCodeChangeSet]
+    assert gateway.schemas == [
+        CompactProposedProjectCodeChangeSet,
+        CompactProposedProjectCodeChangeSet,
+    ]
     assert result.changes[0].content == "export const label = 'English';\n"
 
 
@@ -2590,15 +2593,16 @@ def test_developer_separates_repository_path_from_source_provenance_name() -> No
 
 
 def test_project_developer_discards_unapproved_infrastructure_proposals() -> None:
-    proposal = ProposedProjectCodeChangeSet.model_validate({
+    proposal = CompactProposedProjectCodeChangeSet.model_validate({
         "summary": "Build the approved product page.",
         "changes": [
-            {
-                "path": "src/index.html",
-                "base_sha256": "a" * 64,
-                "content": "<!doctype html><main>JULPAE</main>\n",
-                "reason": "Implement the approved product surface.",
-            },
+                {
+                    "path": "src/index.html",
+                    "base_sha256": "a" * 64,
+                    "search": "<main>placeholder</main>",
+                    "replace": "<main>JULPAE</main>",
+                    "reason": "Implement the approved product surface.",
+                },
             {
                 "path": "scripts/server.mjs",
                 "base_sha256": None,
@@ -2627,7 +2631,7 @@ def test_project_developer_discards_unapproved_infrastructure_proposals() -> Non
 
 def test_project_developer_promotes_exact_search_replace_without_rewriting_file() -> None:
     original = '<select id="langSelect">\n<option>한국어</option>\n</select>\n'
-    proposal = ProposedProjectCodeChangeSet.model_validate({
+    proposal = CompactProposedProjectCodeChangeSet.model_validate({
         "summary": "Add one accessible label.",
         "changes": [{
             "path": "src/index.html",
