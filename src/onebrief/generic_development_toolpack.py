@@ -1415,6 +1415,25 @@ class ApprovedProjectDevelopmentToolPack:
                     "the real control by exact hierarchy or a semantic name match: "
                     + ", ".join(sorted(set(broad_named_button_fallbacks)))
                 )
+            local_control_declarations = re.findall(
+                r"\bvar\s+([a-z_][a-z0-9_]*(?:button|btn))\s*=\s*([^;]+);",
+                structural,
+            )
+            duplicate_control_declarations = sorted({
+                name
+                for name, expression in local_control_declarations
+                if sum(
+                    1
+                    for other_name, other_expression in local_control_declarations
+                    if other_name == name and other_expression == expression
+                ) > 1
+            })
+            if duplicate_control_declarations:
+                issues.append(
+                    "the Unity visual test contains an identical duplicate local UI-control declaration; "
+                    "remove the repeated block instead of appending the same navigation again: "
+                    + ", ".join(duplicate_control_declarations)
+                )
             if re.search(
                 r"(?:\.text|\.options\s*\[[^\]]+\]\s*\.text)\s*=",
                 structural,
@@ -1602,7 +1621,21 @@ class ApprovedProjectDevelopmentToolPack:
                     r"(?:after[a-z0-9_]*(?:text|snapshot)|(?:text|snapshot)[a-z0-9_]*after)",
                     structural,
                 ))
-                if left_surface_early or not (has_before_snapshot and has_after_snapshot):
+                compares_snapshot_to_live_text = bool(
+                    re.search(
+                        r"before[a-z0-9_]*(?:text|snapshot)[a-z0-9_]*\.trygetvalue\s*\(",
+                        structural,
+                    )
+                    and re.search(
+                        r"before[a-z0-9_]*text\s*!=\s*[a-z0-9_]+\.text",
+                        structural,
+                    )
+                )
+                valid_before_after_comparison = bool(
+                    has_before_snapshot
+                    and (has_after_snapshot or compares_snapshot_to_live_text)
+                )
+                if left_surface_early or not valid_before_after_comparison:
                     issues.append(
                         "locale changed_visible_text_count must compare before/after visible text snapshots while "
                         "the localized target surface remains active; measure and capture the locale scenario before "

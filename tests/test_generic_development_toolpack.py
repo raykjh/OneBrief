@@ -1435,6 +1435,73 @@ def test_unity_visual_preflight_requires_locale_measurement_before_navigation(
     assert any("before invoking any Close, Back, or Return" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_accepts_snapshot_to_live_text_comparison(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-valid-locale-measurement"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'SceneManager.LoadScene("Lobby"); var langDropdown = GameObject.Find("LanguageDropdown")'
+        ".GetComponent<TMPro.TMP_Dropdown>(); Assert.IsNotNull(langDropdown); "
+        "var beforeTexts = new Dictionary<TMP_Text,string>(); beforeTexts[t] = t.text; "
+        "langDropdown.value = 4; langDropdown.onValueChanged.Invoke(langDropdown.value); "
+        "int changedVisibleTextCount = 0; if (beforeTexts.TryGetValue(t, out string beforeText)) "
+        "{ if (beforeText != t.text) changedVisibleTextCount++; } "
+        "var glyph = t.textInfo.characterInfo; var coverage = t.font.HasCharacter('A'); "
+        'var schema="runtime-evidence.json onebrief-unity-visual-evidence-v1 scenarios '
+        'scenario_id expected_locale observed_locale changed_visible_text_count missing_glyph_count '
+        'screenshot_path locale_es.png"; closeSettingsBtn.onClick.Invoke(); } }',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile, clone, "Verify the Settings language localization UI."
+    )
+
+    assert not any("before/after visible text snapshots" in issue for issue in issues)
+
+
+def test_unity_visual_preflight_rejects_an_appended_duplicate_navigation_block(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-duplicate-navigation"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    duplicated = (
+        'var closeSettingsBtn = GameObject.Find("CloseButton")?.GetComponent<Button>(); '
+        'closeSettingsBtn.onClick.Invoke(); '
+    )
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'SceneManager.LoadScene("Lobby"); '
+        + duplicated + duplicated
+        + 'var schema="runtime-evidence.json"; var png="settings.png"; } }',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(profile, clone, "Open Settings UI.")
+
+    assert any("identical duplicate local UI-control declaration" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_rejects_inert_new_ui_monobehaviour(tmp_path: Path) -> None:
     root, registry = _approved_node_project(tmp_path)
     pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)

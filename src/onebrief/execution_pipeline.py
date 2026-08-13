@@ -187,6 +187,7 @@ def is_unity_evidence_contract_feedback(feedback: str) -> bool:
         "unity visual evidence reused an identical screenshot",
         "unity visual evidence did not exercise requested locale",
         "locale changed_visible_text_count must compare before/after visible text snapshots",
+        "identical duplicate local ui-control declaration",
     ))
 
 
@@ -809,6 +810,12 @@ class ExecutionPipeline:
                     "event while that same surface is still active, compute changed_visible_text_count from those "
                     "two snapshots, and capture the locale PNG there. Move Close/Back/Return navigation after this "
                     "measurement. Do not assign label text, dropdown option text, or product layout in the test."
+                )
+            if "identical duplicate local ui-control declaration" in lowered:
+                return (
+                    "Remove only the second identical UI-control declaration and its repeated navigation/capture "
+                    "block. Preserve the first measured interaction and every unique scenario; do not rename the "
+                    "duplicate merely to make it compile."
                 )
             if "unity visual test contract" in lowered and "each general ui evidence scenario" in lowered:
                 return (

@@ -190,6 +190,7 @@ def _is_unity_evidence_topology_failure(value: str) -> bool:
         "responsive unity visual evidence must define and capture",
         "unity visual evidence reused an identical screenshot",
         "locale changed_visible_text_count must compare before/after visible text snapshots",
+        "identical duplicate local ui-control declaration",
     ))
 
 

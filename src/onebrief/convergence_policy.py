@@ -117,6 +117,7 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
         "unity visual evidence reused an identical screenshot",
         "unity visual evidence did not exercise requested locale",
         "locale changed_visible_text_count must compare before/after visible text snapshots",
+        "identical duplicate local ui-control declaration",
     )):
         return FailureLayer.EVIDENCE_TOPOLOGY
     if any(marker in text for marker in (
@@ -191,6 +192,7 @@ def extract_symptom_keys(
             "distinct rendered scenario", "responsive unity visual evidence",
             "reused an identical screenshot", "did not exercise requested locale",
             "changed_visible_text_count must compare before/after visible text snapshots",
+            "identical duplicate local ui-control declaration",
         )),
         ("runtime_evidence_json", ("must write onebrief-evidence/runtime-evidence.json",)),
         ("png_capture", ("must capture png runtime evidence",)),
