@@ -11,6 +11,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from onebrief.execution_schemas import VerificationReport, Verdict
+from onebrief.handoff_protocol import EvidenceBinding, EvidenceKind, EvidenceStatus
 from onebrief.schemas import CompletionContract, EvaluationMode
 
 
@@ -27,6 +28,7 @@ class CriterionAttempt(BaseModel):
     passed: bool
     evidence: str
     verdict: Verdict
+    evidence_bindings: list[EvidenceBinding] = Field(default_factory=list, max_length=32)
 
 
 class CompletionCriterionState(BaseModel):
@@ -41,12 +43,20 @@ class CompletionCriterionState(BaseModel):
     revision_instructions: list[str] = Field(default_factory=list)
 
 
+class EvidenceDimensionState(BaseModel):
+    kind: EvidenceKind
+    status: CompletionStatus = CompletionStatus.PENDING
+    bindings: list[EvidenceBinding] = Field(default_factory=list, max_length=128)
+    failure_reasons: list[str] = Field(default_factory=list)
+
+
 class CompletionLedger(BaseModel):
     """The product-level answer to: what remains before this work is done?"""
 
     target_state: str
     pass_condition: str
     criteria: list[CompletionCriterionState]
+    evidence_dimensions: list[EvidenceDimensionState] = Field(default_factory=list)
     required_total: int
     required_passed: int
     complete: bool
@@ -96,24 +106,40 @@ def build_completion_ledger(
         )
         for item in contract.quality_criteria
     ]
+    dimensions = {
+        kind: EvidenceDimensionState(kind=kind)
+        for kind in (EvidenceKind.COMPILE, EvidenceKind.BEHAVIOR, EvidenceKind.VISUAL)
+    }
     ordered_reports = sorted(reports, key=lambda item: item[0])
     for round_number, report in ordered_reports:
-        unmatched = list(range(len(states)))
         for check in report.criterion_checks:
             index = _match_index(contract, check.criterion_id, check.criterion)
-            if index is None and len(report.criterion_checks) == len(states) and unmatched:
-                # Backward compatibility for old reports produced before criterion IDs.
-                index = unmatched[0]
+            for binding in check.evidence_bindings:
+                dimension = dimensions.get(binding.kind)
+                if dimension is None:
+                    continue
+                if all(
+                    existing.binding_id != binding.binding_id
+                    for existing in dimension.bindings
+                ):
+                    dimension.bindings.append(binding)
+                if binding.status in {EvidenceStatus.FAILED, EvidenceStatus.MISSING}:
+                    dimension.status = CompletionStatus.REVISE
+                    dimension.failure_reasons = list(dict.fromkeys([
+                        *dimension.failure_reasons,
+                        binding.summary,
+                    ]))
+                elif dimension.status == CompletionStatus.PENDING:
+                    dimension.status = CompletionStatus.PASSED
             if index is None:
                 continue
-            if index in unmatched:
-                unmatched.remove(index)
             state = states[index]
             state.attempts.append(CriterionAttempt(
                 round_number=round_number,
                 passed=check.passed,
                 evidence=check.evidence,
                 verdict=report.verdict,
+                evidence_bindings=check.evidence_bindings,
             ))
             if check.passed:
                 state.status = CompletionStatus.PASSED
@@ -134,6 +160,7 @@ def build_completion_ledger(
         target_state=contract.target_state,
         pass_condition=contract.pass_condition,
         criteria=states,
+        evidence_dimensions=list(dimensions.values()),
         required_total=len(required),
         required_passed=len(passed),
         complete=bool(required) and len(passed) == len(required) and latest == Verdict.PASS,

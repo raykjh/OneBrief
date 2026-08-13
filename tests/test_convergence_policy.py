@@ -4,6 +4,7 @@ from onebrief.convergence_policy import (
     FailureLayer,
     ProgressKind,
 )
+from onebrief.handoff_protocol import FailureCode, FailureOwner
 
 
 def test_source_binding_failure_uses_deterministic_probe_without_model_escalation() -> None:
@@ -419,3 +420,17 @@ def test_unity_layout_evidence_replaces_global_scaler_guess_with_topology_probe(
     assert contract.hypothesis.repair_boundary == (
         "One diagnosed production RectTransform ancestry and one visible symptom."
     )
+
+
+def test_screenshot_materialization_failure_is_a_typed_v2_observation() -> None:
+    observation = ConvergencePolicy().observe(
+        context="development_verification",
+        failure_text="Unity visual scenario login_to_lobby screenshot is unavailable",
+        attempt_number=4,
+        affected_paths=["Assets/Tests/PlayMode/LoginVisualTest.cs"],
+    )
+
+    assert observation.schema_version == "onebrief-failure-observation-v2"
+    assert observation.code == FailureCode.UNITY_SCREENSHOT_NOT_MATERIALIZED
+    assert observation.owner == FailureOwner.EVIDENCE
+    assert observation.layer == FailureLayer.EVIDENCE_RUNTIME

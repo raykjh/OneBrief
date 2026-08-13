@@ -16,6 +16,7 @@ from typing import Callable
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from onebrief.handoff_protocol import EvidenceBinding
 from onebrief.schemas import InternalSource, SourcePriority
 
 
@@ -155,6 +156,17 @@ class DevelopmentRun(BaseModel):
     patch_path: str
     evidence_paths: list[str] = Field(default_factory=list)
     safety_boundary: list[str]
+
+
+class DevelopmentVerificationReceipt(BaseModel):
+    """Durable command evidence written before later evidence packaging can fail."""
+
+    schema_version: str = "onebrief-development-verification-receipt-v1"
+    repository_name: str
+    base_head_sha: str = Field(pattern=r"^[a-f0-9]{40}$")
+    candidate_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    commands: list[DevelopmentCommandResult]
+    evidence_bindings: list[EvidenceBinding] = Field(default_factory=list, max_length=64)
 
 
 CommandRunner = Callable[[str, list[str], Path, int], DevelopmentCommandResult]

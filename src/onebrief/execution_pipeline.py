@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
 import os
@@ -46,6 +47,7 @@ from onebrief.evidence_sufficiency import (
 from onebrief.development_toolpack import (
     CodeChangeSet,
     DevelopmentRun,
+    DevelopmentVerificationReceipt,
     ExchangeDevelopmentToolPack,
     RepositoryInspection,
 )
@@ -86,11 +88,22 @@ from onebrief.execution_limits import DEVELOPER_OUTPUT_CAP, VERIFIER_OUTPUT_CAP,
 from onebrief.execution_graph import ExecutionGraph, ExecutionGraphRuntime, NodeStatus
 from onebrief.execution_schemas import (
     AnalysisPackage,
+    CriterionCheck,
     DraftArtifact,
     ExecutionCheckpoint,
     PipelineStatus,
     VerificationReport,
     Verdict,
+)
+from onebrief.handoff_protocol import (
+    ArtifactReference,
+    EvidenceKind,
+    EvidenceStatus,
+    accept_work_handoff,
+    canonical_sha256 as handoff_sha256,
+    create_evidence_binding,
+    create_work_handoff,
+    verify_handoff_receipt,
 )
 from onebrief.completion_ledger import refresh_completion_ledger, settle_consistent_verification
 from onebrief.convergence_policy import (
@@ -118,6 +131,7 @@ from onebrief.phase_execution import (
     PHASE_STATE_KEY,
     build_evidence_specification,
     decide_repair_phase,
+    is_evidence_path,
     path_allowed_for_phase,
     phase_stage,
 )
@@ -946,7 +960,11 @@ class ExecutionPipeline:
         return detail
 
     @staticmethod
-    def _development_failure_report(feedback: str) -> VerificationReport:
+    def _development_failure_report(
+        feedback: str,
+        completion_contract=None,
+        verification_receipt: DevelopmentVerificationReceipt | None = None,
+    ) -> VerificationReport:
         """Turn deterministic adapter blockers into one repair slice each."""
 
         detail = ExecutionPipeline._compact_development_feedback(feedback)
@@ -1111,10 +1129,11 @@ class ExecutionPipeline:
                 )
             if "unity visual test contract" in lowered and "png" in lowered:
                 return (
-                "Implement PNG evidence directly inside the OneBrief.Visual PlayMode test source; do not delegate "
-                "to a production helper. Use the loaded real scene, RenderTexture, ReadPixels, EncodeToPNG, "
-                "File.WriteAllBytes, and a literal .png path."
-            )
+                    "Use the trusted evidence-only OneBrief.Visual.OneBriefAtomicScreenshot.Capture helper already "
+                    "installed beside the PlayMode test, then publish the manifest through "
+                    "WriteManifestAtomically only after every CaptureReceipt exists. Do not call "
+                    "ScreenCapture.CaptureScreenshot and do not copy or replace the trusted helper."
+                )
             if "unity visual test contract" in lowered and "visible ui" in lowered:
                 return (
                 "Inside the OneBrief.Visual test, load the real project scene and discover active or inactive scene "
@@ -1173,9 +1192,75 @@ class ExecutionPipeline:
             instructions = [
                 blocker_action(blockers[0]) + " Do not repeat unchanged repair files."
             ]
+        bound_checks: list[CriterionCheck] = []
+        if verification_receipt is not None:
+            criteria = list(getattr(completion_contract, "quality_criteria", []) or [])
+
+            def matching_criteria(kind: EvidenceKind) -> list[str]:
+                def criterion_kind(item) -> EvidenceKind | None:
+                    text = f"{item.description} {item.evidence_required}".casefold()
+                    if any(marker in text for marker in (
+                        "compile", "compilation", "build", "컴파일", "빌드",
+                    )):
+                        return EvidenceKind.COMPILE
+                    if any(marker in text for marker in (
+                        "visual", "screenshot", "rendered png", "layout", "png",
+                        "시각", "스크린샷", "렌더", "레이아웃",
+                    )):
+                        return EvidenceKind.VISUAL
+                    if any(marker in text for marker in (
+                        "behavior", "interaction", "transition", "navigation", "playmode",
+                        "동작", "상호작용", "이동",
+                    )):
+                        return EvidenceKind.BEHAVIOR
+                    return None
+
+                return [
+                    item.criterion_id for item in criteria
+                    if criterion_kind(item) == kind
+                ]
+
+            for binding in verification_receipt.evidence_bindings:
+                for criterion_id in matching_criteria(binding.kind):
+                    rebound = binding.model_copy(update={"criterion_id": criterion_id})
+                    bound_checks.append(CriterionCheck(
+                        criterion_id=criterion_id,
+                        criterion=next(
+                            item.description for item in criteria
+                            if item.criterion_id == criterion_id
+                        ),
+                        passed=binding.status == EvidenceStatus.PASSED,
+                        evidence=binding.summary,
+                        evidence_bindings=[rebound],
+                    ))
+
+        failure_bindings = []
+        if "screenshot is unavailable" in detail.casefold():
+            failure_bindings.append(create_evidence_binding(
+                criterion_id=None,
+                kind=EvidenceKind.VISUAL,
+                status=EvidenceStatus.MISSING,
+                summary=next(
+                    (item for item in blockers if "screenshot is unavailable" in item.casefold()),
+                    "Unity screenshot was not materialized.",
+                ),
+            ))
+        system_checks = [CriterionCheck.model_validate(item) for item in checks]
+        if failure_bindings and system_checks:
+            system_checks[0] = system_checks[0].model_copy(update={
+                "evidence_bindings": failure_bindings,
+            })
+
+        # One explicit criterion check per bound proof.  Keep the newest receipt
+        # for a criterion so a compile command cannot be duplicated by several
+        # generic adapter labels.
+        latest_bound: dict[str, CriterionCheck] = {}
+        for check in bound_checks:
+            if check.criterion_id:
+                latest_bound[check.criterion_id] = check
         return VerificationReport(
             verdict=Verdict.REVISE,
-            criterion_checks=checks,
+            criterion_checks=[*latest_bound.values(), *system_checks],
             blocking_issues=blockers,
             revision_instructions=instructions,
             missing_information=[],
@@ -1509,6 +1594,17 @@ class ExecutionPipeline:
             evidence_specification.model_dump_json(indent=2),
         )
 
+        def development_failure_report(feedback: str) -> VerificationReport:
+            receipt = self._load(
+                output_dir / "development" / "verification_commands.json",
+                DevelopmentVerificationReceipt,
+            )
+            return self._development_failure_report(
+                feedback,
+                requirements.completion_contract,
+                receipt,
+            )
+
         # A Cloud continuation may restore the last verified-or-failed candidate
         # into the fresh child work directory.  Preserve that candidate as the
         # same maker's starting point instead of silently asking the model to
@@ -1594,6 +1690,110 @@ class ExecutionPipeline:
             self._write(
                 output_dir / "repair_contract.json",
                 contract.model_dump_json(indent=2),
+            )
+            repair_contract_path = output_dir / "repair_contract.json"
+            repair_artifact = ArtifactReference(
+                artifact_type="repair_contract",
+                path=repair_contract_path.relative_to(output_dir).as_posix(),
+                sha256=hashlib.sha256(repair_contract_path.read_bytes()).hexdigest(),
+            )
+            owner = observation.owner
+            stage = (
+                ExecutionPhase.EVIDENCE_CONSTRUCTION.value
+                if owner.value == "evidence"
+                else ExecutionPhase.PRODUCT_IMPLEMENTATION.value
+            )
+            sender_id = "independent-verifier"
+            recipient_id = "maker"
+            if self.execution_graph is not None:
+                try:
+                    sender_id = self.execution_graph.node_for_stage(
+                        "independent_verification"
+                    ).owner_instance_id
+                    recipient_id = self.execution_graph.node_for_stage(
+                        "long_form_draft"
+                    ).owner_instance_id
+                except KeyError:
+                    pass
+            inspection = self._load(
+                output_dir / "toolpacks" / ToolPackId.PROJECT_DEVELOPMENT.value
+                / "evidence" / "repository_inspection.json",
+                RepositoryInspection,
+            )
+            source_revision = (
+                inspection.head_sha if inspection is not None else "unavailable"
+            )
+            milestone_match = re.fullmatch(r"M[0-9]{2}", output_dir.name)
+            milestone_id = output_dir.name if milestone_match else "M00"
+            failed_kind = (
+                EvidenceKind.VISUAL
+                if observation.code.value == "unity_screenshot_not_materialized"
+                else EvidenceKind.OTHER
+            )
+            permitted_paths = list(contract.permitted_paths) or list(
+                observation.affected_paths
+            )
+            if owner.value == "evidence" and not permitted_paths:
+                permitted_paths = [
+                    str(item.path)
+                    for item in getattr(previous_change_set, "changes", [])
+                    if is_evidence_path(str(item.path))
+                ]
+            handoff = create_work_handoff(
+                project_id=(
+                    self.execution_graph.project_id
+                    if self.execution_graph is not None else output_dir.parent.name
+                ),
+                milestone_id=milestone_id,
+                round_number=max(0, attempt_number - 1),
+                sender_agent_id=sender_id,
+                recipient_agent_id=recipient_id,
+                stage=stage,
+                goal_digest=handoff_sha256(intake.goal),
+                completion_contract_digest=evidence_specification.completion_contract_sha256,
+                source_revision=source_revision,
+                owned_criterion_ids=list(observation.failed_criterion_ids),
+                preserve_passed_criterion_ids=list(contract.preserve_criterion_ids),
+                failure_observation_id=observation.observation_id,
+                permitted_paths=permitted_paths,
+                forbidden_path_patterns=(
+                    ["product source outside Tests/PlayMode"]
+                    if owner.value == "evidence"
+                    else ["tests", "evidence", "screenshots", "reports"]
+                ),
+                input_artifacts=[repair_artifact],
+                evidence_bindings=[create_evidence_binding(
+                    criterion_id=(
+                        observation.failed_criterion_ids[0]
+                        if len(observation.failed_criterion_ids) == 1 else None
+                    ),
+                    kind=failed_kind,
+                    status=EvidenceStatus.MISSING,
+                    summary=observation.normalized_signature,
+                    artifact=repair_artifact,
+                    observation_id=observation.observation_id,
+                )],
+                expected_output_schema=(
+                    "UnityEvidenceSourceRepair"
+                    if owner.value == "evidence"
+                    else "ProjectCodeChangeSet"
+                ),
+                required_evidence=list(contract.verification_ladder),
+            )
+            receipt = accept_work_handoff(
+                handoff,
+                recipient_agent_id=recipient_id,
+            )
+            verify_handoff_receipt(handoff, receipt)
+            handoff_dir = output_dir / "handoffs"
+            receipt_dir = output_dir / "handoff_receipts"
+            self._write(
+                handoff_dir / f"{handoff.handoff_id}.json",
+                handoff.model_dump_json(indent=2),
+            )
+            self._write(
+                receipt_dir / f"{handoff.handoff_id}.json",
+                receipt.model_dump_json(indent=2),
             )
             return contract
 
@@ -1785,7 +1985,7 @@ class ExecutionPipeline:
             feedback = self._compact_development_feedback(
                 prior_failure.read_text("utf-8")
             )
-            initial_state[VERIFICATION_STATE_KEY] = self._development_failure_report(
+            initial_state[VERIFICATION_STATE_KEY] = development_failure_report(
                 feedback
             ).model_dump(mode="json")
             continuation_report = VerificationReport.model_validate(
@@ -2056,7 +2256,7 @@ class ExecutionPipeline:
                         "convergence progress gate blocked an incomplete Unity evidence bundle: "
                         + convergence_contract.rationale
                     )
-                report = self._development_failure_report(
+                report = development_failure_report(
                     active_feedback + " | " + feedback
                 )
                 repair_plan = prepare_repair(report, round_number)
@@ -2380,7 +2580,7 @@ class ExecutionPipeline:
                     if str(anchor.get("path", "")).replace("\\", "/").casefold()
                     not in repeated_paths
                 ]
-                report = self._development_failure_report(feedback)
+                report = development_failure_report(feedback)
                 repair_plan = prepare_repair(report, round_number)
                 return {
                     MAKER_STATE_KEY: previous_change_set.model_dump(mode="json"),
@@ -2465,7 +2665,7 @@ class ExecutionPipeline:
                     output_dir / f"development_repeated_candidate_r{round_number}.txt",
                     feedback,
                 )
-                report = self._development_failure_report(feedback)
+                report = development_failure_report(feedback)
                 self._write(
                     output_dir / f"verification_r{round_number}.json",
                     report.model_dump_json(indent=2),
@@ -2686,7 +2886,7 @@ class ExecutionPipeline:
                     or not decision.retry_allowed
                 ):
                     raise
-                report = self._development_failure_report(feedback)
+                report = development_failure_report(feedback)
                 self._write(
                     output_dir / f"verification_r{round_number}.json",
                     report.model_dump_json(indent=2),

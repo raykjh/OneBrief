@@ -16,12 +16,15 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from onebrief.handoff_protocol import FailureCode, FailureOwner
+
 
 class FailureLayer(StrEnum):
     STRUCTURED_OUTPUT = "structured_output"
     SOURCE_BINDING = "source_binding"
     BUILD = "build"
     RUNTIME = "runtime"
+    EVIDENCE_RUNTIME = "evidence_runtime"
     EVIDENCE_TOPOLOGY = "evidence_topology"
     EVIDENCE_INTEGRITY = "evidence_integrity"
     SEMANTIC_PRODUCT = "semantic_product"
@@ -39,11 +42,15 @@ class ProgressKind(StrEnum):
     REGRESSION = "regression"
 
 
-class FailureObservation(BaseModel):
-    schema_version: str = "onebrief-failure-observation-v1"
+class FailureObservationV2(BaseModel):
+    """A typed causal failure that no downstream agent has to re-parse."""
+
+    schema_version: str = "onebrief-failure-observation-v2"
     observation_id: str = Field(pattern=r"^FO-[a-f0-9]{16}$")
     context: str
+    code: FailureCode = FailureCode.UNKNOWN
     layer: FailureLayer
+    owner: FailureOwner = FailureOwner.PRODUCT
     normalized_signature: str = Field(min_length=3, max_length=1200)
     evidence_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     affected_paths: list[str] = Field(default_factory=list, max_length=16)
@@ -51,6 +58,11 @@ class FailureObservation(BaseModel):
     symptom_keys: list[str] = Field(default_factory=list, max_length=32)
     strategy_fingerprint: str | None = None
     attempt_number: int = Field(ge=1)
+
+
+# Keep the public name used by older modules and stored-ledger tests while all
+# newly authored observations use the v2 schema and typed ownership fields.
+FailureObservation = FailureObservationV2
 
 
 class RepairHypothesis(BaseModel):
@@ -111,6 +123,13 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
     )):
         return FailureLayer.STRUCTURED_OUTPUT
     if any(marker in text for marker in (
+        "screenshot is unavailable",
+        "screenshot was not materialized",
+        "screenshot file is unavailable",
+        "png was not materialized",
+    )):
+        return FailureLayer.EVIDENCE_RUNTIME
+    if any(marker in text for marker in (
         "unity visual test contract: add",
         "unity visual test contract:",
         "readpixels was called to read pixels from system frame buffer",
@@ -159,6 +178,65 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
     if context == "development_candidate_promotion":
         return FailureLayer.SOURCE_BINDING
     return FailureLayer.UNKNOWN
+
+
+def classify_failure_code(
+    context: str, failure_text: str, layer: FailureLayer | None = None
+) -> FailureCode:
+    """Return a stable machine code before any repair routing decision."""
+
+    text = failure_text.casefold()
+    resolved = layer or classify_failure_layer(context, failure_text)
+    if any(marker in text for marker in (
+        "screenshot is unavailable",
+        "screenshot was not materialized",
+        "screenshot file is unavailable",
+        "png was not materialized",
+    )):
+        return FailureCode.UNITY_SCREENSHOT_NOT_MATERIALIZED
+    if any(marker in text for marker in (
+        "evidence harness",
+        "evidence topology",
+        "unity visual test contract",
+        "missing playmode test",
+        "executed onebrief.visual playmode test",
+        "add a discoverable unity playmode test",
+        "testassemblies",
+        "runtime-evidence.json",
+        "screenshot capture is missing",
+    )):
+        return FailureCode.EVIDENCE_TOPOLOGY_INVALID
+    return {
+        FailureLayer.STRUCTURED_OUTPUT: FailureCode.STRUCTURED_OUTPUT_INVALID,
+        FailureLayer.SOURCE_BINDING: FailureCode.SOURCE_REVISION_STALE,
+        FailureLayer.BUILD: FailureCode.BUILD_FAILED,
+        FailureLayer.RUNTIME: FailureCode.RUNTIME_FAILED,
+        FailureLayer.EVIDENCE_RUNTIME: FailureCode.EVIDENCE_TOPOLOGY_INVALID,
+        FailureLayer.EVIDENCE_TOPOLOGY: FailureCode.EVIDENCE_TOPOLOGY_INVALID,
+        FailureLayer.EVIDENCE_INTEGRITY: FailureCode.EVIDENCE_INTEGRITY_INVALID,
+        FailureLayer.SEMANTIC_PRODUCT: FailureCode.SEMANTIC_PRODUCT_DEFECT,
+        FailureLayer.AUTHORITY: FailureCode.AUTHORITY_REQUIRED,
+        FailureLayer.PROVIDER: FailureCode.PROVIDER_UNAVAILABLE,
+        FailureLayer.UNKNOWN: FailureCode.UNKNOWN,
+    }[resolved]
+
+
+def failure_owner_for(code: FailureCode, layer: FailureLayer) -> FailureOwner:
+    if code in {
+        FailureCode.UNITY_SCREENSHOT_NOT_MATERIALIZED,
+        FailureCode.EVIDENCE_TOPOLOGY_INVALID,
+        FailureCode.EVIDENCE_INTEGRITY_INVALID,
+    } or layer in {
+        FailureLayer.EVIDENCE_RUNTIME,
+        FailureLayer.EVIDENCE_TOPOLOGY,
+        FailureLayer.EVIDENCE_INTEGRITY,
+    }:
+        return FailureOwner.EVIDENCE
+    if layer in {FailureLayer.PROVIDER, FailureLayer.STRUCTURED_OUTPUT}:
+        return FailureOwner.ENVIRONMENT
+    if layer == FailureLayer.AUTHORITY:
+        return FailureOwner.CONTRACT
+    return FailureOwner.PRODUCT
 
 
 def extract_symptom_keys(
@@ -245,7 +323,10 @@ def _same_causal_boundary(
 ) -> bool:
     if previous.layer != current.layer:
         return False
-    if current.layer == FailureLayer.EVIDENCE_TOPOLOGY:
+    if current.layer in {
+        FailureLayer.EVIDENCE_RUNTIME,
+        FailureLayer.EVIDENCE_TOPOLOGY,
+    }:
         # The static Unity evidence checklist is one finite causal boundary.
         # Its individual blockers legitimately change as earlier requirements
         # are satisfied, and issue_contract measures that change explicitly.
@@ -297,6 +378,13 @@ def _hypothesis(
             "The targeted scenario passes and produces a new trusted receipt.",
             "One runtime behavior slice; preserve all previously passing scenarios.",
             True,
+        ),
+        FailureLayer.EVIDENCE_RUNTIME: (
+            "The evidence test ran but did not durably materialize a referenced artifact.",
+            "Run the evidence producer only and verify that every referenced file exists and hashes before writing its manifest.",
+            "The PNG bytes and dimensions are verified before an atomically published manifest references them.",
+            "Tests/PlayMode evidence source only; product source and previously passing criteria remain unchanged.",
+            False,
         ),
         FailureLayer.EVIDENCE_TOPOLOGY: (
             "The executed evidence harness is missing or does not prove each requested real UI state.",
@@ -402,6 +490,8 @@ class ConvergencePolicy:
     ) -> FailureObservation:
         normalized = _normalize(failure_text)
         evidence_sha = hashlib.sha256(failure_text.encode("utf-8")).hexdigest()
+        layer = classify_failure_layer(context, failure_text)
+        code = classify_failure_code(context, failure_text, layer)
         # Changed paths describe the attempted strategy, not the trusted
         # failure's identity. A restart can preserve the exact verifier output
         # without reconstructing that optional envelope; binding the ID to the
@@ -410,7 +500,9 @@ class ConvergencePolicy:
         return FailureObservation(
             observation_id=_digest("FO", identity),
             context=context,
-            layer=classify_failure_layer(context, failure_text),
+            code=code,
+            layer=layer,
+            owner=failure_owner_for(code, layer),
             normalized_signature=normalized,
             evidence_sha256=evidence_sha,
             affected_paths=list(dict.fromkeys(affected_paths or []))[:16],
@@ -539,6 +631,10 @@ class ConvergencePolicy:
             FailureLayer.STRUCTURED_OUTPUT: ["schema_validation", "exact_source_promotion", "targeted_verification"],
             FailureLayer.BUILD: ["exact_source_promotion", "compile", "targeted_test", "full_verification"],
             FailureLayer.RUNTIME: ["exact_source_promotion", "compile", "targeted_test", "full_verification"],
+            FailureLayer.EVIDENCE_RUNTIME: [
+                "evidence_source_validation", "compile", "targeted_test",
+                "artifact_materialization", "evidence_integrity", "full_verification"
+            ],
             FailureLayer.EVIDENCE_TOPOLOGY: [
                 "proof_topology_scan", "compile", "targeted_test", "evidence_integrity", "full_verification"
             ],
@@ -554,7 +650,10 @@ class ConvergencePolicy:
         ]
         permitted_paths = (
             []
-            if observation.layer == FailureLayer.EVIDENCE_TOPOLOGY
+            if observation.layer in {
+                FailureLayer.EVIDENCE_RUNTIME,
+                FailureLayer.EVIDENCE_TOPOLOGY,
+            }
             or "artifact:inactive_binding" in observation.symptom_keys
             else observation.affected_paths
         )

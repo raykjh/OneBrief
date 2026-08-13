@@ -6,6 +6,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
 
+from onebrief.handoff_protocol import EvidenceBinding
 from onebrief.temperament import TemperamentDecision
 
 
@@ -62,6 +63,21 @@ class CriterionCheck(BaseModel):
     criterion: str
     passed: bool
     evidence: str
+    evidence_bindings: list[EvidenceBinding] = Field(default_factory=list, max_length=32)
+
+    @model_validator(mode="after")
+    def bindings_match_criterion(self) -> "CriterionCheck":
+        mismatched = [
+            item.binding_id
+            for item in self.evidence_bindings
+            if item.criterion_id is not None and item.criterion_id != self.criterion_id
+        ]
+        if mismatched:
+            raise ValueError(
+                "criterion check contains evidence bound to a different criterion: "
+                + ", ".join(mismatched)
+            )
+        return self
 
 
 class VerificationReport(BaseModel):

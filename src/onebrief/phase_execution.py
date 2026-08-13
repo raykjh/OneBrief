@@ -11,23 +11,21 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
-from enum import StrEnum
 from pathlib import PurePosixPath
 
 from pydantic import BaseModel, Field, model_validator
 
-from onebrief.convergence_policy import FailureLayer, classify_failure_layer
+from onebrief.convergence_policy import (
+    FailureLayer,
+    classify_failure_code,
+    classify_failure_layer,
+    failure_owner_for,
+)
+from onebrief.handoff_protocol import FailureCode, FailureOwner
 from onebrief.schemas import ExecutionPhase, PhaseBudgetEstimate
 
 PHASE_STATE_KEY = "onebrief:execution_phase"
 PHASE_DECISION_STATE_KEY = "onebrief:phase_decision"
-
-
-class FailureOwner(StrEnum):
-    PRODUCT = "product"
-    EVIDENCE = "evidence"
-    ENVIRONMENT = "environment"
-    CONTRACT = "contract"
 
 
 class PhaseBudgetAllocation(BaseModel):
@@ -67,6 +65,7 @@ class EvidenceSpecification(BaseModel):
 class PhaseDecision(BaseModel):
     schema_version: str = "onebrief-phase-decision-v1"
     round_number: int = Field(ge=0)
+    failure_code: FailureCode = FailureCode.UNKNOWN
     failure_layer: FailureLayer
     failure_owner: FailureOwner
     next_phase: ExecutionPhase | None
@@ -275,6 +274,18 @@ def classify_failure_owner(
     *, context: str, failure_text: str, affected_paths: list[str] | None = None
 ) -> FailureOwner:
     layer = classify_failure_layer(context, failure_text)
+    code = classify_failure_code(context, failure_text, layer)
+    typed_owner = failure_owner_for(code, layer)
+    if code != FailureCode.UNKNOWN or layer in {
+        FailureLayer.EVIDENCE_RUNTIME,
+        FailureLayer.EVIDENCE_TOPOLOGY,
+        FailureLayer.EVIDENCE_INTEGRITY,
+        FailureLayer.SEMANTIC_PRODUCT,
+        FailureLayer.AUTHORITY,
+        FailureLayer.PROVIDER,
+        FailureLayer.STRUCTURED_OUTPUT,
+    }:
+        return typed_owner
     normalized = failure_text.casefold()
     paths = affected_paths or []
     evidence_targeted = bool(paths) and all(is_evidence_path(path) for path in paths)
@@ -316,6 +327,7 @@ def decide_repair_phase(
     affected_paths: list[str] | None = None,
 ) -> PhaseDecision:
     layer = classify_failure_layer(context, failure_text)
+    code = classify_failure_code(context, failure_text, layer)
     owner = classify_failure_owner(
         context=context, failure_text=failure_text, affected_paths=affected_paths
     )
@@ -337,6 +349,7 @@ def decide_repair_phase(
         allowed = False
     return PhaseDecision(
         round_number=round_number,
+        failure_code=code,
         failure_layer=layer,
         failure_owner=owner,
         next_phase=phase,

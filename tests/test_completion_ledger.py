@@ -4,7 +4,17 @@ from onebrief.completion_ledger import (
     settle_consistent_verification,
 )
 from onebrief.execution_schemas import CriterionCheck, VerificationReport, Verdict
+from onebrief.development_toolpack import (
+    DevelopmentCommandResult,
+    DevelopmentVerificationReceipt,
+)
+from onebrief.handoff_protocol import (
+    EvidenceKind,
+    EvidenceStatus,
+    create_evidence_binding,
+)
 from onebrief.schemas import CompletionContract, EvaluationMode, QualityCriterion
+from onebrief.execution_pipeline import ExecutionPipeline
 
 
 def contract() -> CompletionContract:
@@ -131,3 +141,126 @@ def test_failed_system_check_prevents_settlement() -> None:
     )
 
     assert settle_consistent_verification(contract(), report).verdict == Verdict.REVISE
+
+
+def test_equal_count_unbound_system_failures_do_not_overwrite_contract_criteria() -> None:
+    report = VerificationReport(
+        verdict=Verdict.REVISE,
+        criterion_checks=[
+            CriterionCheck(
+                criterion="System blocker 1", passed=False,
+                evidence="A screenshot is unavailable.",
+            ),
+            CriterionCheck(
+                criterion="System blocker 2", passed=False,
+                evidence="A duplicate repair was rejected.",
+            ),
+        ],
+        blocking_issues=["A screenshot is unavailable."],
+        revision_instructions=["Repair evidence only."],
+        missing_information=[],
+    )
+
+    ledger = build_completion_ledger(contract(), [(0, report)])
+
+    assert all(item.status == CompletionStatus.PENDING for item in ledger.criteria)
+
+
+def test_compile_behavior_and_visual_evidence_are_independent_dimensions() -> None:
+    checks = []
+    for kind, status, summary in (
+        (EvidenceKind.COMPILE, EvidenceStatus.PASSED, "Unity compile exited 0."),
+        (EvidenceKind.BEHAVIOR, EvidenceStatus.PASSED, "Login reached Lobby."),
+        (EvidenceKind.VISUAL, EvidenceStatus.MISSING, "Login PNG is unavailable."),
+    ):
+        binding = create_evidence_binding(
+            criterion_id=None, kind=kind, status=status, summary=summary
+        )
+        checks.append(CriterionCheck(
+            criterion=f"System {kind.value}",
+            passed=status == EvidenceStatus.PASSED,
+            evidence=summary,
+            evidence_bindings=[binding],
+        ))
+    report = VerificationReport(
+        verdict=Verdict.REVISE,
+        criterion_checks=checks,
+        blocking_issues=["Login PNG is unavailable."],
+        revision_instructions=["Repair evidence capture only."],
+        missing_information=[],
+    )
+
+    ledger = build_completion_ledger(contract(), [(0, report)])
+    dimensions = {item.kind: item for item in ledger.evidence_dimensions}
+
+    assert dimensions[EvidenceKind.COMPILE].status == CompletionStatus.PASSED
+    assert dimensions[EvidenceKind.BEHAVIOR].status == CompletionStatus.PASSED
+    assert dimensions[EvidenceKind.VISUAL].status == CompletionStatus.REVISE
+
+
+def test_unity_screenshot_failure_preserves_bound_compile_and_behavior_passes() -> None:
+    unity_contract = CompletionContract(
+        target_state="Login reaches Lobby with inspectable visual evidence.",
+        quality_criteria=[
+            QualityCriterion(
+                criterion_id="Q01",
+                description="Unity compilation success",
+                evaluation_mode=EvaluationMode.DETERMINISTIC,
+                evidence_required="Unity compile output with exit code zero.",
+            ),
+            QualityCriterion(
+                criterion_id="Q91",
+                description="Login to Lobby PlayMode behavior",
+                evaluation_mode=EvaluationMode.DETERMINISTIC,
+                evidence_required="PlayMode interaction evidence for Login to Lobby.",
+            ),
+            QualityCriterion(
+                criterion_id="Q92",
+                description="Login visual screenshot integrity",
+                evaluation_mode=EvaluationMode.DETERMINISTIC,
+                evidence_required="A validated rendered PNG screenshot.",
+            ),
+        ],
+    )
+    commands = [
+        DevelopmentCommandResult(
+            command_id="unity_compile", argv=["Unity"], exit_code=0,
+            duration_seconds=1, output_tail="compiled",
+        ),
+        DevelopmentCommandResult(
+            command_id="unity_playmode_visual_tests", argv=["Unity"], exit_code=0,
+            duration_seconds=1, output_tail="login reached lobby",
+        ),
+    ]
+    receipt = DevelopmentVerificationReceipt(
+        repository_name="julpae", base_head_sha="a" * 40,
+        candidate_sha256="b" * 64, commands=commands,
+        evidence_bindings=[
+            create_evidence_binding(
+                criterion_id=None, kind=EvidenceKind.COMPILE,
+                status=EvidenceStatus.PASSED, summary="Unity compile exited 0.",
+                command_id="unity_compile",
+            ),
+            create_evidence_binding(
+                criterion_id=None, kind=EvidenceKind.BEHAVIOR,
+                status=EvidenceStatus.PASSED, summary="Login reached Lobby in PlayMode.",
+                command_id="unity_playmode_visual_tests",
+            ),
+        ],
+    )
+
+    report = ExecutionPipeline._development_failure_report(
+        "Unity visual scenario login_to_lobby screenshot is unavailable",
+        unity_contract,
+        receipt,
+    )
+    ledger = build_completion_ledger(unity_contract, [(3, report)])
+    states = {item.criterion_id: item.status for item in ledger.criteria}
+
+    assert states["Q01"] == CompletionStatus.PASSED
+    assert states["Q91"] == CompletionStatus.PASSED
+    assert states["Q92"] == CompletionStatus.PENDING
+    dimensions = {item.kind: item.status for item in ledger.evidence_dimensions}
+    assert dimensions[EvidenceKind.COMPILE] == CompletionStatus.PASSED
+    assert dimensions[EvidenceKind.BEHAVIOR] == CompletionStatus.PASSED
+    assert dimensions[EvidenceKind.VISUAL] == CompletionStatus.REVISE

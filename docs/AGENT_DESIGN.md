@@ -73,6 +73,12 @@ APT-3는 MBTI처럼 축의 수를 맞추기 위한 성격 분류가 아니다. O
 
 APT-3는 권한이 아니며 상위 규칙을 재해석하거나 위반할 근거가 될 수 없다.
 
+에이전트 사이의 수정 인계는 APT-3나 자유 문장에 맡기지 않는다. 공통
+`WorkHandoffEnvelopeV1`에 송신자·수신자·마일스톤·완료기준·보존할 PASS·수정
+범위·입력 해시·기대 출력 스키마를 결속하고, 수신자는 `HandoffReceipt`로 동일
+digest와 범위를 인수한다. 자세한 계약은
+[WORK_HANDOFF_PROTOCOL.md](WORK_HANDOFF_PROTOCOL.md)를 따른다.
+
 ### 4.2 OneBrief 역할별 유형
 
 | 역할 | 유형 | 배정 이유 |

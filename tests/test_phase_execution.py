@@ -12,6 +12,7 @@ from onebrief.phase_execution import (
     path_allowed_for_phase,
     phase_for_stage,
 )
+from onebrief.handoff_protocol import FailureCode
 from onebrief.schemas import (
     BudgetEnvelope,
     BudgetStatus,
@@ -179,6 +180,35 @@ def test_invalid_unity_visual_manifest_stays_in_evidence_construction() -> None:
     assert decision.failure_owner == FailureOwner.EVIDENCE
     assert decision.next_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
     assert decision.model_repair_allowed is True
+
+
+def test_unavailable_unity_screenshot_is_typed_and_evidence_owned() -> None:
+    decision = decide_repair_phase(
+        context="development_verification",
+        failure_text="Unity visual scenario login_to_lobby screenshot is unavailable",
+        round_number=4,
+        affected_paths=["Assets/Tests/PlayMode/OneBrief.Visual.LoginTest.cs"],
+    )
+
+    assert decision.failure_code == FailureCode.UNITY_SCREENSHOT_NOT_MATERIALIZED
+    assert decision.failure_owner == FailureOwner.EVIDENCE
+    assert decision.next_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
+
+
+def test_frozen_julpae_m01_failure_routes_to_evidence() -> None:
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "julpae_m01_screenshot_failure.json")
+        .read_text(encoding="utf-8")
+    )
+    decision = decide_repair_phase(
+        context="development_verification",
+        failure_text=fixture["failure_text"],
+        round_number=4,
+    )
+
+    assert decision.failure_code.value == fixture["expected_failure_code"]
+    assert decision.failure_owner.value == fixture["expected_failure_owner"]
+    assert decision.next_phase.value == fixture["expected_next_phase"]
 
 
 def test_unity_visual_contract_remains_evidence_owned_with_mixed_candidate() -> None:

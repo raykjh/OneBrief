@@ -658,6 +658,8 @@ def test_unity_visual_preflight_requires_discoverable_test_and_evidence(tmp_path
         "var glyphOk = font.HasCharacter('A'); "
         "var path = \"onebrief-evidence/runtime-evidence.json\"; "
         "var png = \"onebrief-evidence/ja.png\"; "
+        "var capture = OneBriefAtomicScreenshot.Capture(png, camera, 1920, 1080, canvases); "
+        "OneBriefAtomicScreenshot.WriteManifestAtomically(json, capture); "
         "var schema = \"onebrief-unity-visual-evidence-v1\"; "
         "var scenarios = \"scenarios scenario_id observed_state interaction "
         "assertion_count viewport_width viewport_height screenshot_path\"; } }\n",

@@ -2703,8 +2703,8 @@ def test_unity_png_failure_explains_direct_test_evidence_contract() -> None:
 
     instruction = report.revision_instructions[0]
     assert "OneBrief.Visual" in instruction
-    assert "RenderTexture" in instruction
-    assert "EncodeToPNG" in instruction
+    assert "OneBriefAtomicScreenshot.Capture" in instruction
+    assert "WriteManifestAtomically" in instruction
 
 
 def test_related_unity_contract_failures_remain_one_coherent_repair_scope() -> None:

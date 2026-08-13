@@ -28,9 +28,16 @@ from onebrief.development_toolpack import (
     CommandRunner,
     DevelopmentCommandResult,
     DevelopmentRun,
+    DevelopmentVerificationReceipt,
     RepositoryContextFile,
     RepositoryInspection,
     _default_runner,
+)
+from onebrief.handoff_protocol import (
+    ArtifactReference,
+    EvidenceKind,
+    EvidenceStatus,
+    create_evidence_binding,
 )
 from onebrief.unity_runtime_evidence import (
     requested_ui_surfaces,
@@ -40,6 +47,10 @@ from onebrief.unity_runtime_evidence import (
 from onebrief.unity_layout_diagnostics import (
     install_unity_layout_diagnostic_source,
     package_unity_layout_diagnostics,
+)
+from onebrief.unity_atomic_evidence import (
+    HELPER_MARKER,
+    install_atomic_unity_evidence_helper,
 )
 from onebrief.web_runtime_evidence import (
     observe_web_application,
@@ -1905,6 +1916,13 @@ class ApprovedProjectDevelopmentToolPack:
                 )
             if ".png" not in combined and "capturescreenshot" not in combined:
                 issues.append("the OneBrief.Visual test must capture PNG runtime evidence")
+            if HELPER_MARKER.casefold() not in structural or (
+                "onebriefatomicscreenshot.writemanifestatomically" not in structural
+            ):
+                issues.append(
+                    "the OneBrief.Visual test must use the trusted OneBriefAtomicScreenshot.Capture and "
+                    "WriteManifestAtomically helpers so PNG bytes are durable before the manifest is published"
+                )
             if "screencapture.capturescreenshot" in structural and not all(
                 token in structural for token in ("readpixels", "encodetopng", "file.writeallbytes")
             ):
@@ -2428,6 +2446,7 @@ class ApprovedProjectDevelopmentToolPack:
                 self._git("diff", "--check", "--", *approved_paths, cwd=clone)
             except RuntimeError as exc:
                 hygiene_failure = exc
+            install_atomic_unity_evidence_helper(clone)
             visual_issues = self._unity_visual_contract_issues(
                 profile, clone, goal_text, approved_paths
             )
@@ -2458,6 +2477,40 @@ class ApprovedProjectDevelopmentToolPack:
                 self.runner(command_id, argv, clone, timeout)
                 for command_id, argv, timeout in commands
             ]
+            command_bindings = []
+            for result in results:
+                normalized_id = result.command_id.casefold()
+                if "compile" in normalized_id or "build" in normalized_id:
+                    command_bindings.append(create_evidence_binding(
+                        criterion_id=None,
+                        kind=EvidenceKind.COMPILE,
+                        status=EvidenceStatus.PASSED,
+                        summary=f"{result.command_id} completed with exit code {result.exit_code}.",
+                        command_id=result.command_id,
+                    ))
+                if any(marker in normalized_id for marker in (
+                    "playmode", "interaction", "e2e", "http", "runtime",
+                )):
+                    command_bindings.append(create_evidence_binding(
+                        criterion_id=None,
+                        kind=EvidenceKind.BEHAVIOR,
+                        status=EvidenceStatus.PASSED,
+                        summary=f"{result.command_id} completed with exit code {result.exit_code}.",
+                        command_id=result.command_id,
+                    ))
+            command_receipt = DevelopmentVerificationReceipt(
+                repository_name=self.root.name,
+                base_head_sha=head,
+                candidate_sha256=candidate_sha256,
+                commands=results,
+                evidence_bindings=command_bindings,
+            )
+            receipt_path = output_dir / "verification_commands.json"
+            receipt_temp = receipt_path.with_suffix(f".{uuid4().hex}.tmp")
+            receipt_temp.write_text(
+                command_receipt.model_dump_json(indent=2) + "\n", encoding="utf-8"
+            )
+            os.replace(receipt_temp, receipt_path)
             evidence_paths: list[str] = []
             if any(
                 item.command_id == AdapterId.UNITY_LAYOUT_DIAGNOSTICS.value
@@ -2537,6 +2590,30 @@ class ApprovedProjectDevelopmentToolPack:
                     evidence_dir,
                     goal_text,
                 )
+                manifest_path = evidence_dir / "runtime-evidence.json"
+                manifest_artifact = ArtifactReference(
+                    artifact_type="unity_visual_evidence_manifest",
+                    path=manifest_path.relative_to(output_dir.parent).as_posix(),
+                    sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                )
+                command_receipt = command_receipt.model_copy(update={
+                    "evidence_bindings": [
+                        *command_receipt.evidence_bindings,
+                        create_evidence_binding(
+                            criterion_id=None,
+                            kind=EvidenceKind.VISUAL,
+                            status=EvidenceStatus.PASSED,
+                            summary="Unity runtime manifest and every referenced PNG passed integrity checks.",
+                            artifact=manifest_artifact,
+                            command_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS.value,
+                        ),
+                    ]
+                })
+                receipt_temp = receipt_path.with_suffix(f".{uuid4().hex}.tmp")
+                receipt_temp.write_text(
+                    command_receipt.model_dump_json(indent=2) + "\n", encoding="utf-8"
+                )
+                os.replace(receipt_temp, receipt_path)
                 evidence_paths.append(evidence_dir.relative_to(output_dir.parent).as_posix())
             patch = self._git("diff", "--binary", "--no-ext-diff", "--", *approved_paths, cwd=clone)
             if not patch.strip():

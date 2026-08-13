@@ -97,6 +97,13 @@ than allowing an agent to invent one.
 Each handoff is a Pydantic schema rather than chat prose. Every stage and revision is
 written as a checkpoint so a crash or budget block leaves inspectable state.
 
+Corrective work also uses the common `WorkHandoffEnvelopeV1` and
+`HandoffReceipt` defined in [WORK_HANDOFF_PROTOCOL.md](WORK_HANDOFF_PROTOCOL.md).
+The envelope binds the exact sender, recipient, milestone, source revision,
+criteria, edit authority, evidence, and expected response. A typed
+`FailureObservationV2` chooses the repair owner; downstream agents do not infer
+ownership by re-reading a verifier's English error sentence.
+
 ## Outputs
 
 - `analysis.json`
