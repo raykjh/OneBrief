@@ -671,6 +671,14 @@ def create_bounded_repair_resume(
     source_work = source_job / "work"
     child_work = child / "work"
     child_work.mkdir(parents=True, exist_ok=True)
+    for durable_milestone_dir in ("milestone_state", "milestones"):
+        source = source_work / durable_milestone_dir
+        if source.is_dir():
+            shutil.copytree(
+                source,
+                child_work / durable_milestone_dir,
+                dirs_exist_ok=True,
+            )
     source_failure_path = source_work / "development_verification_failure.txt"
     source_failure_text = (
         source_failure_path.read_text(encoding="utf-8", errors="replace")

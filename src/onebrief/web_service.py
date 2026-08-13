@@ -57,6 +57,7 @@ from onebrief.governance import (
     parse_time,
 )
 from onebrief.jobs import JobStore, create_job, run_job
+from onebrief.milestones import MilestonePlan
 from onebrief.producer import estimate_budget
 from onebrief.project_catalog import ProjectCatalog, RegisteredProject
 from onebrief.project_import import (
@@ -1787,6 +1788,67 @@ async def session_criteria(
         ledger["job_status"] = record.status.value
         ledger["current_stage"] = record.current_stage
         return ledger
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"Service operation failed: {type(exc).__name__}") from exc
+
+
+@app.get("/api/sessions/{session_id}/milestones")
+async def session_milestones(
+    session_id: str,
+    store: WebSessionStore = Depends(get_session_store),
+) -> dict[str, object]:
+    """Return user-visible vertical slices and their durable checkpoint state."""
+    try:
+        link = store.read_execution(session_id)
+        repository = (
+            LocalJobRepository(Path(link.job_uri))
+            if link.operation_name == "local" else GCSJobStore(link.job_uri)
+        )
+        record = await asyncio.to_thread(repository.read_job)
+        try:
+            plan = await asyncio.to_thread(
+                repository.read_json, "work/milestone_state/milestone_plan.json"
+            )
+        except FileNotFoundError:
+            return {
+                "session_id": session_id,
+                "job_status": record.status.value,
+                "milestones": [],
+                "message": "Milestone planning is not required or is still being prepared.",
+            }
+        milestones = []
+        for milestone in plan.get("milestones", []):
+            milestone_id = str(milestone.get("milestone_id", ""))
+            try:
+                pointer = await asyncio.to_thread(
+                    repository.read_json,
+                    f"work/milestone_state/current/{milestone_id}.json",
+                )
+            except FileNotFoundError:
+                pointer = {"state": "pending", "checkpoint_id": None}
+            contract = milestone.get("contract", {})
+            milestones.append({
+                "milestone_id": milestone_id,
+                "title": milestone.get("title", milestone_id),
+                "outcome": milestone.get("outcome", ""),
+                "kind": milestone.get("kind", "implementation"),
+                "dependencies": milestone.get("dependencies", []),
+                "verification_scope": contract.get("verification_scope", "targeted"),
+                "primary_criterion_ids": contract.get("primary_criterion_ids", []),
+                "state": pointer.get("state", "pending"),
+                "checkpoint_id": pointer.get("checkpoint_id"),
+            })
+        return {
+            "session_id": session_id,
+            "job_status": record.status.value,
+            "plan_sha256": MilestonePlan.model_validate(plan).sha256,
+            "minimum_cost_usd": plan.get("minimum_cost_usd"),
+            "maximum_cost_usd": plan.get("maximum_cost_usd"),
+            "milestones": milestones,
+            "message": record.message,
+        }
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
     except Exception as exc:

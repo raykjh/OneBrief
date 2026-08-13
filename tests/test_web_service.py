@@ -7,6 +7,7 @@ import pytest
 from onebrief.producer import estimate_budget
 from onebrief.preparation import build_preparation_plan
 from onebrief.jobs import JobRecord, JobStatus
+from onebrief.milestones import build_milestone_plan
 from onebrief.cloud_jobs import CloudExecutionReceipt
 from onebrief.project_catalog import RegisteredProject
 from onebrief.schemas import (
@@ -151,6 +152,8 @@ def test_home_serves_the_real_workflow() -> None:
     assert 'id="criteriaList"' in response.text
     assert 'id="criteriaScore"' in response.text
     assert '"/criteria"' in response.text
+    assert 'id="milestoneList"' in response.text
+    assert '"/milestones"' in response.text
     assert "계약 기준 " in response.text
     assert "최종 미완료" in response.text
     assert "에이전트 실행 흐름" in response.text
@@ -934,6 +937,50 @@ def test_criteria_endpoint_returns_completion_ledger(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["criteria"][0]["criterion_id"] == "Q01"
     assert response.json()["required_passed"] == 1
+
+
+def test_milestone_endpoint_returns_checkpoint_progress(monkeypatch) -> None:
+    store = InMemoryWebSessionStore()
+    store.save_execution(ExecutionLink(
+        session_id="milestones-1",
+        job_uri="gs://test/jobs/job-milestones",
+        operation_name="operations/milestones",
+        created_at="2026-08-13T00:00:00+00:00",
+    ))
+    plan = build_milestone_plan(
+        project_id="sample-project",
+        goal="Improve the project.",
+        requirements=requirements(True),
+        source_revision="a" * 40,
+        minimum_cost_usd=0.2,
+        maximum_cost_usd=2.0,
+    )
+
+    class FakeRepository:
+        def read_job(self):
+            return SimpleNamespace(
+                status=SimpleNamespace(value="running"),
+                current_stage="milestone",
+                message="Executing milestone.",
+            )
+
+        def read_json(self, relative):
+            if relative == "work/milestone_state/milestone_plan.json":
+                return plan.model_dump(mode="json")
+            if relative == "work/milestone_state/current/M00.json":
+                return {"state": "passed", "checkpoint_id": "b" * 64}
+            raise FileNotFoundError(relative)
+
+    monkeypatch.setattr("onebrief.web_service.GCSJobStore", lambda _uri: FakeRepository())
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).get("/api/sessions/milestones-1/milestones")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["milestones"][0]["state"] == "passed"
+    assert response.json()["milestones"][-1]["verification_scope"] == "full_regression"
 
 
 def test_graph_endpoint_reports_team_planning_before_artifacts_exist(monkeypatch) -> None:

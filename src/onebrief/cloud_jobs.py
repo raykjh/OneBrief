@@ -99,13 +99,23 @@ def _safe_relative(blob_name: str, prefix: str) -> Path:
 
 
 def _local_job_files(job_dir: Path) -> list[Path]:
-    return [
-        path
-        for path in sorted(job_dir.rglob("*"))
-        if path.is_file()
-        and path.name not in {".job.lock", ".budget.lock"}
-        and ".tmp" not in path.name
-    ]
+    files: list[Path] = []
+    for path in sorted(job_dir.rglob("*")):
+        if (
+            not path.is_file()
+            or path.name in {".job.lock", ".budget.lock"}
+            or ".tmp" in path.name
+        ):
+            continue
+        relative = path.relative_to(job_dir)
+        if (
+            len(relative.parts) >= 2
+            and relative.parts[0] == "work"
+            and relative.parts[1] == "milestone_workspace"
+        ):
+            continue
+        files.append(path)
+    return files
 
 
 class GCSJobStore:
@@ -275,6 +285,31 @@ class GCSJobStore:
                 continue
             digest = hashlib.sha256(target.read_bytes()).hexdigest()
             copied.append({"source": source_name, "target": target_name, "sha256": digest})
+        # Milestone receipts and their bounded candidate/evidence artifacts are
+        # durable execution state, not arbitrary model memory. They are restored
+        # under fixed prefixes and validated again by MilestoneStore before use.
+        for prefix in (("milestone_state", "milestones") if hasattr(self.client, "list_blobs") else ()):
+            blob_prefix = self._name(f"work/{prefix}/")
+            for blob in self.client.list_blobs(self.bucket, prefix=blob_prefix):
+                relative_name = blob.name[len(self._name("work/")) :]
+                relative = PurePosixPath(relative_name)
+                if (
+                    not relative.parts
+                    or relative.parts[0] != prefix
+                    or any(part in {"", ".", ".."} for part in relative.parts)
+                    or ".tmp" in relative.name
+                ):
+                    raise ValueError("unsafe reusable milestone artifact")
+                target = (destination_work / Path(*relative.parts)).resolve()
+                if not target.is_relative_to(destination_work):
+                    raise ValueError("unsafe reusable milestone artifact destination")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                blob.download_to_filename(str(target))
+                copied.append({
+                    "source": relative.as_posix(),
+                    "target": relative.as_posix(),
+                    "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+                })
         # Narrative revisions are checkpoints from one prior attempt, not
         # prepaid future turns in the child. Restore only the most progressed
         # candidate as round zero so every later round is a newly billed repair

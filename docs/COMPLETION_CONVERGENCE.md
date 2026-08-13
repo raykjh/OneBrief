@@ -104,6 +104,32 @@ is preserved as `development_pending_promotion.json`. A continuation first re-pr
 that exact proposal through the current path, hash, and anchor catalog. It buys no new
 maker call unless deterministic re-promotion still cannot bind safely.
 
+### Medium and large work converges through dependency-bound milestones
+
+OneBrief does not force a medium software goal through one all-or-nothing candidate.
+After authorization, a deterministic project-owner tool maps the existing `Qnn`
+criteria into a `MilestonePlan` of independently executable vertical slices. This plan
+cannot invent scope or weaken a criterion:
+
+- every overall criterion has exactly one primary milestone owner;
+- each later slice revalidates the passed criteria on which it depends;
+- every PASS receipt binds the milestone contract, source revisions, dependency
+  checkpoint IDs, candidate digest, and evidence digests;
+- checkpoint receipts are append-only and idempotent;
+- changing an upstream candidate invalidates only descendant checkpoints;
+- the final integration milestone must include every overall criterion and uses full
+  regression rather than a targeted check.
+
+Functional milestones advance only an isolated integration repository. That repository
+is transient and is neither shipped nor uploaded. On continuation, OneBrief reconstructs
+it from the original approved snapshot and the bounded, hash-checked milestone change
+sets. The final accumulated candidate is then tested once more against the clean
+baseline, preventing incremental drift from being mislabeled as completion.
+
+The user still approves one hard minimum-to-maximum project envelope. Milestone weights
+are internal planning allocations, not independent approvals; the global circuit breaker
+remains authoritative and the reserve is available only inside that envelope.
+
 There is no silent authority expansion. `NEEDS_INFORMATION`, `NEEDS_BUDGET`, and
 `NEEDS_AUTHORIZATION` are structured returns to stage 1. The user approves an amended
 plan; OneBrief then resumes from persisted evidence instead of pretending the first run

@@ -264,12 +264,20 @@ def test_project_development_job_embeds_snapshot_in_immutable_inputs(
     private_git = job / "work" / "project_snapshot" / "repository" / ".git" / "config"
     private_git.parent.mkdir(parents=True)
     private_git.write_text("synthetic git metadata", encoding="utf-8")
+    milestone_private = job / "work" / "milestone_workspace" / "repository" / ".git" / "config"
+    milestone_private.parent.mkdir(parents=True)
+    milestone_private.write_text("ephemeral milestone clone", encoding="utf-8")
+    milestone_receipt = job / "work" / "milestone_state" / "receipt.json"
+    milestone_receipt.parent.mkdir(parents=True)
+    milestone_receipt.write_text('{"status":"passed"}', encoding="utf-8")
     evidence = job / "work" / "project_snapshot" / "restore_evidence.json"
     evidence.write_text('{"status":"verified_and_approved"}', encoding="utf-8")
     package, _digest = build_result_package(job, status=JobStatus.COMPLETE, attempt=1)
 
     assert not (package / "artifacts" / "project_snapshot" / "repository").exists()
+    assert not (package / "artifacts" / "milestone_workspace" / "repository").exists()
     assert (package / "artifacts" / "project_snapshot" / "restore_evidence.json").is_file()
+    assert (package / "artifacts" / "milestone_state" / "receipt.json").is_file()
 
 
 def test_local_project_job_uses_exact_provenance_without_copying_large_assets(

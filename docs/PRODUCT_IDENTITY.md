@@ -38,6 +38,12 @@ completion.
    later existing-project improvement rather than an untestable first-run objective.
 6. The loop continues within the approved budget and policy: make, verify, diagnose,
    return to owner, revise, and reverify.
+   For a multi-surface or otherwise medium/large deliverable, the project owner first
+   decomposes the completion contract into independently verifiable vertical
+   milestones. Passing milestones are immutable checkpoints; a changed upstream slice
+   invalidates only its dependency descendants, while the final milestone always
+   replays the accumulated candidate against the clean approved baseline and runs the
+   full completion contract.
 7. Before execution, OneBrief calls the user only for missing authoritative information,
    insufficient budget, or a decision beyond agent authority. After a completed result,
    user feedback starts an explicit existing-project improvement run.
@@ -100,13 +106,19 @@ completion.
 ### Stage 2 — converge and deliver
 
 1. OneBrief selects the team and models inside the approved plan.
-2. The accountable maker produces the artifact.
-3. Deterministic checks and an independent verifier accept or reject each criterion.
-4. Failed work returns to the same maker with evidence until all required criteria pass.
+2. For medium and large work, the project owner creates a `MilestonePlan` from the
+   approved criteria. Every criterion has one primary milestone owner; later milestones
+   include already passed dependencies as regression requirements.
+3. The accountable maker produces one independently executable vertical slice.
+4. Deterministic checks and an independent verifier accept or reject the milestone
+   contract. A PASS writes an immutable, digest-bound checkpoint.
+5. Failed work returns to the same maker with evidence until all required criteria pass.
    Each return is a criterion-scoped repair plan: passing criteria are frozen as
    regression constraints, the failed slice becomes the next bounded task, and a
    repeated failure is decomposed instead of receiving blind additional retries.
-5. OneBrief safely applies or packages only the proven result.
+6. The final integration milestone applies the accumulated candidate to a clean copy of
+   the exact approved source revision, reruns the full contract, and safely applies or
+   packages only that proven result.
 
 Stage 2 may never silently widen stage 1. Missing authoritative information,
 insufficient budget, or a new permission returns an amendment request to stage 1. The

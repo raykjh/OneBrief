@@ -27,6 +27,13 @@ from onebrief.model_policy import (
     evaluate_model_budget,
     persist_model_approval,
 )
+from onebrief.milestones import (
+    MilestonePlan,
+    build_milestone_plan,
+    canonical_sha256,
+    execute_milestone_plan,
+    prepare_milestone_workspace,
+)
 from onebrief.project_catalog import ProjectCatalog
 from onebrief.project_closure import ProjectClosureManager
 from onebrief.project_continuity import ProjectContinuityStore
@@ -301,6 +308,8 @@ def build_result_package(
                         and relative.parts[1] in {"repository", "registry"}
                     ):
                         continue
+                    if relative.parts and relative.parts[0] == "milestone_workspace":
+                        continue
                     _copy_if_present(source, temp_dir / "artifacts" / relative)
         for name in (
             "approval.json",
@@ -441,23 +450,87 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
             policy=model_policy,
         )
         policy_gateway = ModelPolicyGateway(raw_gateway, model_policy)
-        pipeline = ExecutionPipeline(
-            run_dir,
-            gateway=policy_gateway,
-            stage_models={stage: model.value for stage, model in model_policy.stage_models.items()},
-            stage_skills={
-                stage: list(next(member for member in plan.members if member.instance_id == owner_id).packs.skill_packs)
-                for stage, owner_id in plan.stage_owners.items()
-            },
-            execution_graph=execution_graph,
-            project_registry_root=project_registry_root,
+        stage_models = {
+            stage: model.value for stage, model in model_policy.stage_models.items()
+        }
+        stage_skills = {
+            stage: list(
+                next(
+                    member for member in plan.members
+                    if member.instance_id == owner_id
+                ).packs.skill_packs
+            )
+            for stage, owner_id in plan.stage_owners.items()
+        }
+
+        def pipeline_for(registry_root: Path | None) -> ExecutionPipeline:
+            return ExecutionPipeline(
+                run_dir,
+                gateway=policy_gateway,
+                stage_models=stage_models,
+                stage_skills=stage_skills,
+                execution_graph=execution_graph,
+                project_registry_root=registry_root,
+            )
+
+        persisted_milestone_plan = (
+            job_dir / "work" / "milestone_state" / "milestone_plan.json"
         )
-        checkpoint = pipeline.run(
-            intake=active_intake,
-            requirements=requirements,
-            sources=sources,
-            output_dir=job_dir / "work",
+        use_milestones = bool(
+            active_intake.existing_project_id
+            and ToolPackId.PROJECT_DEVELOPMENT in active_intake.toolpack_ids
+            and project_registry_root is not None
+            and requirements.completion_contract is not None
+            and len(requirements.completion_contract.quality_criteria) >= 4
+            and (
+                not continuation_manifest.is_file()
+                or persisted_milestone_plan.is_file()
+            )
         )
+        if use_milestones:
+            workspace = prepare_milestone_workspace(
+                work_dir=job_dir / "work",
+                project_id=active_intake.existing_project_id,
+                baseline_registry_root=project_registry_root,
+            )
+            milestone_plan = (
+                MilestonePlan.model_validate_json(
+                    persisted_milestone_plan.read_text(encoding="utf-8")
+                )
+                if persisted_milestone_plan.is_file()
+                else build_milestone_plan(
+                    project_id=active_intake.existing_project_id,
+                    goal=active_intake.goal,
+                    requirements=requirements,
+                    source_revision=workspace.source_revision,
+                    minimum_cost_usd=estimate.minimum_cost_usd,
+                    maximum_cost_usd=estimate.maximum_cost_usd,
+                )
+            )
+            if (
+                milestone_plan.goal_digest
+                != canonical_sha256({"goal": active_intake.goal})
+                or milestone_plan.completion_contract_digest
+                != canonical_sha256(requirements.completion_contract)
+                or milestone_plan.source_revision != workspace.source_revision
+            ):
+                raise RuntimeError("resumed milestone plan no longer matches its approved inputs")
+            checkpoint = execute_milestone_plan(
+                plan=milestone_plan,
+                requirements=requirements,
+                work_dir=job_dir / "work",
+                workspace=workspace,
+                pipeline_factory=pipeline_for,
+                intake=active_intake,
+                sources=sources,
+            )
+        else:
+            checkpoint = pipeline_for(project_registry_root).run(
+                intake=active_intake,
+                requirements=requirements,
+                sources=sources,
+                output_dir=job_dir / "work",
+            )
         status = _pipeline_status(checkpoint.status)
         from onebrief.evaluation import persist_execution_evaluation
 

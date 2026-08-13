@@ -53,6 +53,15 @@ stronger reasoning model. Semantic product failures may keep the same maker iden
 use an approved higher reasoning rung, but only when the repair contract identifies
 reasoning as the missing capability.
 
+Medium existing-project work adds a coordinator above this unchanged maker/verifier
+loop. `milestone_plan.json` scopes the overall contract into vertical slices. Each slice
+runs the normal deterministic execution and independent verification path, then writes
+an immutable checkpoint before the isolated integration repository can advance. The
+final slice seeds the accumulated change set into a clean approved baseline and executes
+the complete contract. Ephemeral repository clones are excluded from Cloud transport and
+result packages; only bounded change sets, evidence, checkpoint receipts, and the final
+verified result are durable.
+
 Software execution now has two modification phases. The initial maker owns product
 implementation. After trusted verification, `phase_decision_rN.json` classifies the
 failure and routes the same persistent maker to either a product-repair or
@@ -94,6 +103,10 @@ written as a checkpoint so a crash or budget block leaves inspectable state.
 - audit `phase_budget_policy.json` and `phase_attempts.json`
 - `execution_checkpoint.json`
 - `adk_convergence_trace.json`
+- `milestone_state/milestone_plan.json`
+- `milestone_state/receipts/<checkpoint-sha256>.json`
+- `milestone_state/current/Mnn.json`
+- `milestones/Mnn/` scoped execution and evidence artifacts
 
 ## Commands
 

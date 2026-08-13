@@ -387,6 +387,12 @@ def test_rejected_candidate_resumes_without_repeating_completed_context(tmp_path
         "source_actual_usd": 0.002,
         "aggregate_approval_ceiling_usd": 0.012,
     }), encoding="utf-8")
+    milestone_receipt = work / "milestone_state" / "receipts" / "checkpoint.json"
+    milestone_receipt.parent.mkdir(parents=True)
+    milestone_receipt.write_text('{"verdict":"PASS"}', encoding="utf-8")
+    milestone_candidate = work / "milestones" / "M01" / "code_change_set.json"
+    milestone_candidate.parent.mkdir(parents=True)
+    milestone_candidate.write_text('{"candidate":"slice"}', encoding="utf-8")
 
     assert can_attempt_bounded_repair_resume(source) is True
     child, plan = create_bounded_repair_resume(source, tmp_path / "jobs")
@@ -396,6 +402,8 @@ def test_rejected_candidate_resumes_without_repeating_completed_context(tmp_path
     assert (child / "work" / "development_verification_failure.txt").is_file()
     assert (child / "work" / "convergence_ledger.json").is_file()
     assert (child / "work" / "repair_contract.json").is_file()
+    assert (child / "work" / "milestone_state" / "receipts" / "checkpoint.json").is_file()
+    assert (child / "work" / "milestones" / "M01" / "code_change_set.json").is_file()
     marker = json.loads(
         (child / "work" / "reverify_existing_candidate.json").read_text("utf-8")
     )
