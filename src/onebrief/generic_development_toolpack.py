@@ -203,16 +203,34 @@ def _unity_literal_scenarios(source: str) -> list[tuple[str, str, int, int]]:
     # their transport syntax differs.
     direct_pattern = re.compile(
         r'\\?"observed_state\\?"\s*:\s*\\?"([^"\\]+)\\?"'
-        r'.{0,500}?'
-        r'\\?"interaction\\?"\s*:\s*\\?"([^"\\]+)\\?"',
+        r'.{0,900}?'
+        r'\\?"interaction\\?"\s*:\s*\\?"([^"\\]+)\\?"'
+        r'.{0,900}?'
+        r'\\?"screenshot_path\\?"\s*:\s*\\?"([^"\\]+)\\?"',
         re.IGNORECASE | re.DOTALL,
     )
     direct = list(direct_pattern.finditer(source))
     if direct and not results:
         previous_end = 0
         for match in direct:
-            results.append((match.group(1), match.group(2), previous_end, match.start()))
-            previous_end = match.end()
+            screenshot_path = match.group(3)
+            capture_pattern = re.compile(
+                r"\b[A-Za-z_][A-Za-z0-9_]*(?:capture|screenshot)[A-Za-z0-9_]*"
+                r"\s*\(\s*\"" + re.escape(screenshot_path) + r"\"",
+                re.IGNORECASE,
+            )
+            captures = [
+                item for item in capture_pattern.finditer(source, previous_end, match.start())
+            ]
+            if captures:
+                capture = captures[-1]
+                results.append((match.group(1), match.group(2), previous_end, capture.start()))
+                previous_end = capture.end()
+            else:
+                # Keep the conservative legacy boundary when a direct JSON
+                # claim cannot be tied to the real capture that produced it.
+                results.append((match.group(1), match.group(2), previous_end, match.start()))
+                previous_end = match.end()
     return results
 
 
@@ -1724,18 +1742,34 @@ class ApprovedProjectDevelopmentToolPack:
                         "observed destinations; a hard-coded assertion_count is not proof"
                     )
                 action_markers = (
-                    "click", "submit", "start", "login", "setting", "open", "back", "return",
+                    "click", "press", "tap", "select", "submit", "start", "login", "setting",
+                    "open", "close", "back", "return",
                     "선택", "열기", "뒤로", "복귀", "로그인", "설정",
                 )
                 action_tokens = (
                     ".onclick.invoke", "executeevents.execute", "pointerclickevent", "submitevent",
                 )
                 for state, interaction, start, end in literal_scenarios:
-                    if not any(marker in interaction.casefold() for marker in action_markers):
+                    lowered_interaction = interaction.casefold()
+                    if not any(marker in lowered_interaction for marker in action_markers):
+                        continue
+                    if (
+                        "load" in lowered_interaction
+                        and not any(marker in lowered_interaction for marker in (
+                            "click", "press", "tap", "select", "submit", "open", "close",
+                        ))
+                    ):
                         continue
                     segment = combined_source[start:end]
                     segment_structural = _csharp_code_only(segment).casefold()
-                    if not any(token in segment_structural for token in action_tokens):
+                    dropdown_assignment = re.search(
+                        r"\b[a-z_][a-z0-9_]*dropdown[a-z0-9_]*\s*\.\s*value\s*=",
+                        segment_structural,
+                    )
+                    if (
+                        not any(token in segment_structural for token in action_tokens)
+                        and dropdown_assignment is None
+                    ):
                         issues.append(
                             f"runtime evidence labels {state}/{interaction} as a UI action but no real control "
                             "was invoked before that evidence row; do not relabel a direct scene load as a click"

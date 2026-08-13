@@ -1350,6 +1350,52 @@ def test_unity_visual_preflight_rejects_relabelled_direct_scene_load(tmp_path: P
     assert any("hard-coded assertion_count is not proof" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_binds_batched_json_rows_to_capture_actions(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-batched-json-evidence"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'SceneManager.LoadScene("Login"); Assert.IsNotNull(startButton); '
+        'var login = CaptureScreenshot("onebrief-evidence/login.png"); '
+        'ExecuteEvents.Execute(startButton, eventData, ExecuteEvents.pointerClickHandler); '
+        'var lobby = CaptureScreenshot("onebrief-evidence/lobby.png"); '
+        'Assert.IsNotNull(settingsButton); '
+        'ExecuteEvents.Execute(settingsButton, eventData, ExecuteEvents.pointerClickHandler); '
+        'var settings = CaptureScreenshot("onebrief-evidence/settings.png"); '
+        'var json = "{\\\"schema_version\\\":\\\"onebrief-unity-visual-evidence-v1\\\",'
+        '\\\"scenarios\\\":[{\\\"observed_state\\\":\\\"Login screen\\\",'
+        '\\\"interaction\\\":\\\"Load LoginScene\\\",\\\"assertion_count\\\":1,'
+        '\\\"viewport_width\\\":64,\\\"viewport_height\\\":32,'
+        '\\\"screenshot_path\\\":\\\"onebrief-evidence/login.png\\\"},'
+        '{\\\"observed_state\\\":\\\"Lobby screen\\\",'
+        '\\\"interaction\\\":\\\"Click Start button\\\",\\\"assertion_count\\\":1,'
+        '\\\"viewport_width\\\":64,\\\"viewport_height\\\":32,'
+        '\\\"screenshot_path\\\":\\\"onebrief-evidence/lobby.png\\\"},'
+        '{\\\"observed_state\\\":\\\"Settings popup\\\",'
+        '\\\"interaction\\\":\\\"Click Settings button\\\",\\\"assertion_count\\\":1,'
+        '\\\"viewport_width\\\":64,\\\"viewport_height\\\":32,'
+        '\\\"screenshot_path\\\":\\\"onebrief-evidence/settings.png\\\"}]}"; } }',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile, clone, "Modernize login, lobby, and settings UI."
+    )
+
+    assert not any("do not relabel a direct scene load as a click" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_requires_ordered_return_scenario(tmp_path: Path) -> None:
     _root, registry = _approved_node_project(tmp_path)
     pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
