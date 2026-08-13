@@ -472,7 +472,9 @@ def test_same_adk_maker_keeps_escalated_rung_until_boundary_passes() -> None:
                 _report(Verdict.REVISE),
                 DraftArtifact(title="Pro repair", body_markdown="First reasoned repair preserving the verified context while addressing the active boundary.", cited_finding_ids=["F01"], drafting_decisions=[]).model_dump(mode="json"),
                 _report(Verdict.REVISE),
-                DraftArtifact(title="Continued", body_markdown="Second reasoned repair remains on the escalated rung until independent verification passes.", cited_finding_ids=["F01"], drafting_decisions=[]).model_dump(mode="json"),
+                DraftArtifact(title="Continued", body_markdown="Second reasoned repair remains on the escalated rung while independent verification continues.", cited_finding_ids=["F01"], drafting_decisions=[]).model_dump(mode="json"),
+                _report(Verdict.REVISE),
+                DraftArtifact(title="Final", body_markdown="Third reasoned repair remains on the escalated rung until independent verification passes.", cited_finding_ids=["F01"], drafting_decisions=[]).model_dump(mode="json"),
                 _report(Verdict.PASS),
             ]
 
@@ -512,6 +514,7 @@ def test_same_adk_maker_keeps_escalated_rung_until_boundary_passes() -> None:
     state, _trace = asyncio.run(run_convergence_agent(agent, {"goal": "Finish it."}))
 
     assert gateway.calls[4][1] == "pro-maker-model"
+    assert gateway.calls[6][1] == "pro-maker-model"
     assert state[MAKER_MODEL_BINDING_STATE_KEY]["sticky_escalation"] is True
 
 

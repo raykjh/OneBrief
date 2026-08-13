@@ -211,7 +211,10 @@ class AdkConvergenceAgent(BaseAgent):
                         )
                         if (
                             isinstance(previous_binding, dict)
-                            and bool(previous_decision.get("escalated"))
+                            and (
+                                bool(previous_decision.get("escalated"))
+                                or bool(previous_binding.get("sticky_escalation"))
+                            )
                             and not bool(next_decision.get("escalated"))
                         ):
                             # Escalation belongs to this persistent maker and
@@ -226,6 +229,7 @@ class AdkConvergenceAgent(BaseAgent):
                                 ),
                                 "sticky_escalation": True,
                                 "prior_binding": dict(previous_binding),
+                                "decision": previous_decision,
                             }
                         model = str(binding.get("model", "")).strip()
                         stage = str(binding.get("stage", "")).strip()
