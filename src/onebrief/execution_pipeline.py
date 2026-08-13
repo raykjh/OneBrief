@@ -72,6 +72,7 @@ from onebrief.generic_development_toolpack import (
     UnityEvidenceAssemblyRepair,
     UnityEvidenceSourceRepair,
     UnityEvidenceAnchoredSourceRepair,
+    UnityRenderTextureEvidenceRepair,
 )
 from onebrief.greenfield_web_toolpack import GreenfieldWebDevelopmentToolPack
 from onebrief.dynamic_role_agents import DynamicRoleAgent, GovernanceAgent, GovernanceDecision, RoleHandoff
@@ -317,6 +318,11 @@ def development_maker_schema_for(
         and current_candidate is not None
         and not missing_unity_evidence_bundle_paths(requested_pair, current_candidate)
     ):
+        if (
+            "screenspaceoverlay" in normalized_feedback
+            and "requested viewport width and height" in normalized_feedback
+        ):
+            return UnityRenderTextureEvidenceRepair
         return UnityEvidenceAnchoredSourceRepair
     # Dynamic schemas persist on the same LlmAgent. Explicitly restore the
     # normal bounded repair contract after the atomic pair has been created.
@@ -2168,6 +2174,17 @@ class ExecutionPipeline:
                         EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
                         SKIP_VERIFIER_STATE_KEY: True,
                     }
+            raw_dump = getattr(raw, "model_dump_json", None)
+            raw_text: str | None = None
+            if callable(raw_dump):
+                raw_text = raw_dump(indent=2)
+            elif isinstance(raw, (dict, list)):
+                raw_text = json.dumps(raw, ensure_ascii=False, indent=2)
+            if raw_text is not None and not reverify_existing:
+                self._write(
+                    output_dir / f"development_maker_raw_r{round_number}.json",
+                    raw_text,
+                )
             try:
                 delta = (
                     previous_change_set
@@ -2180,12 +2197,6 @@ class ExecutionPipeline:
                     )
                 )
             except (ValidationError, ValueError) as exc:
-                raw_dump = getattr(raw, "model_dump_json", None)
-                raw_text: str | None = None
-                if callable(raw_dump):
-                    raw_text = raw_dump(indent=2)
-                elif isinstance(raw, (dict, list)):
-                    raw_text = json.dumps(raw, ensure_ascii=False, indent=2)
                 if raw_text is not None:
                     self._write(
                         output_dir

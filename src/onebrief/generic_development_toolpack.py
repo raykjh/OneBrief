@@ -745,6 +745,73 @@ class UnityEvidenceAnchoredSourceRepair(AnchoredRangeRepairProjectCodeChangeSet)
         return self
 
 
+class UnityRenderTextureEvidenceRepair(AnchoredRangeRepairProjectCodeChangeSet):
+    """Two coherent ranges for a batch-safe Unity UI capture repair.
+
+    A responsive capture defect normally spans both the scenario call sites and
+    the capture helper.  Keeping a one-range contract forced the maker to choose
+    one half of the repair or echo the whole test file.  This contract permits
+    exactly those two bounded edits in one PlayMode source while still denying
+    product-code or cross-file changes.
+    """
+
+    changes: list[AnchoredRangeRepairProjectFileChange] = Field(
+        min_length=1,
+        max_length=2,
+        description=(
+            "One or two non-overlapping ranges in the same PlayMode C# file. "
+            "Use one range for explicit viewport capture calls and one for the "
+            "RenderTexture/Canvas helper when both regions must change together."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_render_texture_repair(self) -> "UnityRenderTextureEvidenceRepair":
+        paths = {change.path.replace("\\", "/") for change in self.changes}
+        if len(paths) != 1:
+            raise ValueError("Unity RenderTexture evidence repair must target one PlayMode source")
+        path = next(iter(paths))
+        if (
+            "/tests/playmode/" not in f"/{path.casefold()}"
+            or PurePosixPath(path).suffix.casefold() != ".cs"
+        ):
+            raise ValueError(
+                "Unity RenderTexture evidence repair must target one C# file below Tests/PlayMode"
+            )
+        anchor_pairs = {
+            (change.start_anchor, change.end_anchor) for change in self.changes
+        }
+        if len(anchor_pairs) != len(self.changes):
+            raise ValueError("Unity RenderTexture repair ranges must be distinct")
+
+        replacement = "\n".join(change.replace for change in self.changes)
+        structural = _csharp_code_only(replacement).casefold()
+        required = (
+            "rendertexture",
+            "readpixels",
+            "targettexture",
+            "screenspacecamera",
+            "worldcamera",
+            "rendermode",
+        )
+        missing = [token for token in required if token not in structural]
+        if missing:
+            raise ValueError(
+                "Unity RenderTexture repair is missing required mechanism(s): "
+                + ", ".join(missing)
+            )
+        if "screen.width" in structural or "screen.height" in structural:
+            raise ValueError(
+                "responsive Unity capture must use explicit width/height parameters, not Screen size"
+            )
+        capture_forms = re.findall(r"capturescreenshot\s*\(([^)]*)\)", structural)
+        if not any(arguments.count(",") >= 2 for arguments in capture_forms):
+            raise ValueError(
+                "responsive Unity repair must pass explicit width and height into CaptureScreenshot"
+            )
+        return self
+
+
 class ApprovedProjectDevelopmentToolPack:
     """Runs only an approved generated profile against an isolated local clone."""
 

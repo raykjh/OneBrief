@@ -13,6 +13,7 @@ from onebrief.generic_development_toolpack import (
     ProjectCodeChangeSet, ProposedProjectCodeChangeSet,
     UnityEvidenceSourceRepair,
     UnityEvidenceAnchoredSourceRepair,
+    UnityRenderTextureEvidenceRepair,
     UnityEvidenceAssemblyRepair,
 )
 from onebrief.budget_guard import BudgetExceeded, BudgetStore, RunStatus
@@ -1989,6 +1990,67 @@ def test_atomic_schema_returns_to_bounded_repair_after_pair_exists() -> None:
     })
     assert len(bounded.changes[0].replace) == 10_000
 
+    render_texture_report = ExecutionPipeline._development_failure_report(
+        "Unity visual test contract: a camera RenderTexture does not capture "
+        "ScreenSpaceOverlay UI; temporarily route the real active Canvas through "
+        "ScreenSpaceCamera/worldCamera, render it, then restore its prior state | "
+        "responsive Unity batchmode evidence must pass each requested viewport width and height "
+        "directly into the synchronous RenderTexture capture"
+    )
+    assert development_maker_schema_for(
+        render_texture_report, with_pair.model_dump(mode="json")
+    ) is UnityRenderTextureEvidenceRepair
+
+    two_range_repair = UnityRenderTextureEvidenceRepair.model_validate({
+        "summary": "Repair viewport calls and the batch-safe capture helper together.",
+        "changes": [{
+            "path": "Assets/Tests/PlayMode/Flow.cs",
+            "base_sha256": None,
+            "start_anchor": "var desktop = CaptureScreenshot",
+            "end_anchor": "var mobile = CaptureScreenshot",
+            "replace": (
+                'var desktop = CaptureScreenshot("desktop.png", 1920, 1080);\n'
+                'var mobile = CaptureScreenshot("mobile.png", 1080, 2340);'
+            ),
+            "reason": "Pass the requested viewport directly.",
+        }, {
+            "path": "Assets/Tests/PlayMode/Flow.cs",
+            "base_sha256": None,
+            "start_anchor": "private CapturedImage CaptureScreenshot",
+            "end_anchor": "return image;",
+            "replace": (
+                "private CapturedImage CaptureScreenshot(string path, int width, int height) { "
+                "RenderTexture rt = new RenderTexture(width, height, 24); "
+                "Canvas canvas = Object.FindObjectOfType<Canvas>(); "
+                "var oldMode = canvas.renderMode; var oldCamera = canvas.worldCamera; "
+                "canvas.renderMode = RenderMode.ScreenSpaceCamera; canvas.worldCamera = camera; "
+                "camera.targetTexture = rt; camera.Render(); RenderTexture.active = rt; "
+                "texture.ReadPixels(new Rect(0, 0, width, height), 0, 0); "
+                "canvas.renderMode = oldMode; canvas.worldCamera = oldCamera; return image; }"
+            ),
+            "reason": "Route overlay UI through the render camera and restore state.",
+        }],
+    })
+    assert len(two_range_repair.changes) == 2
+
+    with pytest.raises(ValidationError, match="missing required mechanism"):
+        UnityRenderTextureEvidenceRepair.model_validate({
+            "summary": "Repeat the ineffective camera-only repair.",
+            "changes": [{
+                "path": "Assets/Tests/PlayMode/Flow.cs",
+                "base_sha256": None,
+                "start_anchor": "private CapturedImage CaptureScreenshot",
+                "end_anchor": "return image;",
+                "replace": (
+                    "private CapturedImage CaptureScreenshot(string path, int width, int height) { "
+                    "RenderTexture rt = new RenderTexture(width, height, 24); "
+                    "camera.targetTexture = rt; camera.Render(); RenderTexture.active = rt; "
+                    "texture.ReadPixels(new Rect(0, 0, width, height), 0, 0); return image; }"
+                ),
+                "reason": "Still omits overlay Canvas routing.",
+            }],
+        })
+
     with pytest.raises(ValidationError, match="below Tests/PlayMode"):
         UnityEvidenceAnchoredSourceRepair.model_validate({
             "summary": "Do not cross the evidence boundary.",
@@ -2110,6 +2172,59 @@ def test_project_developer_promotes_dedicated_anchored_range_repair() -> None:
 
     assert "login.png" in result.changes[0].content
     assert "old rows" not in result.changes[0].content
+
+
+def test_project_developer_composes_two_unity_evidence_ranges_in_one_file() -> None:
+    previous = ProjectCodeChangeSet(
+        summary="Existing generated verification source.",
+        changes=[{
+            "path": "Assets/Tests/PlayMode/Flow.cs",
+            "base_sha256": None,
+            "content": (
+                "CALLS_START\nold desktop call\nold mobile call\nCALLS_END\n"
+                "HELPER_START\nold helper\nHELPER_END\n"
+            ),
+            "reason": "Prior candidate.",
+        }],
+    )
+    proposal = UnityRenderTextureEvidenceRepair(
+        summary="Repair two coherent evidence ranges.",
+        changes=[{
+            "path": "Assets/Tests/PlayMode/Flow.cs",
+            "base_sha256": None,
+            "start_anchor": "CALLS_START",
+            "end_anchor": "CALLS_END",
+            "replace": (
+                'CALLS_START\nCaptureScreenshot("desktop.png", 1920, 1080);\n'
+                'CaptureScreenshot("mobile.png", 1080, 2340);\nCALLS_END'
+            ),
+            "reason": "Pass explicit viewport sizes.",
+        }, {
+            "path": "Assets/Tests/PlayMode/Flow.cs",
+            "base_sha256": None,
+            "start_anchor": "HELPER_START",
+            "end_anchor": "HELPER_END",
+            "replace": (
+                "HELPER_START\nRenderTexture rt = new RenderTexture(width, height, 24); "
+                "var oldMode = canvas.renderMode; var oldCamera = canvas.worldCamera; "
+                "canvas.renderMode = RenderMode.ScreenSpaceCamera; canvas.worldCamera = camera; "
+                "camera.targetTexture = rt; camera.Render(); RenderTexture.active = rt; "
+                "texture.ReadPixels(rect, 0, 0); canvas.renderMode = oldMode; "
+                "canvas.worldCamera = oldCamera;\nHELPER_END"
+            ),
+            "reason": "Route and restore overlay Canvas state.",
+        }],
+    )
+    developer = DeveloperAgent(
+        object(), change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/", path_approver=lambda path: path,
+    )
+
+    result = developer.promote_candidate(proposal, [], previous, [])
+
+    assert len(result.changes) == 1
+    assert 'CaptureScreenshot("desktop.png", 1920, 1080)' in result.changes[0].content
+    assert "RenderMode.ScreenSpaceCamera" in result.changes[0].content
 
 
 def test_project_developer_anchored_range_tolerates_formatting_only_reflow() -> None:
