@@ -153,6 +153,7 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
         "unity visual evidence reused an identical screenshot",
         "unity visual evidence did not exercise requested locale",
         "unity visual evidence manifest is invalid",
+        "unity visual verification requires at least one executed onebrief.visual playmode test",
         "locale changed_visible_text_count must compare before/after visible text snapshots",
         "identical duplicate local ui-control declaration",
     )):

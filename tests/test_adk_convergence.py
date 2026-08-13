@@ -643,6 +643,59 @@ def test_same_adk_maker_changes_model_rung_after_verified_failure() -> None:
     assert [event["author"] for event in trace].count("onebrief_maker") == 2
 
 
+def test_dynamic_maker_binding_persists_execution_phase_before_repair() -> None:
+    observed_phases: list[str | None] = []
+
+    class PhaseAwareMaker(FakeMaker):
+        model: Any
+
+        @override
+        async def _run_async_impl(
+            self, ctx: InvocationContext
+        ) -> AsyncGenerator[Event, None]:
+            observed_phases.append(ctx.session.state.get("onebrief:execution_phase"))
+            async for event in super()._run_async_impl(ctx):
+                yield event
+
+    maker = PhaseAwareMaker(
+        name="maker",
+        model=BudgetedAdkLlm(
+            model="flash-maker-model",
+            gateway=object(),
+            stage="evidence_construction::repair::long_form_draft",
+        ),
+    )
+    verifier = FakeVerifier(name="verifier")
+
+    def select_model(report, _ctx, round_number):
+        if report is None:
+            return None
+        return {
+            "model": "pro-maker-model",
+            "stage": f"product_implementation::repair::long_form_draft_r{round_number}",
+            "round_number": round_number,
+            "execution_phase": "product_implementation",
+            "phase_decision": {"failure_owner": "product"},
+        }
+
+    agent = AdkConvergenceAgent(
+        name="convergence",
+        sub_agents=[maker, verifier],
+        max_revision_rounds=2,
+        maker_model_selector=select_model,
+    )
+
+    state, _trace = asyncio.run(run_convergence_agent(
+        agent,
+        {"goal": "Repair the shipped product, not its proof."},
+        initial_state={"onebrief:execution_phase": "evidence_construction"},
+    ))
+
+    assert observed_phases == ["evidence_construction", "product_implementation"]
+    assert state["onebrief:execution_phase"] == "product_implementation"
+    assert state["onebrief:phase_decision"] == {"failure_owner": "product"}
+
+
 def test_same_adk_maker_keeps_escalated_rung_until_boundary_passes() -> None:
     class StubBudgetedGateway(BudgetedGeminiClient):
         def __init__(self) -> None:

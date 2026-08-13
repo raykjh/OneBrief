@@ -3307,6 +3307,8 @@ class ExecutionPipeline:
                     f"repair::{selection.call_stage if selection is not None else 'long_form_draft'}",
                 ),
                 "round_number": round_number,
+                "execution_phase": phase_decision.next_phase.value,
+                "phase_decision": phase_decision.model_dump(mode="json"),
                 "decision": (
                     selection.model_dump(mode="json") if selection is not None else {
                         "reason": "phase-routed repair retained the approved maker model"

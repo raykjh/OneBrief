@@ -274,13 +274,26 @@ class AdkConvergenceAgent(BaseAgent):
                         # policy-bound call stage change for this revision turn.
                         budgeted_model.model = model
                         budgeted_model.stage = stage
+                        binding_state_delta: dict[str, Any] = {
+                            MAKER_MODEL_BINDING_STATE_KEY: dict(binding)
+                        }
+                        execution_phase = str(
+                            binding.get("execution_phase", "")
+                        ).strip()
+                        if execution_phase:
+                            binding_state_delta[
+                                "onebrief:execution_phase"
+                            ] = execution_phase
+                        phase_decision = binding.get("phase_decision")
+                        if isinstance(phase_decision, dict):
+                            binding_state_delta[
+                                "onebrief:phase_decision"
+                            ] = dict(phase_decision)
                         yield Event(
                             author=self.name,
                             invocation_id=ctx.invocation_id,
                             branch=ctx.branch,
-                            actions=EventActions(state_delta={
-                                MAKER_MODEL_BINDING_STATE_KEY: dict(binding)
-                            }),
+                            actions=EventActions(state_delta=binding_state_delta),
                         )
                 async for event in self.maker.run_async(ctx):
                     yield event

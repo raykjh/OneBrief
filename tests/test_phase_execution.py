@@ -145,6 +145,7 @@ def test_batchmode_framebuffer_failure_cannot_open_product_edit_authority() -> N
     )
 
     assert decision.failure_owner == FailureOwner.EVIDENCE
+    assert decision.failure_layer.value == "evidence_topology"
     assert decision.next_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
     assert path_allowed_for_phase(
         "Assets/Tests/PlayMode/OneBriefVisualTest.cs", decision.next_phase
@@ -165,6 +166,7 @@ def test_zero_discovered_visual_tests_selects_evidence_construction() -> None:
     )
 
     assert decision.failure_owner == FailureOwner.EVIDENCE
+    assert decision.failure_layer.value == "evidence_topology"
     assert decision.next_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
     assert decision.model_repair_allowed is True
 

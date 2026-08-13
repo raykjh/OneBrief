@@ -274,6 +274,7 @@ def _is_unity_evidence_topology_failure(value: str) -> bool:
     text = " ".join(value.split()).casefold()
     return any(marker in text for marker in (
         "unity visual test contract: add",
+        "unity visual verification requires at least one executed onebrief.visual playmode test",
         "readpixels was called to read pixels from system frame buffer",
         "readpixels was called to read pixels from system framebuffer",
         "unity visual evidence requires a distinct rendered scenario",
