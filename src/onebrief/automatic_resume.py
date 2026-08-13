@@ -59,6 +59,23 @@ def _most_progressed_development_pair(work: Path) -> tuple[Path, Path]:
     is corrected.  Comparing it with every complete candidate/failure pair
     makes continuation self-healing without trusting model-authored claims.
     """
+    recovery = work / "operator_recovery.json"
+    recovered_candidate = work / "code_change_set.json"
+    recovered_failure = work / "development_verification_failure.txt"
+    if recovery.is_file() and recovered_candidate.is_file() and recovered_failure.is_file():
+        try:
+            receipt = json.loads(recovery.read_text(encoding="utf-8"))
+            candidate_sha256 = hashlib.sha256(recovered_candidate.read_bytes()).hexdigest()
+        except (OSError, json.JSONDecodeError, AttributeError):
+            receipt = {}
+            candidate_sha256 = ""
+        if (
+            receipt.get("schema_version") == "onebrief-operator-recovery-v1"
+            and receipt.get("candidate_sha256") == candidate_sha256
+            and receipt.get("validator_commit")
+        ):
+            return recovered_candidate, recovered_failure
+
     pairs: list[tuple[tuple[int, int], int, Path, Path]] = []
     best_candidate = work / "development_best_candidate.json"
     best_failure = work / "development_best_failure.txt"
@@ -704,6 +721,10 @@ def create_bounded_repair_resume(
         shutil.copy2(candidate, child_work / "code_change_set.json")
         shutil.copy2(failure, child_work / "development_verification_failure.txt")
         reused.extend([candidate.name, failure.name])
+        operator_recovery = source_work / "operator_recovery.json"
+        if operator_recovery.is_file():
+            shutil.copy2(operator_recovery, child_work / operator_recovery.name)
+            reused.append(operator_recovery.name)
         trusted_failure = _trusted_semantic_failure_receipt(
             source_work, candidate, failure
         )

@@ -8,6 +8,7 @@ from onebrief.automatic_resume import (
     AutomaticResumePlan,
     TRUSTED_REVALIDATION_VERSION,
     _continuation_budget_estimate,
+    _most_progressed_development_pair,
     can_attempt_automatic_resume,
     can_attempt_bounded_repair_resume,
     can_attempt_structural_resume,
@@ -77,6 +78,35 @@ def test_continuation_budget_can_use_less_than_the_full_run_minimum() -> None:
     assert continuation.maximum_cost_usd == 0.88
     assert continuation.recommended_approval_usd == 0.88
     assert continuation.budget_limit_usd == 0.88
+
+
+def test_digest_bound_operator_recovery_precedes_progress_heuristics(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    recovered = work / "code_change_set.json"
+    recovered.write_text('{"candidate":"pre-regression"}', encoding="utf-8")
+    failure = work / "development_verification_failure.txt"
+    failure.write_text(
+        "development verification failed: revalidate with corrected validator",
+        encoding="utf-8",
+    )
+    (work / "code_change_set_r9.json").write_text(
+        '{"candidate":"later-but-regressed"}', encoding="utf-8"
+    )
+    (work / "development_verification_failure_r9.txt").write_text(
+        "independent Unity semantic visual observation failed: severe clipping",
+        encoding="utf-8",
+    )
+    (work / "operator_recovery.json").write_text(json.dumps({
+        "schema_version": "onebrief-operator-recovery-v1",
+        "candidate_sha256": hashlib.sha256(recovered.read_bytes()).hexdigest(),
+        "validator_commit": "4e3cec6",
+    }), encoding="utf-8")
+
+    candidate, selected_failure = _most_progressed_development_pair(work)
+
+    assert candidate == recovered
+    assert selected_failure == failure
 
 
 def _failed_job(root: Path) -> None:
