@@ -90,25 +90,62 @@ def _most_progressed_development_pair(work: Path) -> tuple[Path, Path]:
     lineage makes continuation self-healing without trusting model-authored
     claims or copying unverified model state from unrelated runs.
     """
-    recovery = work / "operator_recovery.json"
-    recovered_candidate = work / "code_change_set.json"
-    recovered_failure = work / "development_verification_failure.txt"
-    if recovery.is_file() and recovered_candidate.is_file() and recovered_failure.is_file():
+    direct_recovery = work / "operator_recovery.json"
+    direct_candidate = work / "code_change_set.json"
+    direct_failure = work / "development_verification_failure.txt"
+    if (
+        not (work / "continuation_manifest.json").is_file()
+        and direct_recovery.is_file()
+        and direct_candidate.is_file()
+        and direct_failure.is_file()
+    ):
         try:
-            receipt = json.loads(recovery.read_text(encoding="utf-8"))
-            candidate_sha256 = hashlib.sha256(recovered_candidate.read_bytes()).hexdigest()
+            direct_receipt = json.loads(direct_recovery.read_text(encoding="utf-8"))
+            direct_sha256 = hashlib.sha256(direct_candidate.read_bytes()).hexdigest()
         except (OSError, json.JSONDecodeError, AttributeError):
-            receipt = {}
-            candidate_sha256 = ""
+            direct_receipt = {}
+            direct_sha256 = ""
         if (
-            receipt.get("schema_version") == "onebrief-operator-recovery-v1"
-            and receipt.get("candidate_sha256") == candidate_sha256
-            and receipt.get("validator_commit")
+            direct_receipt.get("schema_version") == "onebrief-operator-recovery-v1"
+            and direct_receipt.get("candidate_sha256") == direct_sha256
+            and direct_receipt.get("validator_commit")
         ):
-            return recovered_candidate, recovered_failure
-
+            # In the job where operator recovery was issued, its digest-bound
+            # decision outranks heuristic progress. Descendants carry a
+            # continuation manifest and may compare later trusted checkpoints
+            # instead of treating a copied receipt as eternal.
+            return direct_candidate, direct_failure
     pairs: list[tuple[tuple[int, int], int, int, Path, Path]] = []
     for depth, candidate_work in enumerate(_development_lineage_work_dirs(work)):
+        recovery = candidate_work / "operator_recovery.json"
+        recovered_candidate = candidate_work / "code_change_set.json"
+        recovered_failure = candidate_work / "development_verification_failure.txt"
+        if recovery.is_file() and recovered_candidate.is_file() and recovered_failure.is_file():
+            try:
+                receipt = json.loads(recovery.read_text(encoding="utf-8"))
+                candidate_sha256 = hashlib.sha256(
+                    recovered_candidate.read_bytes()
+                ).hexdigest()
+            except (OSError, json.JSONDecodeError, AttributeError):
+                receipt = {}
+                candidate_sha256 = ""
+            if (
+                receipt.get("schema_version") == "onebrief-operator-recovery-v1"
+                and receipt.get("candidate_sha256") == candidate_sha256
+                and receipt.get("validator_commit")
+            ):
+                # A human recovery receipt is authoritative evidence that this
+                # candidate is safe to consider, not proof that it must outrank
+                # every later verifier-demonstrated checkpoint forever. Prefer
+                # it at the same quality/depth, while allowing deeper progress
+                # to supersede it.
+                pairs.append((
+                    development_failure_quality(recovered_failure.read_text("utf-8")),
+                    -depth,
+                    1_000_000,
+                    recovered_candidate,
+                    recovered_failure,
+                ))
         best_candidate = candidate_work / "development_best_candidate.json"
         best_failure = candidate_work / "development_best_failure.txt"
         if best_candidate.is_file() and best_failure.is_file():

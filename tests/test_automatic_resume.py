@@ -800,6 +800,18 @@ def test_most_progressed_pair_can_recover_a_better_ancestor_checkpoint(tmp_path:
         "must not read the system framebuffer in Unity batchmode",
         encoding="utf-8",
     )
+    recovered = child_work / "code_change_set.json"
+    recovered.write_text('{"candidate":"operator-recovered"}', encoding="utf-8")
+    (child_work / "development_verification_failure.txt").write_text(
+        "development verification failed: Unity visual test contract: Texture2D.ReadPixels "
+        "must not read the system framebuffer in Unity batchmode",
+        encoding="utf-8",
+    )
+    (child_work / "operator_recovery.json").write_text(json.dumps({
+        "schema_version": "onebrief-operator-recovery-v1",
+        "candidate_sha256": hashlib.sha256(recovered.read_bytes()).hexdigest(),
+        "validator_commit": "trusted-test-commit",
+    }), encoding="utf-8")
     (child_work / "continuation_manifest.json").write_text(
         json.dumps({"source_job_id": "parent"}), encoding="utf-8"
     )
