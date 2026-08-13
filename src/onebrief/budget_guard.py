@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from datetime import UTC, datetime
 from decimal import Decimal, ROUND_CEILING
 from enum import StrEnum
@@ -85,6 +86,7 @@ class CostEntry(BaseModel):
     actual_usd_micros: int = Field(ge=0)
     actual_input_tokens: int = Field(ge=0)
     actual_output_tokens: int = Field(ge=0)
+    phase_reserve_borrowed_usd_micros: int = Field(default=0, ge=0)
     created_at: str
     settled_at: str | None = None
     reason: str | None = None
@@ -194,6 +196,8 @@ class BudgetStore:
         for entry in payload["entries"]:
             if not entry.get("fixed_cost_cap_micros"):
                 entry.pop("fixed_cost_cap_micros", None)
+            if not entry.get("phase_reserve_borrowed_usd_micros"):
+                entry.pop("phase_reserve_borrowed_usd_micros", None)
         if not payload["approval"].get("phase_policy_sha256"):
             payload["approval"].pop("phase_policy_sha256", None)
         canonical = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
@@ -323,6 +327,7 @@ class BudgetStore:
             denial_reason: str | None = None
             phase_policy = self._load_phase_policy_unlocked(ledger.approval)
             phase = phase_for_stage(stage)
+            phase_reserve_borrowed = 0
             if phase_policy is not None:
                 allocation = next(
                     (item for item in phase_policy.allocations if item.phase == phase),
@@ -345,10 +350,56 @@ class BudgetStore:
                         if entry.status == CallStatus.RESERVED
                     )
                     if phase_spent + reserve > allocation.approved_usd_micros:
-                        denial_reason = (
-                            f"{phase.value} wallet would be exceeded; "
-                            f"phase remaining ${micros_to_dollars(allocation.approved_usd_micros - phase_spent):.6f}"
+                        shortfall = phase_spent + reserve - allocation.approved_usd_micros
+                        reserve_allocation = next(
+                            (
+                                item for item in phase_policy.allocations
+                                if item.phase == ExecutionPhase.RESERVE
+                            ),
+                            None,
                         )
+                        reserve_entries = [
+                            entry for entry in ledger.entries
+                            if phase_for_stage(entry.stage) == ExecutionPhase.RESERVE
+                        ]
+                        reserve_spent = sum(
+                            entry.actual_usd_micros
+                            for entry in reserve_entries
+                            if entry.status == CallStatus.SETTLED
+                        ) + sum(
+                            entry.reserved_usd_micros
+                            for entry in reserve_entries
+                            if entry.status == CallStatus.RESERVED
+                        )
+                        already_borrowed = sum(
+                            entry.phase_reserve_borrowed_usd_micros
+                            for entry in ledger.entries
+                            if entry.status in {CallStatus.RESERVED, CallStatus.SETTLED}
+                        )
+                        reserve_available = max(
+                            0,
+                            (reserve_allocation.approved_usd_micros if reserve_allocation else 0)
+                            - reserve_spent
+                            - already_borrowed,
+                        )
+                        # The owner approved the elevated model rung and the
+                        # total hard cap up front. Only that policy-qualified
+                        # reasoning escalation may borrow unused reserve; an
+                        # ordinary phase overrun still stops for a new decision.
+                        approved_escalation = bool(
+                            re.search(r"_reasoning_escalation_r\d+", stage)
+                        )
+                        if (
+                            phase != ExecutionPhase.RESERVE
+                            and approved_escalation
+                            and shortfall <= reserve_available
+                        ):
+                            phase_reserve_borrowed = shortfall
+                        else:
+                            denial_reason = (
+                                f"{phase.value} wallet would be exceeded; "
+                                f"phase remaining ${micros_to_dollars(allocation.approved_usd_micros - phase_spent):.6f}"
+                            )
                     repair_calls = sum(
                         1 for entry in phase_entries
                         if entry.status in {CallStatus.RESERVED, CallStatus.SETTLED}
@@ -402,6 +453,7 @@ class BudgetStore:
                 fixed_cost_cap_micros=dollars_to_micros(fixed_cost_usd),
                 actual_input_tokens=0,
                 actual_output_tokens=0,
+                phase_reserve_borrowed_usd_micros=phase_reserve_borrowed,
                 created_at=now,
             )
             ledger.entries.append(entry)
@@ -440,7 +492,21 @@ class BudgetStore:
                         and is_ai_repair_stage(entry.stage)
                     ),
                     "max_ai_repair_calls": allocation.max_ai_repair_calls,
+                    "borrowed_from_reserve_usd_micros": sum(
+                        entry.phase_reserve_borrowed_usd_micros
+                        for entry in entries
+                        if entry.status in {CallStatus.RESERVED, CallStatus.SETTLED}
+                    ),
                 }
+            borrowed_total = sum(
+                entry.phase_reserve_borrowed_usd_micros
+                for entry in ledger.entries
+                if entry.status in {CallStatus.RESERVED, CallStatus.SETTLED}
+            )
+            if ExecutionPhase.RESERVE.value in summary:
+                summary[ExecutionPhase.RESERVE.value][
+                    "lent_to_approved_escalations_usd_micros"
+                ] = borrowed_total
             return summary
 
     def reserve_deterministic_attempt(
