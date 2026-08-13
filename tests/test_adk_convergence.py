@@ -277,6 +277,64 @@ def test_adk_llm_retries_valid_json_that_fails_active_pydantic_schema() -> None:
     )
 
 
+def test_adk_llm_allows_two_bounded_schema_repairs_before_returning() -> None:
+    from onebrief.generic_development_toolpack import (
+        CompactProposedProjectCodeChangeSet,
+    )
+
+    class Gateway:
+        def __init__(self):
+            self.calls = []
+
+        def generate_adk_response(self, *, stage, contents, **_kwargs):
+            self.calls.append((stage, contents))
+            change = {
+                "path": "Assets/UI/Lobby.cs",
+                "reason": "Repair the product surface.",
+            }
+            if len(self.calls) == 3:
+                change.update({"search": "old", "replace": "new"})
+            payload = {"summary": "Bounded repair.", "changes": [change]}
+            return types.GenerateContentResponse(candidates=[types.Candidate(
+                finish_reason=types.FinishReason.STOP,
+                content=types.Content(
+                    role="model", parts=[types.Part(text=json.dumps(payload))]
+                ),
+            )])
+
+    async def collect():
+        gateway = Gateway()
+        model = BudgetedAdkLlm(
+            model="gemini-3.5-flash",
+            gateway=gateway,
+            stage="product_implementation::repair::long_form_draft",
+            response_model=CompactProposedProjectCodeChangeSet,
+        )
+        request = LlmRequest(
+            model="gemini-3.5-flash",
+            contents=[types.Content(role="user", parts=[types.Part(text="repair")])],
+            config=types.GenerateContentConfig(
+                max_output_tokens=10_000,
+                response_mime_type="application/json",
+            ),
+        )
+        responses = [item async for item in model.generate_content_async(request)]
+        return gateway, responses
+
+    gateway, responses = asyncio.run(collect())
+
+    assert [call[0] for call in gateway.calls] == [
+        "product_implementation::repair::long_form_draft",
+        "product_implementation::repair::long_form_draft_compact_retry",
+        "product_implementation::repair::long_form_draft_compact_retry",
+    ]
+    retry_text = gateway.calls[-1][1][-1].parts[0].text
+    assert "Never return path and reason alone" in retry_text
+    CompactProposedProjectCodeChangeSet.model_validate_json(
+        responses[0].content.parts[0].text
+    )
+
+
 def test_adk_llm_compact_retry_receives_a_larger_structured_output_envelope() -> None:
     class Gateway:
         def __init__(self):

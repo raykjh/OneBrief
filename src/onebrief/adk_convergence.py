@@ -55,29 +55,34 @@ class BudgetedAdkLlm(BaseLlm):
             contents=llm_request.contents,
             config=llm_request.config,
         )
-        candidates = list(getattr(response, "candidates", None) or [])
-        finish_reason = getattr(candidates[0], "finish_reason", None) if candidates else None
-        invalid_structured_json = False
-        invalid_structured_schema = False
-        if getattr(llm_request.config, "response_mime_type", None) == "application/json":
+        def structured_failure(candidate_response) -> tuple[bool, str]:
+            candidates = list(getattr(candidate_response, "candidates", None) or [])
+            finish_reason = (
+                getattr(candidates[0], "finish_reason", None) if candidates else None
+            )
+            if "MAX_TOKENS" in str(finish_reason).upper():
+                return True, "the response reached MAX_TOKENS"
+            if getattr(llm_request.config, "response_mime_type", None) != "application/json":
+                return False, ""
             try:
-                parsed = json.loads(getattr(response, "text", "") or "")
+                parsed = json.loads(getattr(candidate_response, "text", "") or "")
                 if (
                     isinstance(self.response_model, type)
                     and issubclass(self.response_model, BaseModel)
                 ):
                     self.response_model.model_validate(parsed)
-            except (TypeError, json.JSONDecodeError):
-                invalid_structured_json = True
-            except ValidationError:
-                invalid_structured_schema = True
-        if (
-            "MAX_TOKENS" in str(finish_reason).upper()
-            or invalid_structured_json
-            or invalid_structured_schema
-        ):
+            except (TypeError, json.JSONDecodeError) as exc:
+                return True, "invalid JSON: " + str(exc)
+            except ValidationError as exc:
+                return True, "schema validation failed: " + " ".join(str(exc).split())[:1200]
+            return False, ""
+
+        invalid, failure_detail = structured_failure(response)
+        for compact_attempt in range(1, 3):
+            if not invalid:
+                break
             # A truncated structured response is not useful evidence and cannot be
-            # parsed by ADK. Retry once as a deliberately small incremental edit.
+            # parsed by ADK. Retry twice at most as a deliberately small incremental edit.
             # Later convergence rounds can add the next increment after deterministic
             # verification, avoiding a fragile whole-project JSON blob.
             compact_contents = list(llm_request.contents) + [types.Content(
@@ -85,11 +90,15 @@ class BudgetedAdkLlm(BaseLlm):
                 parts=[types.Part(text=(
                     "The previous structured response was truncated or invalid JSON, or it was invalid "
                     "under the active Pydantic schema, and was discarded. "
+                    f"Validation detail: {failure_detail}. "
                     "Return a valid, much smaller response in the required schema. If the schema is a "
                     "code change set, return exactly one changed path unless the current verification "
                     "contract explicitly requires the atomic Unity evidence pair (one PlayMode .cs and "
                     "one sibling test .asmdef); obey the selector fields offered by "
-                    "the current schema, and replace only one coherent range under 6000 characters; do not "
+                    "the current schema. Every change object must include exactly one complete mechanism: "
+                    "content for a bounded new file, anchor_id plus replace, search plus replace, or "
+                    "start_anchor plus end_anchor plus replace. Never return path and reason alone. Replace "
+                    "only one coherent range under 6000 characters; do not "
                     "return complete existing or candidate-file contents. If the schema is a narrative artifact, "
                     "keep its body under 8000 characters while covering every acceptance criterion with "
                     "concise evidence. Implement the highest-priority verified slice now; later maker "
@@ -108,6 +117,7 @@ class BudgetedAdkLlm(BaseLlm):
                 contents=compact_contents,
                 config=retry_config,
             )
+            invalid, failure_detail = structured_failure(response)
         yield LlmResponse.create(response)
 
 
