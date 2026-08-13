@@ -125,6 +125,7 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
         return FailureLayer.EVIDENCE_INTEGRITY
     if any(marker in text for marker in (
         "independent unity semantic visual observation failed",
+        "did not visibly change any text",
         "responsive layout", "rendered ui defect", "missing glyph", "glyph",
         "overlap", "clipped", "clipping", "unreadable",
     )):
@@ -176,7 +177,10 @@ def extract_symptom_keys(
         ("unreadable", ("unreadable", "not readable")),
         ("not_responsive", ("not responsive", "poor responsiveness", "responsive design")),
         ("blank", ("blank screen", "empty screen", "nothing rendered")),
-        ("wrong_language", ("wrong language", "untranslated", "translation missing")),
+        ("wrong_language", (
+            "wrong language", "untranslated", "translation missing",
+            "did not visibly change any text",
+        )),
         ("navigation", ("navigation failed", "screen transition", "route failed")),
         ("runtime_failure", ("runtime test failed", "playmode failed", "interaction failed")),
         ("compile_failure", ("compile error", "compilation failed", "build failed")),

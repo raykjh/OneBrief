@@ -157,6 +157,7 @@ class ModelExecutionPolicy(BaseModel):
         )
         reasoning_markers = (
             "independent unity semantic visual observation failed",
+            "did not visibly change any text",
             "edits tests or evidence instead of production ui",
             "stalled after two identical candidates",
             "identical candidate",

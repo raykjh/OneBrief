@@ -13,6 +13,7 @@ from onebrief.generic_development_toolpack import (
 from onebrief.budget_guard import BudgetExceeded, BudgetStore, RunStatus
 from onebrief.execution_pipeline import (
     ExecutionPipeline,
+    development_toolpack_focus_text,
     development_repair_requires_anchored_range,
     evidence_repair_has_bounded_uncommitted_candidate,
     development_repair_difficulty,
@@ -20,6 +21,7 @@ from onebrief.execution_pipeline import (
     visual_repair_has_uncommitted_product_candidate,
     visual_repair_production_target_allowed,
     is_unity_evidence_contract_feedback,
+    is_unity_localization_product_failure,
     unity_evidence_contract_target_allowed,
 )
 from onebrief.execution_agents import DeveloperAgent
@@ -97,6 +99,52 @@ def test_visual_product_repair_cannot_target_tests_or_evidence(path: str) -> Non
 ])
 def test_visual_product_repair_allows_shipped_product_sources(path: str) -> None:
     assert visual_repair_production_target_allowed(path) is True
+
+
+def test_development_toolpack_focus_includes_the_full_completion_contract() -> None:
+    intake = IntakeRequest(
+        goal="Modernize the Unity client.",
+        desired_output="A verified patch.",
+    )
+    requirements = RequirementsAnalysis(
+        supported=True,
+        support_reason="The repository can be inspected.",
+        normalized_goal="Modernize the existing Unity client.",
+        deliverables=["Updated client source"],
+        mandatory_information=[],
+        optional_information=[],
+        acceptance_criteria=["Spanish locale changes visible Settings text."],
+        completion_contract=CompletionContract(
+            target_state="The modernized client is usable.",
+            quality_criteria=[QualityCriterion(
+                criterion_id="Q01",
+                description="Language selection visibly updates the active screen.",
+                evidence_required="A real PlayMode screenshot after selecting Spanish.",
+            )],
+        ),
+        assumptions=[],
+        consolidated_questions=[],
+        ready_for_estimate=True,
+    )
+
+    focus = development_toolpack_focus_text(intake, requirements)
+
+    assert "Modernize the Unity client." in focus
+    assert "Spanish locale changes visible Settings text." in focus
+    assert "Language selection visibly updates the active screen." in focus
+    assert "real PlayMode screenshot" in focus
+
+
+def test_unchanged_unity_locale_is_a_product_failure_not_an_evidence_gap() -> None:
+    feedback = "Unity visual scenario locale_es did not visibly change any text"
+
+    assert is_unity_localization_product_failure(feedback) is True
+    assert is_unity_evidence_contract_feedback(feedback) is False
+
+    report = ExecutionPipeline._development_failure_report(feedback)
+    instruction = report.revision_instructions[0]
+    assert "production path" in instruction
+    assert "Do not edit the PlayMode test" in instruction
 
 
 def test_visual_repair_maker_candidate_hides_proof_and_retains_product_code() -> None:

@@ -189,6 +189,50 @@ def is_unity_evidence_contract_feedback(feedback: str) -> bool:
     ))
 
 
+def is_unity_localization_product_failure(feedback: str) -> bool:
+    """Distinguish a proven unchanged locale surface from missing proof metadata."""
+
+    normalized = " ".join(feedback.split()).casefold()
+    return (
+        "unity visual scenario" in normalized
+        and "did not visibly change any text" in normalized
+    )
+
+
+def development_toolpack_focus_text(
+    intake: IntakeRequest,
+    requirements: RequirementsAnalysis,
+) -> str:
+    """Describe the whole approved definition of done to source discovery.
+
+    Existing-project goals are often intentionally short.  Tool selection must
+    also see the deliverables and observable completion contract, otherwise a
+    requirement accepted during intake can disappear from repository context.
+    """
+
+    contract = requirements.completion_contract
+    values: list[str] = [
+        intake.goal,
+        intake.desired_output or "",
+        requirements.normalized_goal,
+        *requirements.deliverables,
+        *requirements.acceptance_criteria,
+    ]
+    if contract is not None:
+        values.extend((contract.target_state, contract.pass_condition))
+        for criterion in contract.quality_criteria:
+            values.extend((criterion.description, criterion.evidence_required))
+    seen: set[str] = set()
+    focused: list[str] = []
+    for value in values:
+        normalized = " ".join(str(value).split()).strip()
+        key = normalized.casefold()
+        if normalized and key not in seen:
+            seen.add(key)
+            focused.append(normalized)
+    return "\n".join(focused)
+
+
 def development_repair_requires_anchored_range(
     *,
     multi_state_evidence_repair: bool,
@@ -747,6 +791,15 @@ class ExecutionPipeline:
                     "missing_glyph_count by ForceMeshUpdate plus TMP character/font coverage; and capture a new PNG "
                     "while the selected locale is visibly active. Do not record the locale dropdown only as a general "
                     "observed_state scenario, and do not invent passing counts without measuring the running UI."
+                )
+            if "unity visual scenario" in lowered and "did not visibly change any text" in lowered:
+                return (
+                    "The real locale selection ran, but the shipped UI stayed visibly unchanged. Do not edit the "
+                    "PlayMode test, its labels, or runtime-evidence.json to manufacture a change. Inspect the "
+                    "production path from the visible language dropdown through JulpaeLocalization.SetLanguage and "
+                    "LanguageChanged to the active LocalizedText or screen binder, then repair the smallest missing "
+                    "product binding so real Settings text changes from a deliberately different reference locale. "
+                    "Preserve the existing server protocol and assets; let the unchanged observer remeasure it."
                 )
             if "unity visual test contract" in lowered and "each general ui evidence scenario" in lowered:
                 return (
@@ -1310,12 +1363,17 @@ class ExecutionPipeline:
         missing_unity_evidence_harness = is_missing_unity_evidence_harness(
             prior_failure_text
         )
+        localization_product_repair = is_unity_localization_product_failure(
+            prior_failure_text
+        )
         semantic_visual_repair = (
             "independent unity semantic visual observation failed"
             in prior_failure_text.casefold()
+            or localization_product_repair
         )
         candidate_file_visual_repair = (
             semantic_visual_repair
+            and not localization_product_repair
             and visual_repair_has_uncommitted_product_candidate(previous_change_set)
         )
         anchored_range_repair = development_repair_requires_anchored_range(
@@ -2530,7 +2588,7 @@ class ExecutionPipeline:
                         parallel_work["tool_execution"] = executor.submit(
                             execute_toolpacks, intake.toolpack_ids,
                             output_dir / "toolpacks", intake.existing_project_id,
-                            "\n".join((intake.goal, intake.desired_output or "")),
+                            development_toolpack_focus_text(intake, requirements),
                             self.project_registry_root,
                         )
                     else:

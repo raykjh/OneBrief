@@ -167,6 +167,18 @@ def test_complex_semantic_failure_escalates_same_maker_to_approved_pro_rung() ->
     assert policy.model_for(decision.call_stage + "_compact_retry") == "gemini-3.1-pro-preview"
 
 
+def test_unchanged_unity_locale_escalates_the_same_maker_to_pro() -> None:
+    decision = _escalation_policy().select_after_failure(
+        "long_form_draft",
+        failure_text="Unity visual scenario locale_es did not visibly change any text",
+        difficulty="complex",
+    )
+
+    assert decision.escalated is True
+    assert decision.selected_model == ApprovedModel.GEMINI_3_1_PRO_PREVIEW
+    assert decision.call_stage == "long_form_draft_reasoning_escalation_r1"
+
+
 @pytest.mark.parametrize("failure", [
     "Invalid JSON: EOF while parsing",
     "stale or missing base hash: web/app/page.tsx",

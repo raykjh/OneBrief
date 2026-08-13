@@ -62,6 +62,17 @@ def test_missing_requested_unity_locale_is_evidence_topology() -> None:
     assert observation.symptom_keys == ["artifact:evidence_topology"]
 
 
+def test_unchanged_requested_unity_locale_is_a_semantic_product_failure() -> None:
+    observation = ConvergencePolicy().observe(
+        context="development_verification",
+        failure_text="Unity visual scenario locale_es did not visibly change any text",
+        attempt_number=1,
+    )
+
+    assert observation.layer == FailureLayer.SEMANTIC_PRODUCT
+    assert observation.symptom_keys == ["artifact:wrong_language"]
+
+
 def test_evidence_topology_can_advance_when_static_blockers_change() -> None:
     policy = ConvergencePolicy()
     ledger = ConvergenceLedger()
