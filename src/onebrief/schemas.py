@@ -209,6 +209,14 @@ class BudgetStatus(StrEnum):
     NEEDS_BUDGET = "needs_budget"
 
 
+class ExecutionPhase(StrEnum):
+    SHARED_CONTEXT = "shared_context"
+    PRODUCT_IMPLEMENTATION = "product_implementation"
+    EVIDENCE_CONSTRUCTION = "evidence_construction"
+    FINAL_VERIFICATION = "final_verification"
+    RESERVE = "reserve"
+
+
 class StageEstimate(BaseModel):
     stage: str
     model: str
@@ -222,6 +230,18 @@ class StageEstimate(BaseModel):
     maximum_cost_usd: float
     estimated_minutes_per_call: int
     fixed_cost_usd_per_call: float = 0.0
+
+
+class PhaseBudgetEstimate(BaseModel):
+    """A separately enforced wallet inside the user's total approval."""
+
+    phase: ExecutionPhase
+    minimum_cost_usd: float = Field(ge=0)
+    recommended_cost_usd: float = Field(ge=0)
+    maximum_cost_usd: float = Field(ge=0)
+    max_ai_repair_calls: int = Field(default=0, ge=0, le=24)
+    max_deterministic_attempts: int = Field(default=0, ge=0, le=100)
+    editable_scope: list[str] = Field(default_factory=list, max_length=24)
 
 
 class BudgetEnvelope(BaseModel):
@@ -241,3 +261,4 @@ class BudgetEnvelope(BaseModel):
     estimated_minutes_recommended: int
     estimated_minutes_maximum: int
     notes: list[str]
+    phase_budgets: list[PhaseBudgetEstimate] = Field(default_factory=list)

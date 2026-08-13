@@ -73,6 +73,32 @@ set is measurable progress. Rephrasing the same symptoms or moving the same idea
 different file is not. The runtime also enforces the repair contract's permitted paths;
 the prompt alone is never the security or convergence boundary.
 
+### Product work and proof work are separate authorities
+
+Software convergence no longer treats every failed check as the same kind of coding
+task. Before the first maker call, OneBrief freezes `evidence_specification.json` from
+the completion contract and immutable acceptance inputs. Trusted failures are then
+assigned to one of four owners:
+
+- **product**: shipped source is wrong; only product source may change;
+- **evidence**: the executable test or observation harness is missing or wrong; only
+  tests and evidence harnesses may change;
+- **environment**: provider, license, or worker infrastructure failed; do not buy a
+  model edit;
+- **contract**: authority or completion criteria must change; return for a decision.
+
+The current phase is passed through ADK state and binds the maker call stage. If one
+proposal crosses the product/evidence boundary, out-of-phase paths are deferred and
+recorded; a proposal containing no authorized path is rejected. The verifier remains a
+separate `final_verification` authority.
+
+Each approved software run also receives non-borrowable phase wallets and attempt
+limits. Product implementation, evidence construction, final verification, shared
+context, and reserve are all inside the user's original total cap. Exhausting one phase
+does not silently consume another phase's money. Deterministic build/test attempts have
+their own bounded ledger, so repeated tools cannot hide behind a remaining model-dollar
+balance.
+
 If a paid proposal failed only at trusted source promotion, the valid structured proposal
 is preserved as `development_pending_promotion.json`. A continuation first re-promotes
 that exact proposal through the current path, hash, and anchor catalog. It buys no new

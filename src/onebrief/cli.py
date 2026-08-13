@@ -41,6 +41,16 @@ def _ledger_summary(store: BudgetStore) -> dict[str, object]:
         "reserved_usd": micros_to_dollars(ledger.reserved_usd_micros),
         "remaining_usd": micros_to_dollars(remaining),
         "calls": len(ledger.entries),
+        "phases": {
+            phase: {
+                key: (
+                    micros_to_dollars(value)
+                    if key.endswith("usd_micros") else value
+                )
+                for key, value in values.items()
+            }
+            for phase, values in store.phase_summary().items()
+        },
     }
 
 
@@ -342,4 +352,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

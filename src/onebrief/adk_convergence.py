@@ -309,6 +309,7 @@ def build_text_convergence_agent(
     maker_instruction: str,
     verifier_instruction: str,
     maker_stage: str = "long_form_draft",
+    verifier_stage: str = "independent_verification",
     maker_output_tokens: int = 6000,
     verifier_output_tokens: int = 2200,
     maker_model_selector: MakerModelHook | None = None,
@@ -328,6 +329,7 @@ def build_text_convergence_agent(
                 "repair_plan": ctx.state.get(REPAIR_PLAN_STATE_KEY),
                 "repair_contract": ctx.state.get(REPAIR_CONTRACT_STATE_KEY),
                 "exact_edit_anchors": ctx.state.get(EXACT_EDIT_ANCHORS_STATE_KEY, []),
+                "execution_phase": ctx.state.get("onebrief:execution_phase"),
             },
             ensure_ascii=False,
         )
@@ -357,7 +359,7 @@ def build_text_convergence_agent(
         name="onebrief_independent_verifier",
         description="Independent verifier that cannot modify or approve its own work.",
         model=BudgetedAdkLlm(
-            model=verifier_model, gateway=gateway, stage="independent_verification"
+            model=verifier_model, gateway=gateway, stage=verifier_stage
         ),
         instruction=contextual_verifier_instruction,
         output_schema=VerificationReport,

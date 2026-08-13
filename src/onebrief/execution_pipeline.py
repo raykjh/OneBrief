@@ -111,6 +111,15 @@ from onebrief.reality_check import apply_reality_check_override, evaluate_realit
 from onebrief.requirements_gate import require_ready_for_estimate
 from onebrief.schemas import IntakeRequest, InternalSource, OutputTarget, RequirementsAnalysis, ToolPackId
 from onebrief.public_research import PublicResearchResult
+from onebrief.phase_execution import (
+    PHASE_DECISION_STATE_KEY,
+    PHASE_STATE_KEY,
+    build_evidence_specification,
+    decide_repair_phase,
+    path_allowed_for_phase,
+    phase_stage,
+)
+from onebrief.schemas import ExecutionPhase
 from onebrief.toolpacks import execute_toolpacks
 from onebrief.unity_semantic_observation import observe_unity_visual_evidence
 from onebrief.unity_layout_diagnostics import compact_unity_layout_diagnostic_context
@@ -1463,6 +1472,30 @@ class ExecutionPipeline:
                 prepared["source_role"] = "read_only_context"
             prepared_sources.append(prepared)
 
+        completion_contract_payload = (
+            requirements.completion_contract.model_dump(mode="json")
+            if requirements.completion_contract is not None else {}
+        )
+        evidence_specification = build_evidence_specification(
+            completion_contract=completion_contract_payload,
+            criterion_ids=(
+                [
+                    item.criterion_id
+                    for item in requirements.completion_contract.quality_criteria
+                ]
+                if requirements.completion_contract is not None else []
+            ),
+            immutable_inputs=sorted(
+                str(item.get("repository_path") or item.get("name") or "")
+                for item in prepared_sources
+                if item.get("source_role") == "immutable_acceptance_contract"
+            ),
+        )
+        self._write(
+            output_dir / "evidence_specification.json",
+            evidence_specification.model_dump_json(indent=2),
+        )
+
         # A Cloud continuation may restore the last verified-or-failed candidate
         # into the fresh child work directory.  Preserve that candidate as the
         # same maker's starting point instead of silently asking the model to
@@ -1480,7 +1513,9 @@ class ExecutionPipeline:
             best_failure_message = best_failure_path.read_text("utf-8")
             best_failure_quality = development_failure_quality(best_failure_message)
         latest_run: DevelopmentRun | None = None
-        initial_state: dict[str, object] = {}
+        initial_state: dict[str, object] = {
+            PHASE_STATE_KEY: ExecutionPhase.PRODUCT_IMPLEMENTATION.value,
+        }
         repair_fingerprints: list[str] = []
         for plan_path in sorted(output_dir.glob("repair_plan_r*.json")):
             try:
@@ -1585,6 +1620,19 @@ class ExecutionPipeline:
         prior_failure_text = (
             prior_failure.read_text("utf-8") if prior_failure.is_file() else ""
         )
+        initial_maker_phase = ExecutionPhase.PRODUCT_IMPLEMENTATION
+        if prior_failure_text:
+            initial_phase_decision = decide_repair_phase(
+                context="development_verification",
+                failure_text=prior_failure_text,
+                round_number=0,
+            )
+            if initial_phase_decision.next_phase is not None:
+                initial_maker_phase = initial_phase_decision.next_phase
+                initial_state[PHASE_STATE_KEY] = initial_maker_phase.value
+                initial_state[PHASE_DECISION_STATE_KEY] = (
+                    initial_phase_decision.model_dump(mode="json")
+                )
         if prior_failure_text:
             # A durable lineage can outlive its failure classifier.  Rebind the
             # primary trusted failure when a newer runtime now recognizes a
@@ -1860,6 +1908,47 @@ class ExecutionPipeline:
                 for item in getattr(raw, "changes", [])
                 if getattr(item, "path", None)
             ]
+            active_phase = ExecutionPhase(
+                str(_ctx.session.state.get(
+                    PHASE_STATE_KEY, ExecutionPhase.PRODUCT_IMPLEMENTATION.value
+                ))
+            )
+            if active_phase in {
+                ExecutionPhase.PRODUCT_IMPLEMENTATION,
+                ExecutionPhase.EVIDENCE_CONSTRUCTION,
+            } and not reverify_existing:
+                changes = list(getattr(raw, "changes", []))
+                allowed_changes = [
+                    item for item in changes
+                    if path_allowed_for_phase(str(getattr(item, "path", "")), active_phase)
+                ]
+                deferred_paths = [
+                    str(getattr(item, "path", "")).replace("\\", "/")
+                    for item in changes if item not in allowed_changes
+                ]
+                if deferred_paths:
+                    self._write(
+                        output_dir / f"phase_scope_deferred_r{round_number}.json",
+                        json.dumps({
+                            "schema_version": "onebrief-phase-scope-deferred-v1",
+                            "active_phase": active_phase.value,
+                            "deferred_paths": deferred_paths,
+                            "reason": (
+                                "The proposal crossed the product/evidence authority boundary. "
+                                "Only changes owned by the active phase were retained."
+                            ),
+                        }, ensure_ascii=False, indent=2),
+                    )
+                    if not allowed_changes:
+                        raise PermissionError(
+                            f"{active_phase.value} proposal contains no path inside its approved scope: "
+                            + ", ".join(deferred_paths)
+                        )
+                    raw = raw.model_copy(update={"changes": allowed_changes})
+                    proposed_paths = [
+                        str(getattr(item, "path", "")).replace("\\", "/")
+                        for item in allowed_changes
+                    ]
             if active_contract is not None and active_contract.permitted_paths:
                 permitted = {
                     path.replace("\\", "/").casefold()
@@ -2318,6 +2407,13 @@ class ExecutionPipeline:
             if development_dir.exists():
                 shutil.rmtree(development_dir)
             try:
+                BudgetStore(self.run_dir).reserve_deterministic_attempt(
+                    phase=(
+                        ExecutionPhase.FINAL_VERIFICATION
+                        if reverify_existing else active_phase
+                    ),
+                    purpose="isolated build, tests, runtime probes, and evidence capture",
+                )
                 latest_run = self._apply_development_change_set(
                     intake, development_pack, candidate, development_dir, contract
                 )
@@ -2516,6 +2612,42 @@ class ExecutionPipeline:
                 report = settle_consistent_verification(
                     requirements.completion_contract, report
                 )
+            if report.verdict == Verdict.REVISE:
+                failure_text = " | ".join([
+                    *report.blocking_issues,
+                    *report.revision_instructions,
+                ]).strip()
+                affected_paths = [
+                    str(getattr(item, "path", ""))
+                    for item in getattr(previous_change_set, "changes", [])
+                ]
+                phase_decision = decide_repair_phase(
+                    context="development_acceptance_verification",
+                    failure_text=failure_text or "Acceptance verification requested revision.",
+                    round_number=round_number,
+                    affected_paths=affected_paths,
+                )
+                self._write(
+                    output_dir / f"phase_decision_r{round_number}.json",
+                    phase_decision.model_dump_json(indent=2),
+                )
+                ctx.session.state[PHASE_DECISION_STATE_KEY] = (
+                    phase_decision.model_dump(mode="json")
+                )
+                if phase_decision.next_phase is not None:
+                    ctx.session.state[PHASE_STATE_KEY] = phase_decision.next_phase.value
+                if not phase_decision.model_repair_allowed:
+                    report = VerificationReport(
+                        verdict=Verdict.UNVERIFIABLE,
+                        criterion_checks=report.criterion_checks,
+                        blocking_issues=list(dict.fromkeys([
+                            *report.blocking_issues,
+                            phase_decision.rationale,
+                        ])),
+                        revision_instructions=[],
+                        missing_information=report.missing_information,
+                        temperament_decisions=report.temperament_decisions,
+                    )
             repair_plan = prepare_repair(report, round_number)
             if repair_plan is not None:
                 ctx.session.state[REPAIR_PLAN_STATE_KEY] = repair_plan.model_dump(mode="json")
@@ -2581,6 +2713,9 @@ class ExecutionPipeline:
             "stay inside permitted_paths and repair_boundary, and produce evidence in its verification_ladder order. "
             "Do not claim a different cause merely to evade the progress gate; if the probe cannot distinguish the "
             "hypothesis, make no unrelated product edit."
+            " The execution_phase is an authority boundary: product_implementation may edit only shipped product "
+            "source, while evidence_construction may edit only tests and executable evidence harnesses. Never cross "
+            "that boundary or repair a product defect by weakening its proof."
             " For web language repairs, expose a real select whose identity contains language or locale and whose "
             "option values are canonical locale codes such as ko and en. Activating every option must update "
             "document.documentElement.lang and visibly change all meaningful page copy, not only the status line. "
@@ -2686,25 +2821,50 @@ class ExecutionPipeline:
                 *report.blocking_issues,
                 *report.revision_instructions,
             ]).strip()
-            selector = getattr(self.gateway, "select_model_after_failure", None)
-            if not failure_text or not callable(selector):
-                return None
-            model_selection_attempt += 1
-            selection = selector(
-                "long_form_draft",
+            affected_paths = [
+                str(getattr(item, "path", ""))
+                for item in getattr(previous_change_set, "changes", [])
+            ]
+            phase_decision = decide_repair_phase(
+                context="development_acceptance_verification",
                 failure_text=failure_text,
-                difficulty=repair_difficulty,
-                attempt=model_selection_attempt,
+                round_number=round_number,
+                affected_paths=affected_paths,
             )
-            self._write(
-                output_dir / f"model_selection_r{model_selection_attempt}.json",
-                selection.model_dump_json(indent=2),
+            if not phase_decision.model_repair_allowed or phase_decision.next_phase is None:
+                return None
+            _ctx.session.state[PHASE_STATE_KEY] = phase_decision.next_phase.value
+            _ctx.session.state[PHASE_DECISION_STATE_KEY] = (
+                phase_decision.model_dump(mode="json")
             )
+            selector = getattr(self.gateway, "select_model_after_failure", None)
+            selection = None
+            if failure_text and callable(selector):
+                model_selection_attempt += 1
+                selection = selector(
+                    "long_form_draft",
+                    failure_text=failure_text,
+                    difficulty=repair_difficulty,
+                    attempt=model_selection_attempt,
+                )
+                self._write(
+                    output_dir / f"model_selection_r{model_selection_attempt}.json",
+                    selection.model_dump_json(indent=2),
+                )
             return {
-                "model": selection.selected_model.value,
-                "stage": selection.call_stage,
+                "model": (
+                    selection.selected_model.value if selection is not None else maker_model
+                ),
+                "stage": phase_stage(
+                    phase_decision.next_phase,
+                    f"repair::{selection.call_stage if selection is not None else 'long_form_draft'}",
+                ),
                 "round_number": round_number,
-                "decision": selection.model_dump(mode="json"),
+                "decision": (
+                    selection.model_dump(mode="json") if selection is not None else {
+                        "reason": "phase-routed repair retained the approved maker model"
+                    }
+                ),
             }
 
         def select_maker_schema(
@@ -2716,7 +2876,13 @@ class ExecutionPipeline:
         agent = build_text_convergence_agent(
             gateway=self.gateway,
             maker_model=maker_model,
-            maker_stage=maker_stage,
+            maker_stage=phase_stage(
+                initial_maker_phase,
+                f"repair::{maker_stage}" if prior_failure_text else maker_stage,
+            ),
+            verifier_stage=phase_stage(
+                ExecutionPhase.FINAL_VERIFICATION, "independent_verification"
+            ),
             verifier_model=self.stage_models.get(
                 "independent_verification", "gemini-3.5-flash"
             ),

@@ -14,7 +14,16 @@ from onebrief.execution_limits import (
     WRITER_OUTPUT_CAP,
 )
 from onebrief.requirements_gate import require_ready_for_estimate
-from onebrief.schemas import BudgetEnvelope, BudgetStatus, IntakeRequest, RequirementsAnalysis, StageEstimate, ToolPackId
+from onebrief.schemas import (
+    BudgetEnvelope,
+    BudgetStatus,
+    ExecutionPhase,
+    IntakeRequest,
+    PhaseBudgetEstimate,
+    RequirementsAnalysis,
+    StageEstimate,
+    ToolPackId,
+)
 from onebrief.team_planning import TEAM_PLANNING_OUTPUT_CAP
 
 PRICE_CARD_VERSION = "google-agent-platform-global-standard-search-2026-08-12"
@@ -190,6 +199,90 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
     maximum = round(raw_maximum * 1.25, 4)
     approval = max(0.01, recommended)
 
+    phase_budgets: list[PhaseBudgetEstimate] = []
+    if development:
+        by_name = {stage.stage: stage for stage in stages}
+
+        def phase_costs(call_cost: str) -> dict[ExecutionPhase, float]:
+            draft_cost = float(getattr(by_name["long_form_draft"], call_cost))
+            revision_cost = float(getattr(by_name["revision"], call_cost))
+            verification_cost = sum(
+                float(getattr(by_name[name], call_cost))
+                for name in ("independent_verification", "final_approval")
+            )
+            shared_cost = sum(
+                float(getattr(stage, call_cost))
+                for stage in stages
+                if stage.stage not in {
+                    "long_form_draft", "revision",
+                    "independent_verification", "final_approval",
+                }
+            )
+            return {
+                ExecutionPhase.SHARED_CONTEXT: shared_cost,
+                ExecutionPhase.PRODUCT_IMPLEMENTATION: draft_cost + revision_cost * 0.55,
+                ExecutionPhase.EVIDENCE_CONSTRUCTION: revision_cost * 0.45,
+                ExecutionPhase.FINAL_VERIFICATION: verification_cost,
+            }
+
+        minimum_phase = phase_costs("minimum_cost_usd")
+        recommended_phase = phase_costs("recommended_cost_usd")
+        maximum_phase = phase_costs("maximum_cost_usd")
+        for phase in tuple(minimum_phase):
+            minimum_phase[phase] *= 1.10
+            recommended_phase[phase] *= 1.20
+            maximum_phase[phase] *= 1.25
+        phase_budgets = [
+            PhaseBudgetEstimate(
+                phase=phase,
+                minimum_cost_usd=round(minimum_phase[phase], 6),
+                recommended_cost_usd=round(recommended_phase[phase], 6),
+                maximum_cost_usd=round(maximum_phase[phase], 6),
+                max_ai_repair_calls=(
+                    revisions
+                    if phase in {
+                        ExecutionPhase.PRODUCT_IMPLEMENTATION,
+                        ExecutionPhase.EVIDENCE_CONSTRUCTION,
+                    }
+                    else 0
+                ),
+                max_deterministic_attempts=(
+                    2 + revisions
+                    if phase in {
+                        ExecutionPhase.PRODUCT_IMPLEMENTATION,
+                        ExecutionPhase.EVIDENCE_CONSTRUCTION,
+                        ExecutionPhase.FINAL_VERIFICATION,
+                    }
+                    else 1
+                ),
+                editable_scope=(
+                    ["product source; excludes tests, evidence, screenshots, and reports"]
+                    if phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+                    else (
+                        ["tests and executable evidence harness; excludes product behavior"]
+                        if phase == ExecutionPhase.EVIDENCE_CONSTRUCTION else []
+                    )
+                ),
+            )
+            for phase in (
+                ExecutionPhase.SHARED_CONTEXT,
+                ExecutionPhase.PRODUCT_IMPLEMENTATION,
+                ExecutionPhase.EVIDENCE_CONSTRUCTION,
+                ExecutionPhase.FINAL_VERIFICATION,
+            )
+        ]
+        # Finalization headroom is an explicit, non-borrowable wallet. It can
+        # only be spent by a future policy-authorized reopen stage.
+        phase_budgets.append(PhaseBudgetEstimate(
+            phase=ExecutionPhase.RESERVE,
+            minimum_cost_usd=0.0,
+            recommended_cost_usd=round(finalization_reserve, 6),
+            maximum_cost_usd=round(finalization_reserve, 6),
+            max_ai_repair_calls=1 if revisions else 0,
+            max_deterministic_attempts=1,
+            editable_scope=[],
+        ))
+
     if intake.budget_limit_usd is None:
         status = BudgetStatus.AWAITING_APPROVAL
     elif intake.budget_limit_usd < minimum:
@@ -230,6 +323,8 @@ def estimate_budget(intake: IntakeRequest, analysis: RequirementsAnalysis) -> Bu
             "Recommended and maximum totals include 20% and 25% contingency respectively.",
             "Public research reserves one Gemini 3.5 grounded prompt with a $0.035 Google Search fee cap.",
             "Actual execution records provider-reported usage and stops at the approved limit.",
+            "Software runs use separate non-borrowable product, evidence, verification, and reserve wallets inside the total approval.",
         ],
+        phase_budgets=phase_budgets,
     )
 

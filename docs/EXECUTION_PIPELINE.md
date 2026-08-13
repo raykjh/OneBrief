@@ -53,6 +53,14 @@ stronger reasoning model. Semantic product failures may keep the same maker iden
 use an approved higher reasoning rung, but only when the repair contract identifies
 reasoning as the missing capability.
 
+Software execution now has two modification phases. The initial maker owns product
+implementation. After trusted verification, `phase_decision_rN.json` classifies the
+failure and routes the same persistent maker to either a product-repair or
+evidence-repair stage. Product stages cannot edit tests, screenshots, or proof files;
+evidence stages cannot change shipped product behavior. Environment failures stop model
+repair, and authority failures return to the approval boundary. This routing is enforced
+by code, phase-scoped budgets, and path checks rather than prompt wording alone.
+
 ## Deterministic grounding gate
 
 The model verifier cannot overrule this gate. For every authoritative CSV, the gate
@@ -81,6 +89,9 @@ written as a checkpoint so a crash or budget block leaves inspectable state.
 - `completion_ledger.json`
 - `convergence_ledger.json`
 - `repair_contract.json` and versioned `repair_contract_fNN.json`
+- `evidence_specification.json`
+- `phase_decision_rN.json` and optional `phase_scope_deferred_rN.json`
+- audit `phase_budget_policy.json` and `phase_attempts.json`
 - `execution_checkpoint.json`
 - `adk_convergence_trace.json`
 

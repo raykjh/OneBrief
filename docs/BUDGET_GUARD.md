@@ -18,6 +18,27 @@ Before the provider is called, the gateway:
 After a successful response, provider-reported input, response, and thinking tokens
 replace the reservation with actual model cost. Failed calls release their reservation.
 
+## Non-borrowable execution-phase wallets
+
+For software work, the immutable estimate includes separate wallets for:
+
+- shared planning and analysis;
+- product implementation and product repairs;
+- evidence-harness construction and evidence repairs;
+- independent/final verification; and
+- an unspent reserve that normal stages cannot address.
+
+`phase_budget_policy.json` scales these estimates to the exact approved total and binds
+them to the approval ID, estimate digest, and its own SHA-256. Every call stage is routed
+to one wallet before the global cap check. A call is denied if either its phase cap or
+its AI-repair count is exhausted, even when another phase has money remaining. The
+reserve is therefore real headroom, not implicit permission to continue any loop.
+
+Build, test, runtime probe, and observation attempts are recorded separately in the
+tamper-evident `phase_attempts.json`. Their count limit prevents a deterministic tool
+loop from running indefinitely without spending model tokens. Old approvals without a
+phase policy remain readable; new software approvals always carry the policy digest.
+
 ## Decision-critical model escalation
 
 OneBrief does not upgrade the whole team. New team plans reserve
@@ -49,6 +70,7 @@ required. Approvals cannot be overwritten in place.
 - Dollar arithmetic is stored as integer microdollars.
 - A file lock serializes all ledger mutations, including parallel calls.
 - Every ledger revision has a canonical SHA-256 integrity value.
+- Phase policies and deterministic-attempt ledgers have independent canonical hashes.
 - The approval is duplicated in the ledger and compared with the standalone approval.
 - Files are replaced atomically so interruption cannot leave half-written JSON.
 

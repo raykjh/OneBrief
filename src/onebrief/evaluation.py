@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from onebrief.budget_guard import CallStatus, CostLedger, micros_to_dollars
 from onebrief.completion_ledger import CompletionLedger
 from onebrief.jobs import JobRecord, JobStatus
+from onebrief.phase_execution import PhaseAttemptLedger, phase_for_stage
 
 
 class ExecutionEvaluation(BaseModel):
@@ -32,6 +33,8 @@ class ExecutionEvaluation(BaseModel):
     actual_cost_usd: float = Field(ge=0)
     approved_cost_usd: float = Field(ge=0)
     budget_utilization: float = Field(ge=0, le=1)
+    phase_costs_usd: dict[str, float] = Field(default_factory=dict)
+    deterministic_attempts_by_phase: dict[str, int] = Field(default_factory=dict)
     adk_event_count: int = Field(ge=0)
     distinct_agent_authors: list[str]
     user_supplement_count: int = Field(ge=0)
@@ -78,6 +81,21 @@ def build_execution_evaluation(job_dir: Path, status: JobStatus) -> ExecutionEva
     denied = [
         item for item in (ledger.entries if ledger else []) if item.status == CallStatus.DENIED
     ]
+    phase_costs_micros: dict[str, int] = {}
+    for item in settled:
+        phase = phase_for_stage(item.stage).value
+        phase_costs_micros[phase] = (
+            phase_costs_micros.get(phase, 0) + item.actual_usd_micros
+        )
+    attempt_ledger = _load(
+        job_dir / "run" / "phase_attempts.json", PhaseAttemptLedger
+    )
+    deterministic_attempts: dict[str, int] = {}
+    if isinstance(attempt_ledger, PhaseAttemptLedger):
+        for item in attempt_ledger.attempts:
+            deterministic_attempts[item.phase.value] = (
+                deterministic_attempts.get(item.phase.value, 0) + 1
+            )
     approved = ledger.approval.approved_usd_micros if ledger else 0
     actual = ledger.actual_usd_micros if ledger else 0
     required_total = completion.required_total if completion else 0
@@ -100,6 +118,11 @@ def build_execution_evaluation(job_dir: Path, status: JobStatus) -> ExecutionEva
         actual_cost_usd=micros_to_dollars(actual),
         approved_cost_usd=micros_to_dollars(approved),
         budget_utilization=(actual / approved if approved else 0.0),
+        phase_costs_usd={
+            phase: micros_to_dollars(cost)
+            for phase, cost in sorted(phase_costs_micros.items())
+        },
+        deterministic_attempts_by_phase=dict(sorted(deterministic_attempts.items())),
         adk_event_count=len(events),
         distinct_agent_authors=sorted({
             str(item.get("author")) for item in events if item.get("author")

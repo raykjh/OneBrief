@@ -16,8 +16,16 @@ from onebrief.agent_registry import ApprovedModel
 from onebrief.budget_guard import BudgetStore, micros_to_dollars
 from onebrief.cloud_jobs import GCSJobStore, upload_cloud_job
 from onebrief.jobs import JobStatus, JobStore, create_job
+from onebrief.phase_execution import FailureOwner, classify_failure_owner
 from onebrief.producer import PRICES
-from onebrief.schemas import BudgetEnvelope, IntakeRequest, InternalSource, RequirementsAnalysis
+from onebrief.schemas import (
+    BudgetEnvelope,
+    ExecutionPhase,
+    IntakeRequest,
+    InternalSource,
+    PhaseBudgetEstimate,
+    RequirementsAnalysis,
+)
 from onebrief.team_planning import TeamPlan
 
 
@@ -57,6 +65,7 @@ def _targeted_repair_estimate(
     estimate: BudgetEnvelope,
     *,
     low_cost_models: bool = False,
+    failure_text: str = "",
 ) -> BudgetEnvelope:
     """Re-estimate one evidenced code repair without charging completed stages."""
     caps = {
@@ -89,6 +98,42 @@ def _targeted_repair_estimate(
     if len(selected) != len(caps):
         raise RuntimeError("targeted repair estimate is missing a required model stage")
     base = sum(item.minimum_cost_usd for item in selected)
+    maker_cost = next(
+        item.minimum_cost_usd for item in selected
+        if item.stage == "long_form_draft"
+    )
+    verification_cost = base - maker_cost
+    owner = classify_failure_owner(
+        context="development_verification",
+        failure_text=failure_text or "targeted product repair",
+    )
+    repair_phase = (
+        ExecutionPhase.EVIDENCE_CONSTRUCTION
+        if owner == FailureOwner.EVIDENCE
+        else ExecutionPhase.PRODUCT_IMPLEMENTATION
+    )
+    phase_budgets = [
+        PhaseBudgetEstimate(
+            phase=repair_phase,
+            minimum_cost_usd=round(maker_cost * 1.10, 6),
+            recommended_cost_usd=round(maker_cost * 1.20, 6),
+            maximum_cost_usd=round(maker_cost * 1.25, 6),
+            max_ai_repair_calls=1,
+            max_deterministic_attempts=2,
+            editable_scope=(
+                ["tests and executable evidence harness; excludes product behavior"]
+                if repair_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
+                else ["product source; excludes tests, evidence, screenshots, and reports"]
+            ),
+        ),
+        PhaseBudgetEstimate(
+            phase=ExecutionPhase.FINAL_VERIFICATION,
+            minimum_cost_usd=round(verification_cost * 1.10, 6),
+            recommended_cost_usd=round(verification_cost * 1.20, 6),
+            maximum_cost_usd=round(verification_cost * 1.25, 6),
+            max_deterministic_attempts=2,
+        ),
+    ]
     return estimate.model_copy(update={
         "stages": selected,
         "minimum_cost_usd": round(base * 1.10, 4),
@@ -102,6 +147,7 @@ def _targeted_repair_estimate(
             *estimate.notes,
             "Targeted continuation charges only one evidenced maker repair, independent verification, and final approval.",
         ],
+        "phase_budgets": phase_budgets,
     })
 
 
@@ -154,9 +200,14 @@ def create_budget_preserving_continuation(
     )
     intake, requirements, sources, estimate = _read_models(source_job_dir)
     if targeted_repair:
+        failure_path = source_job_dir / "work" / "development_verification_failure.txt"
         estimate = _targeted_repair_estimate(
             estimate,
             low_cost_models=low_cost_targeted_repair,
+            failure_text=(
+                failure_path.read_text(encoding="utf-8")
+                if failure_path.is_file() else ""
+            ),
         )
     if child_approved_usd < estimate.minimum_cost_usd:
         raise RuntimeError(

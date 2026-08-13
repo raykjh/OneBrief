@@ -302,7 +302,13 @@ def build_result_package(
                     ):
                         continue
                     _copy_if_present(source, temp_dir / "artifacts" / relative)
-        for name in ("approval.json", "cost_ledger.json", "model_execution_policy.json"):
+        for name in (
+            "approval.json",
+            "cost_ledger.json",
+            "model_execution_policy.json",
+            "phase_budget_policy.json",
+            "phase_attempts.json",
+        ):
             _copy_if_present(job_dir / "run" / name, temp_dir / "audit" / name)
         _copy_if_present(
             job_dir / "inputs" / "source_manifest.json",

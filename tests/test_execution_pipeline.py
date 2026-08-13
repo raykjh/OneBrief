@@ -611,7 +611,9 @@ def test_adk_software_loop_repairs_failed_isolated_test_before_independent_revie
         initial.changes[0].content, corrected.changes[0].content,
     ]
     assert gateway.stages == [
-        "long_form_draft", "long_form_draft", "independent_verification"
+        "product_implementation::long_form_draft",
+        "product_implementation::repair::long_form_draft",
+        "final_verification::independent_verification",
     ]
     trace = json.loads((output_dir / "adk_convergence_trace.json").read_text(encoding="utf-8"))
     assert trace["agent_tree"]["same_maker_reused"] is True
@@ -1142,7 +1144,7 @@ def test_continuation_repromotes_paid_pending_proposal_before_model_call(
     )
 
     assert report.verdict == Verdict.PASS
-    assert gateway.calls == ["independent_verification"]
+    assert gateway.calls == ["final_verification::independent_verification"]
     assert (output_dir / "development_consumed_promotion.json").is_file()
     receipt = json.loads(
         (output_dir / "development_pending_promotion_receipt.json").read_text("utf-8")

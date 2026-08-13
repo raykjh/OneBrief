@@ -1,0 +1,176 @@
+import json
+from pathlib import Path
+
+import pytest
+
+from onebrief.budget_guard import BudgetExceeded, BudgetStore, IntegrityError
+from onebrief.phase_execution import (
+    FailureOwner,
+    decide_repair_phase,
+    is_evidence_path,
+    path_allowed_for_phase,
+    phase_for_stage,
+)
+from onebrief.schemas import (
+    BudgetEnvelope,
+    BudgetStatus,
+    ExecutionPhase,
+    PhaseBudgetEstimate,
+    StageEstimate,
+)
+
+
+def _estimate(*, repair_limit: int = 2, deterministic_limit: int = 2) -> BudgetEnvelope:
+    return BudgetEnvelope(
+        price_card_version="google-agent-platform-global-standard-search-2026-08-12",
+        price_source_url="https://example.test/pricing",
+        endpoint="global-standard",
+        estimated_source_tokens=100,
+        estimated_contract_tokens=100,
+        stages=[StageEstimate(
+            stage="long_form_draft",
+            model="gemini-3.5-flash",
+            input_tokens_per_call=100,
+            output_tokens_per_call=100,
+            minimum_calls=1,
+            recommended_calls=1,
+            maximum_calls=2,
+            minimum_cost_usd=0.001,
+            recommended_cost_usd=0.01,
+            maximum_cost_usd=0.02,
+            estimated_minutes_per_call=1,
+        )],
+        minimum_cost_usd=0.001,
+        recommended_cost_usd=0.1,
+        maximum_cost_usd=0.2,
+        recommended_approval_usd=0.1,
+        budget_limit_usd=1.0,
+        status=BudgetStatus.WITHIN_BUDGET,
+        estimated_minutes_minimum=1,
+        estimated_minutes_recommended=1,
+        estimated_minutes_maximum=2,
+        notes=[],
+        phase_budgets=[
+            PhaseBudgetEstimate(
+                phase=ExecutionPhase.PRODUCT_IMPLEMENTATION,
+                minimum_cost_usd=0.001,
+                recommended_cost_usd=0.02,
+                maximum_cost_usd=0.04,
+                max_ai_repair_calls=repair_limit,
+                max_deterministic_attempts=deterministic_limit,
+                editable_scope=["product"],
+            ),
+            PhaseBudgetEstimate(
+                phase=ExecutionPhase.EVIDENCE_CONSTRUCTION,
+                minimum_cost_usd=0,
+                recommended_cost_usd=0.03,
+                maximum_cost_usd=0.06,
+                max_ai_repair_calls=2,
+                max_deterministic_attempts=2,
+                editable_scope=["evidence"],
+            ),
+            PhaseBudgetEstimate(
+                phase=ExecutionPhase.FINAL_VERIFICATION,
+                minimum_cost_usd=0,
+                recommended_cost_usd=0.03,
+                maximum_cost_usd=0.06,
+                max_deterministic_attempts=2,
+            ),
+            PhaseBudgetEstimate(
+                phase=ExecutionPhase.SHARED_CONTEXT,
+                minimum_cost_usd=0,
+                recommended_cost_usd=0.02,
+                maximum_cost_usd=0.04,
+                max_deterministic_attempts=1,
+            ),
+        ],
+    )
+
+
+def test_phase_routing_and_path_authority_are_disjoint() -> None:
+    assert phase_for_stage(
+        "evidence_construction::repair::long_form_draft"
+    ) == ExecutionPhase.EVIDENCE_CONSTRUCTION
+    assert is_evidence_path("Assets/Tests/PlayMode/UiEvidenceTests.cs")
+    assert not is_evidence_path("Assets/Scripts/LoginView.cs")
+    assert path_allowed_for_phase(
+        "Assets/Scripts/LoginView.cs", ExecutionPhase.PRODUCT_IMPLEMENTATION
+    )
+    assert not path_allowed_for_phase(
+        "Assets/Tests/PlayMode/UiEvidenceTests.cs",
+        ExecutionPhase.PRODUCT_IMPLEMENTATION,
+    )
+    assert path_allowed_for_phase(
+        "Assets/Tests/PlayMode/UiEvidenceTests.cs",
+        ExecutionPhase.EVIDENCE_CONSTRUCTION,
+    )
+
+
+def test_trusted_failure_selects_product_or_evidence_owner() -> None:
+    evidence = decide_repair_phase(
+        context="development_acceptance_verification",
+        failure_text="Add a discoverable Unity PlayMode test and TestAssemblies asmdef.",
+        round_number=1,
+    )
+    product = decide_repair_phase(
+        context="development_acceptance_verification",
+        failure_text="Independent Unity semantic visual observation failed: login text overlaps.",
+        round_number=2,
+        affected_paths=["Assets/Scripts/LoginView.cs"],
+    )
+    environment = decide_repair_phase(
+        context="development_verification",
+        failure_text="Unity license activation is unavailable.",
+        round_number=3,
+    )
+    assert evidence.failure_owner == FailureOwner.EVIDENCE
+    assert evidence.next_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
+    assert product.failure_owner == FailureOwner.PRODUCT
+    assert product.next_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+    assert environment.failure_owner == FailureOwner.ENVIRONMENT
+    assert environment.next_phase is None
+    assert not environment.model_repair_allowed
+
+
+def test_phase_repair_limit_blocks_before_provider_call(tmp_path: Path) -> None:
+    store = BudgetStore(tmp_path)
+    store.approve(_estimate(repair_limit=1), 0.1)
+    first = store.reserve_call(
+        stage="product_implementation::repair::long_form_draft",
+        model="gemini-3.5-flash",
+        input_token_cap=100,
+        output_token_cap=100,
+    )
+    store.settle_call(first.call_id, input_tokens=50, output_tokens=50)
+
+    with pytest.raises(BudgetExceeded, match="repair-call limit"):
+        store.reserve_call(
+            stage="product_implementation::repair::long_form_draft",
+            model="gemini-3.5-flash",
+            input_token_cap=100,
+            output_token_cap=100,
+        )
+
+
+def test_deterministic_attempts_have_a_separate_hard_limit(tmp_path: Path) -> None:
+    store = BudgetStore(tmp_path)
+    store.approve(_estimate(deterministic_limit=1), 0.1)
+    store.reserve_deterministic_attempt(
+        phase=ExecutionPhase.PRODUCT_IMPLEMENTATION,
+        purpose="isolated build and tests",
+    )
+    with pytest.raises(BudgetExceeded, match="deterministic-attempt limit"):
+        store.reserve_deterministic_attempt(
+            phase=ExecutionPhase.PRODUCT_IMPLEMENTATION,
+            purpose="repeat isolated build and tests",
+        )
+
+
+def test_phase_policy_is_bound_to_the_immutable_approval(tmp_path: Path) -> None:
+    store = BudgetStore(tmp_path)
+    store.approve(_estimate(), 0.1)
+    raw = json.loads(store.phase_policy_path.read_text(encoding="utf-8"))
+    raw["allocations"][0]["approved_usd_micros"] += 1
+    store.phase_policy_path.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(IntegrityError, match="phase budget policy integrity"):
+        store.read()

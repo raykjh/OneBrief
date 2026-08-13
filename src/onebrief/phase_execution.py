@@ -1,0 +1,304 @@
+"""Two-phase software execution contracts and budget routing.
+
+Product implementation and evidence construction are deliberately separate
+modification authorities.  Trusted verification decides which authority owns
+the next repair; a maker cannot spend the other phase's wallet or edit its
+paths merely because the global approval still has money left.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import UTC, datetime
+from enum import StrEnum
+from pathlib import PurePosixPath
+
+from pydantic import BaseModel, Field, model_validator
+
+from onebrief.convergence_policy import FailureLayer, classify_failure_layer
+from onebrief.schemas import ExecutionPhase, PhaseBudgetEstimate
+
+PHASE_STATE_KEY = "onebrief:execution_phase"
+PHASE_DECISION_STATE_KEY = "onebrief:phase_decision"
+
+
+class FailureOwner(StrEnum):
+    PRODUCT = "product"
+    EVIDENCE = "evidence"
+    ENVIRONMENT = "environment"
+    CONTRACT = "contract"
+
+
+class PhaseBudgetAllocation(BaseModel):
+    phase: ExecutionPhase
+    approved_usd_micros: int = Field(ge=0)
+    max_ai_repair_calls: int = Field(ge=0, le=24)
+    max_deterministic_attempts: int = Field(ge=0, le=100)
+    editable_scope: list[str] = Field(default_factory=list, max_length=24)
+
+
+class PhaseBudgetPolicy(BaseModel):
+    schema_version: str = "onebrief-phase-budget-policy-v1"
+    approval_id: str
+    budget_estimate_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    allocations: list[PhaseBudgetAllocation] = Field(min_length=1, max_length=8)
+    policy_sha256: str = ""
+
+    @model_validator(mode="after")
+    def phases_are_unique(self) -> "PhaseBudgetPolicy":
+        phases = [item.phase for item in self.allocations]
+        if len(phases) != len(set(phases)):
+            raise ValueError("phase budget policy contains duplicate phases")
+        return self
+
+
+class EvidenceSpecification(BaseModel):
+    schema_version: str = "onebrief-evidence-specification-v1"
+    completion_contract_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    criterion_ids: list[str] = Field(default_factory=list, max_length=64)
+    immutable_evidence_inputs: list[str] = Field(default_factory=list, max_length=128)
+    product_edit_scope: list[str] = Field(default_factory=list, max_length=24)
+    evidence_edit_scope: list[str] = Field(default_factory=list, max_length=24)
+    frozen_before_implementation: bool = True
+    specification_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class PhaseDecision(BaseModel):
+    schema_version: str = "onebrief-phase-decision-v1"
+    round_number: int = Field(ge=0)
+    failure_layer: FailureLayer
+    failure_owner: FailureOwner
+    next_phase: ExecutionPhase | None
+    model_repair_allowed: bool
+    rationale: str
+
+
+class DeterministicAttempt(BaseModel):
+    attempt_id: str
+    phase: ExecutionPhase
+    purpose: str = Field(min_length=3, max_length=300)
+    created_at: str
+
+
+class PhaseAttemptLedger(BaseModel):
+    schema_version: str = "onebrief-phase-attempt-ledger-v1"
+    policy_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    revision: int = Field(default=0, ge=0)
+    attempts: list[DeterministicAttempt] = Field(default_factory=list, max_length=200)
+    integrity_sha256: str = ""
+
+
+PRODUCT_SCOPE = ["product source; excludes tests, evidence, screenshots, and reports"]
+EVIDENCE_SCOPE = ["tests and executable evidence harness; excludes product behavior"]
+
+
+def canonical_sha256(payload: object) -> str:
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def phase_attempt_ledger_sha256(ledger: PhaseAttemptLedger) -> str:
+    return canonical_sha256(
+        ledger.model_dump(mode="json", exclude={"integrity_sha256"})
+    )
+
+
+def deterministic_attempt(
+    *, attempt_id: str, phase: ExecutionPhase, purpose: str
+) -> DeterministicAttempt:
+    return DeterministicAttempt(
+        attempt_id=attempt_id,
+        phase=phase,
+        purpose=purpose,
+        created_at=datetime.now(UTC).isoformat(),
+    )
+
+
+def phase_policy_sha256(policy: PhaseBudgetPolicy) -> str:
+    return canonical_sha256(
+        policy.model_dump(mode="json", exclude={"policy_sha256"})
+    )
+
+
+def allocate_phase_policy(
+    *,
+    approval_id: str,
+    budget_estimate_sha256: str,
+    approved_usd_micros: int,
+    estimates: list[PhaseBudgetEstimate],
+) -> PhaseBudgetPolicy | None:
+    """Scale the estimated wallets to the exact immutable user approval."""
+
+    if not estimates:
+        return None
+    weights = [max(0, round(item.recommended_cost_usd * 1_000_000)) for item in estimates]
+    total_weight = sum(weights)
+    if total_weight <= 0:
+        return None
+    allocations: list[PhaseBudgetAllocation] = []
+    assigned = 0
+    for index, (estimate, weight) in enumerate(zip(estimates, weights, strict=True)):
+        if index == len(estimates) - 1:
+            cap = approved_usd_micros - assigned
+        else:
+            cap = approved_usd_micros * weight // total_weight
+            assigned += cap
+        allocations.append(PhaseBudgetAllocation(
+            phase=estimate.phase,
+            approved_usd_micros=max(0, cap),
+            max_ai_repair_calls=estimate.max_ai_repair_calls,
+            max_deterministic_attempts=estimate.max_deterministic_attempts,
+            editable_scope=list(estimate.editable_scope),
+        ))
+    policy = PhaseBudgetPolicy(
+        approval_id=approval_id,
+        budget_estimate_sha256=budget_estimate_sha256,
+        allocations=allocations,
+    )
+    return policy.model_copy(update={"policy_sha256": phase_policy_sha256(policy)})
+
+
+def phase_for_stage(stage: str) -> ExecutionPhase:
+    normalized = stage.casefold().strip()
+    for phase in ExecutionPhase:
+        prefix = phase.value + "::"
+        if normalized.startswith(prefix):
+            return phase
+    if normalized.startswith("long_form_draft") or normalized.startswith("revision"):
+        return ExecutionPhase.PRODUCT_IMPLEMENTATION
+    if normalized.startswith("independent_verification") or normalized.startswith(
+        "final_approval"
+    ):
+        return ExecutionPhase.FINAL_VERIFICATION
+    return ExecutionPhase.SHARED_CONTEXT
+
+
+def phase_stage(phase: ExecutionPhase, stage: str) -> str:
+    if stage.casefold().startswith(phase.value + "::"):
+        return stage
+    return f"{phase.value}::{stage}"
+
+
+def is_ai_repair_stage(stage: str) -> bool:
+    normalized = stage.casefold()
+    return (
+        "repair" in normalized
+        or "retry" in normalized
+        or "reasoning_escalation" in normalized
+    )
+
+
+def is_evidence_path(path: str) -> bool:
+    normalized = path.replace("\\", "/").strip("/").casefold()
+    parts = {part for part in PurePosixPath(normalized).parts if part}
+    filename = PurePosixPath(normalized).name
+    stem = filename.rsplit(".", 1)[0]
+    return bool(
+        parts.intersection({
+            "test", "tests", "testing", "evidence", "screenshots",
+            "observations", "independent_observations", "reports", "coverage",
+        })
+        or filename.endswith((".png", ".jpg", ".jpeg", ".log"))
+        or stem.endswith(("test", "tests", "spec"))
+        or filename.startswith(("test_", "spec_"))
+        or ".test." in filename
+        or ".spec." in filename
+        or "runtime-evidence" in stem
+        or "runtime_evidence" in stem
+    )
+
+
+def path_allowed_for_phase(path: str, phase: ExecutionPhase) -> bool:
+    if phase == ExecutionPhase.PRODUCT_IMPLEMENTATION:
+        return not is_evidence_path(path)
+    if phase == ExecutionPhase.EVIDENCE_CONSTRUCTION:
+        return is_evidence_path(path)
+    return False
+
+
+def classify_failure_owner(
+    *, context: str, failure_text: str, affected_paths: list[str] | None = None
+) -> FailureOwner:
+    layer = classify_failure_layer(context, failure_text)
+    normalized = failure_text.casefold()
+    paths = affected_paths or []
+    evidence_targeted = bool(paths) and all(is_evidence_path(path) for path in paths)
+    if any(marker in normalized for marker in (
+        "evidence harness", "evidence topology", "missing playmode test",
+        "add a discoverable unity playmode test", "testassemblies",
+        "runtime-evidence.json", "screenshot capture is missing",
+    )):
+        return FailureOwner.EVIDENCE
+    if any(marker in normalized for marker in (
+        "unity license", "license activation", "executable was not found",
+        "no such file or directory", "worker unavailable", "provider unavailable",
+        "connection reset", "deadline exceeded", "service unavailable",
+    )):
+        return FailureOwner.ENVIRONMENT
+    if layer == FailureLayer.AUTHORITY:
+        return FailureOwner.CONTRACT
+    if layer in {FailureLayer.PROVIDER, FailureLayer.STRUCTURED_OUTPUT}:
+        return FailureOwner.ENVIRONMENT
+    if layer in {FailureLayer.EVIDENCE_TOPOLOGY, FailureLayer.EVIDENCE_INTEGRITY}:
+        return FailureOwner.EVIDENCE
+    if layer in {FailureLayer.BUILD, FailureLayer.RUNTIME, FailureLayer.SOURCE_BINDING}:
+        return FailureOwner.EVIDENCE if evidence_targeted else FailureOwner.PRODUCT
+    return FailureOwner.PRODUCT
+
+
+def decide_repair_phase(
+    *,
+    context: str,
+    failure_text: str,
+    round_number: int,
+    affected_paths: list[str] | None = None,
+) -> PhaseDecision:
+    layer = classify_failure_layer(context, failure_text)
+    owner = classify_failure_owner(
+        context=context, failure_text=failure_text, affected_paths=affected_paths
+    )
+    if owner == FailureOwner.PRODUCT:
+        phase = ExecutionPhase.PRODUCT_IMPLEMENTATION
+        rationale = "Trusted verification identified a product-source defect."
+        allowed = True
+    elif owner == FailureOwner.EVIDENCE:
+        phase = ExecutionPhase.EVIDENCE_CONSTRUCTION
+        rationale = "Trusted verification identified an evidence-harness defect."
+        allowed = True
+    elif owner == FailureOwner.ENVIRONMENT:
+        phase = None
+        rationale = "Provider or protocol failure requires deterministic recovery, not a model edit."
+        allowed = False
+    else:
+        phase = None
+        rationale = "The failure changes authority or contract and requires a decision."
+        allowed = False
+    return PhaseDecision(
+        round_number=round_number,
+        failure_layer=layer,
+        failure_owner=owner,
+        next_phase=phase,
+        model_repair_allowed=allowed,
+        rationale=rationale,
+    )
+
+
+def build_evidence_specification(
+    *, completion_contract: object, criterion_ids: list[str], immutable_inputs: list[str]
+) -> EvidenceSpecification:
+    contract_hash = canonical_sha256(completion_contract)
+    payload = {
+        "completion_contract_sha256": contract_hash,
+        "criterion_ids": criterion_ids,
+        "immutable_evidence_inputs": immutable_inputs,
+        "product_edit_scope": PRODUCT_SCOPE,
+        "evidence_edit_scope": EVIDENCE_SCOPE,
+        "frozen_before_implementation": True,
+    }
+    return EvidenceSpecification(
+        **payload,
+        specification_sha256=canonical_sha256(payload),
+    )
