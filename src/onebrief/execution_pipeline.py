@@ -68,6 +68,7 @@ from onebrief.generic_development_toolpack import (
     ExactRepairProjectCodeChangeSet,
     ProjectCodeChangeSet,
     ProposedProjectCodeChangeSet,
+    UnityEvidenceSourceRepair,
 )
 from onebrief.greenfield_web_toolpack import GreenfieldWebDevelopmentToolPack
 from onebrief.dynamic_role_agents import DynamicRoleAgent, GovernanceAgent, GovernanceDecision, RoleHandoff
@@ -239,6 +240,17 @@ def normalize_atomic_unity_evidence_bundle(raw: object) -> object:
         or {"playmode_test", "test_assembly"}.issubset(raw)
     ):
         return AtomicUnityEvidenceBundle.model_validate(raw).as_change_set()
+    if isinstance(raw, UnityEvidenceSourceRepair):
+        return raw.as_change_set()
+    if isinstance(raw, dict) and (
+        raw.get("schema_version") == "onebrief-unity-evidence-source-repair-v1"
+        or (
+            "playmode_test" in raw
+            and "test_assembly" not in raw
+            and "changes" not in raw
+        )
+    ):
+        return UnityEvidenceSourceRepair.model_validate(raw).as_change_set()
     return raw
 
 
@@ -264,6 +276,16 @@ def development_maker_schema_for(
         and missing_unity_evidence_bundle_paths(feedback, current_candidate)
     ):
         return AtomicUnityEvidenceBundle
+    requested_pair = (
+        "Unity visual test contract: add a discoverable Unity PlayMode test | "
+        "Unity visual test contract: add a Unity test .asmdef"
+    )
+    if (
+        is_unity_evidence_contract_feedback(feedback)
+        and current_candidate is not None
+        and not missing_unity_evidence_bundle_paths(requested_pair, current_candidate)
+    ):
+        return UnityEvidenceSourceRepair
     # Dynamic schemas persist on the same LlmAgent. Explicitly restore the
     # normal bounded repair contract after the atomic pair has been created.
     return CompactProposedProjectCodeChangeSet

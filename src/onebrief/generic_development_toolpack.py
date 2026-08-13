@@ -513,6 +513,36 @@ class AtomicUnityEvidenceBundle(BaseModel):
         )
 
 
+class UnityEvidenceSourceRepair(BaseModel):
+    """One-file continuation contract after the evidence pair is established.
+
+    The assembly definition is an executable-topology checkpoint. Later maker
+    turns may refine only the PlayMode source, so the provider cannot resend or
+    accidentally mutate the already accepted sibling asmdef.
+    """
+
+    schema_version: str = "onebrief-unity-evidence-source-repair-v1"
+    summary: str = Field(min_length=3, max_length=500)
+    playmode_test: AtomicUnityEvidenceFile
+
+    @model_validator(mode="after")
+    def validate_playmode_source(self) -> "UnityEvidenceSourceRepair":
+        if PurePosixPath(self.playmode_test.path).suffix.casefold() != ".cs":
+            raise ValueError("playmode_test must be a C# source")
+        return self
+
+    def as_change_set(self) -> CompactProposedProjectCodeChangeSet:
+        return CompactProposedProjectCodeChangeSet(
+            summary=self.summary,
+            changes=[{
+                "path": self.playmode_test.path,
+                "base_sha256": None,
+                "content": self.playmode_test.content,
+                "reason": self.playmode_test.reason,
+            }],
+        )
+
+
 class ExactRepairProjectFileChange(BaseModel):
     """One existing-candidate edit; full-file output is structurally impossible."""
 

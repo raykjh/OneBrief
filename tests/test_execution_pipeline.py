@@ -11,6 +11,7 @@ from onebrief.generic_development_toolpack import (
     AnchoredRangeRepairProjectCodeChangeSet,
     CompactProposedProjectCodeChangeSet, ExactRepairProjectCodeChangeSet,
     ProjectCodeChangeSet, ProposedProjectCodeChangeSet,
+    UnityEvidenceSourceRepair,
 )
 from onebrief.budget_guard import BudgetExceeded, BudgetStore, RunStatus
 from onebrief.execution_pipeline import (
@@ -1700,6 +1701,37 @@ def test_atomic_unity_evidence_rehydrates_from_adk_state_dictionary() -> None:
     ]
 
 
+def test_unity_evidence_source_repair_rehydrates_to_one_cs_change() -> None:
+    raw = {
+        "schema_version": "onebrief-unity-evidence-source-repair-v1",
+        "summary": "Refine the executable visual evidence source only",
+        "playmode_test": {
+            "path": "Assets/Tests/PlayMode/OneBrief.Visual.Tests.cs",
+            "content": "namespace OneBrief.Visual { public class Tests {} }",
+            "reason": "Address the next trusted evidence blocker",
+        },
+    }
+
+    restored = normalize_atomic_unity_evidence_bundle(raw)
+
+    assert isinstance(restored, CompactProposedProjectCodeChangeSet)
+    assert [item.path for item in restored.changes] == [
+        "Assets/Tests/PlayMode/OneBrief.Visual.Tests.cs"
+    ]
+
+
+def test_unity_evidence_source_repair_rejects_asmdef() -> None:
+    with pytest.raises(ValidationError, match="playmode_test must be a C# source"):
+        UnityEvidenceSourceRepair.model_validate({
+            "summary": "Do not rewrite the accepted assembly checkpoint",
+            "playmode_test": {
+                "path": "Assets/Tests/PlayMode/Tests.PlayMode.asmdef",
+                "content": "{}",
+                "reason": "Invalid post-pair target",
+            },
+        })
+
+
 def test_executable_atomic_evidence_is_preserved_when_deeper_checks_fail() -> None:
     candidate = ProjectCodeChangeSet(
         summary="Product and executable evidence candidate.",
@@ -1781,6 +1813,15 @@ def test_atomic_schema_returns_to_bounded_repair_after_pair_exists() -> None:
     assert development_maker_schema_for(
         report, with_pair.model_dump(mode="json")
     ) is CompactProposedProjectCodeChangeSet
+
+    detailed_report = ExecutionPipeline._development_failure_report(
+        "Unity visual test contract: responsive Unity visual evidence must define and capture "
+        "both a measured mobile/portrait viewport and a desktop/landscape viewport before "
+        "PlayMode execution"
+    )
+    assert development_maker_schema_for(
+        detailed_report, with_pair.model_dump(mode="json")
+    ) is UnityEvidenceSourceRepair
 
 
 def test_duplicate_unity_screenshot_feedback_requires_capture_at_each_real_state() -> None:
