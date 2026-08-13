@@ -349,8 +349,16 @@ class BudgetStore:
                         for entry in phase_entries
                         if entry.status == CallStatus.RESERVED
                     )
-                    if phase_spent + reserve > allocation.approved_usd_micros:
-                        shortfall = phase_spent + reserve - allocation.approved_usd_micros
+                    phase_borrowed = sum(
+                        entry.phase_reserve_borrowed_usd_micros
+                        for entry in phase_entries
+                        if entry.status in {CallStatus.RESERVED, CallStatus.SETTLED}
+                    )
+                    effective_phase_cap = (
+                        allocation.approved_usd_micros + phase_borrowed
+                    )
+                    if phase_spent + reserve > effective_phase_cap:
+                        shortfall = phase_spent + reserve - effective_phase_cap
                         reserve_allocation = next(
                             (
                                 item for item in phase_policy.allocations

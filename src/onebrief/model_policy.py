@@ -188,6 +188,8 @@ class ModelExecutionPolicy(BaseModel):
             "trusted failure is owned by",
             "proposal changed only the other phase",
             "requested ordered ui journey",
+            "do not relabel a direct scene load as a click",
+            "selected real languagedropdown exists and is visible",
             "stalled after two identical candidates",
             "identical candidate",
             "wrong repair strategy",

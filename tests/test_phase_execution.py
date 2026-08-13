@@ -229,6 +229,50 @@ def test_approved_reasoning_escalation_can_borrow_unused_reserve(tmp_path: Path)
     assert summary["reserve"]["lent_to_approved_escalations_usd_micros"] > 0
 
 
+def test_repeated_escalations_borrow_only_incremental_reserve(tmp_path: Path) -> None:
+    store = BudgetStore(tmp_path)
+    estimate = _estimate(repair_limit=4).model_copy(update={
+        "phase_budgets": [
+            PhaseBudgetEstimate(
+                phase=ExecutionPhase.PRODUCT_IMPLEMENTATION,
+                minimum_cost_usd=0.001,
+                recommended_cost_usd=0.001,
+                maximum_cost_usd=0.001,
+                max_ai_repair_calls=4,
+                max_deterministic_attempts=2,
+            ),
+            PhaseBudgetEstimate(
+                phase=ExecutionPhase.RESERVE,
+                minimum_cost_usd=0,
+                recommended_cost_usd=0,
+                maximum_cost_usd=0,
+            ),
+        ]
+    })
+    store.approve(estimate, 0.10)
+    first = store.reserve_call(
+        stage="product_implementation::repair::long_form_draft_reasoning_escalation_r1",
+        model="gemini-3.1-pro-preview",
+        input_token_cap=1_000,
+        output_token_cap=1_000,
+    )
+    store.settle_call(first.call_id, input_tokens=200, output_tokens=100)
+    second = store.reserve_call(
+        stage="product_implementation::repair::long_form_draft_reasoning_escalation_r2",
+        model="gemini-3.1-pro-preview",
+        input_token_cap=1_000,
+        output_token_cap=1_000,
+    )
+
+    assert first.phase_reserve_borrowed_usd_micros > 0
+    assert second.phase_reserve_borrowed_usd_micros > 0
+    assert (
+        first.phase_reserve_borrowed_usd_micros
+        + second.phase_reserve_borrowed_usd_micros
+        < first.reserved_usd_micros + second.reserved_usd_micros
+    )
+
+
 def test_non_escalated_phase_call_cannot_borrow_reserve(tmp_path: Path) -> None:
     store = BudgetStore(tmp_path)
     estimate = _estimate(repair_limit=3).model_copy(update={
