@@ -178,6 +178,8 @@ class ModelExecutionPolicy(BaseModel):
             "permissionerror",
             "budget exceeded",
             "needs_information",
+            "test contract: add a discoverable",
+            "test contract: add a unity test .asmdef",
         )
         reasoning_markers = (
             "independent unity semantic visual observation failed",

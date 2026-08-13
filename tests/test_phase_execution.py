@@ -6,6 +6,7 @@ import pytest
 from onebrief.budget_guard import BudgetExceeded, BudgetStore, IntegrityError
 from onebrief.phase_execution import (
     FailureOwner,
+    allocate_phase_policy,
     decide_repair_phase,
     is_evidence_path,
     path_allowed_for_phase,
@@ -174,3 +175,40 @@ def test_phase_policy_is_bound_to_the_immutable_approval(tmp_path: Path) -> None
     store.phase_policy_path.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(IntegrityError, match="phase budget policy integrity"):
         store.read()
+
+
+def test_phase_policy_fills_asymmetric_escalation_headroom_before_surplus() -> None:
+    estimates = [
+        PhaseBudgetEstimate(
+            phase=ExecutionPhase.PRODUCT_IMPLEMENTATION,
+            minimum_cost_usd=0.10,
+            recommended_cost_usd=0.50,
+            maximum_cost_usd=0.60,
+        ),
+        PhaseBudgetEstimate(
+            phase=ExecutionPhase.EVIDENCE_CONSTRUCTION,
+            minimum_cost_usd=0.0,
+            recommended_cost_usd=0.10,
+            maximum_cost_usd=0.50,
+        ),
+        PhaseBudgetEstimate(
+            phase=ExecutionPhase.FINAL_VERIFICATION,
+            minimum_cost_usd=0.10,
+            recommended_cost_usd=0.30,
+            maximum_cost_usd=0.50,
+        ),
+    ]
+
+    policy = allocate_phase_policy(
+        approval_id="approval",
+        budget_estimate_sha256="a" * 64,
+        approved_usd_micros=1_250_000,
+        estimates=estimates,
+    )
+
+    assert policy is not None
+    caps = {item.phase: item.approved_usd_micros for item in policy.allocations}
+    assert sum(caps.values()) == 1_250_000
+    assert caps[ExecutionPhase.PRODUCT_IMPLEMENTATION] == 550_000
+    assert caps[ExecutionPhase.EVIDENCE_CONSTRUCTION] == 300_000
+    assert caps[ExecutionPhase.FINAL_VERIFICATION] == 400_000

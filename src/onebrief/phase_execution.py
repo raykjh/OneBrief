@@ -130,25 +130,77 @@ def allocate_phase_policy(
     approved_usd_micros: int,
     estimates: list[PhaseBudgetEstimate],
 ) -> PhaseBudgetPolicy | None:
-    """Scale the estimated wallets to the exact immutable user approval."""
+    """Fill phase wallets through minimum, recommended, then maximum tiers.
+
+    Proportional scaling from recommended weights underfunded phases with a
+    small routine budget but a legitimate expensive escalation.  In
+    particular, an approval above the recommended total could still leave the
+    evidence wallet below its declared maximum while unrelated phases received
+    surplus.  Tiered filling preserves every estimate's floor first and then
+    distributes only the remaining headroom toward its next declared tier.
+    """
 
     if not estimates:
         return None
-    weights = [max(0, round(item.recommended_cost_usd * 1_000_000)) for item in estimates]
-    total_weight = sum(weights)
-    if total_weight <= 0:
+    minimums = [max(0, round(item.minimum_cost_usd * 1_000_000)) for item in estimates]
+    recommended = [
+        max(minimum, round(item.recommended_cost_usd * 1_000_000))
+        for minimum, item in zip(minimums, estimates, strict=True)
+    ]
+    maximums = [
+        max(target, round(item.maximum_cost_usd * 1_000_000))
+        for target, item in zip(recommended, estimates, strict=True)
+    ]
+    if not any(maximums):
         return None
+
+    assigned_caps = [0 for _ in estimates]
+
+    def fill_toward(targets: list[int], available: int) -> int:
+        gaps = [max(0, target - current) for current, target in zip(
+            assigned_caps, targets, strict=True
+        )]
+        total_gap = sum(gaps)
+        if available <= 0 or total_gap <= 0:
+            return available
+        distributed = min(available, total_gap)
+        base = [distributed * gap // total_gap for gap in gaps]
+        remainder = distributed - sum(base)
+        order = sorted(
+            range(len(gaps)),
+            key=lambda index: (
+                (distributed * gaps[index]) % total_gap,
+                gaps[index],
+                -index,
+            ),
+            reverse=True,
+        )
+        for index in order[:remainder]:
+            if gaps[index]:
+                base[index] += 1
+        for index, amount in enumerate(base):
+            assigned_caps[index] += amount
+        return available - distributed
+
+    remaining = approved_usd_micros
+    remaining = fill_toward(minimums, remaining)
+    remaining = fill_toward(recommended, remaining)
+    remaining = fill_toward(maximums, remaining)
+    if remaining:
+        reserve_index = next(
+            (
+                index for index, estimate in enumerate(estimates)
+                if estimate.phase == ExecutionPhase.RESERVE
+            ),
+            len(estimates) - 1,
+        )
+        assigned_caps[reserve_index] += remaining
+
     allocations: list[PhaseBudgetAllocation] = []
-    assigned = 0
-    for index, (estimate, weight) in enumerate(zip(estimates, weights, strict=True)):
-        if index == len(estimates) - 1:
-            cap = approved_usd_micros - assigned
-        else:
-            cap = approved_usd_micros * weight // total_weight
-            assigned += cap
+    for estimate, cap in zip(estimates, assigned_caps, strict=True):
         allocations.append(PhaseBudgetAllocation(
             phase=estimate.phase,
-            approved_usd_micros=max(0, cap),
+            approved_usd_micros=cap,
             max_ai_repair_calls=estimate.max_ai_repair_calls,
             max_deterministic_attempts=estimate.max_deterministic_attempts,
             editable_scope=list(estimate.editable_scope),

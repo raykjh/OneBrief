@@ -193,6 +193,20 @@ def test_incomplete_atomic_unity_evidence_bundle_escalates_same_maker() -> None:
     assert decision.selected_model == ApprovedModel.GEMINI_3_1_PRO_PREVIEW
 
 
+def test_first_missing_evidence_harness_stays_on_flash() -> None:
+    decision = _escalation_policy().select_after_failure(
+        "long_form_draft",
+        failure_text=(
+            "development verification failed: Unity visual test contract: add a "
+            "discoverable Unity PlayMode test whose namespace begins with OneBrief.Visual"
+        ),
+        difficulty="complex",
+    )
+
+    assert decision.escalated is False
+    assert decision.selected_model == ApprovedModel.GEMINI_3_5_FLASH
+
+
 @pytest.mark.parametrize("failure", [
     "Invalid JSON: EOF while parsing",
     "stale or missing base hash: web/app/page.tsx",
