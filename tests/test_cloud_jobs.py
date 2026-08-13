@@ -457,6 +457,9 @@ def test_continuation_reuses_milestone_evidence_but_not_parent_execution_graph(
         "jobs/prior/work/milestones/M01/development/development_run.json": b'{"head":"parent"}',
         "jobs/prior/work/milestones/M01/toolpacks/project_development/evidence/repository_inspection.json": b'{"head":"parent"}',
         "jobs/prior/work/milestones/M01/handoffs/WH-parent.json": b'{"source":"parent"}',
+        "jobs/prior/work/milestones/M01/adk_convergence_trace.json": b'{"session":"parent"}',
+        "jobs/prior/work/milestones/M01/verification_r0.json": b'{"verdict":"stale"}',
+        "jobs/prior/work/milestones/M01/final_verification.json": b'{"verdict":"stale"}',
     }
 
     class Blob:
@@ -494,6 +497,9 @@ def test_continuation_reuses_milestone_evidence_but_not_parent_execution_graph(
     assert not (work / "milestones/M01/development").exists()
     assert not (work / "milestones/M01/toolpacks").exists()
     assert not (work / "milestones/M01/handoffs").exists()
+    assert not (work / "milestones/M01/adk_convergence_trace.json").exists()
+    assert not (work / "milestones/M01/verification_r0.json").exists()
+    assert not (work / "milestones/M01/final_verification.json").exists()
 
 
 def test_missing_newer_code_candidate_does_not_delete_base_candidate(tmp_path: Path) -> None:

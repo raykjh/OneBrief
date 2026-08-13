@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -60,6 +61,33 @@ NON_REUSABLE_MILESTONE_DIRECTORIES = {
     "model_selection_receipts",
     "toolpacks",
 }
+
+
+def _reusable_milestone_artifact(relative: PurePosixPath) -> bool:
+    if relative.parts[0] == "milestone_state":
+        return True
+    if relative.parts[0] != "milestones" or len(relative.parts) != 3:
+        return False
+    name = relative.name
+    return bool(
+        name in {
+            "analysis.json",
+            "code_change_set.json",
+            "completion_ledger.json",
+            "convergence_ledger.json",
+            "development_best_candidate.json",
+            "development_best_failure.txt",
+            "development_rejected_change_fingerprints.json",
+            "development_rejected_change_history.json",
+            "development_verification_failure.txt",
+            "evidence_specification.json",
+            "repair_contract.json",
+        }
+        or re.fullmatch(r"code_change_set_(?:delta_)?r\d+\.json", name)
+        or re.fullmatch(r"development_verification_failure_r\d+\.txt", name)
+        or re.fullmatch(r"repair_contract_f\d+\.json", name)
+        or re.fullmatch(r"repair_plan_r\d+_n\d+\.json", name)
+    )
 
 
 @dataclass(frozen=True)
@@ -378,6 +406,8 @@ class GCSJobStore:
                         for part in relative.parts[2:]
                     )
                 ):
+                    continue
+                if not _reusable_milestone_artifact(relative):
                     continue
                 target = (destination_work / Path(*relative.parts)).resolve()
                 if not target.is_relative_to(destination_work):
