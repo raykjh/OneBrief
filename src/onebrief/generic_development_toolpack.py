@@ -1724,7 +1724,7 @@ class ApprovedProjectDevelopmentToolPack:
                 )
             )
             dropdown_operated = bool(re.search(
-                r"(?:\b[a-z_][a-z0-9_]*dropdown\b|\blangdropdown\b)\s*\.\s*"
+                r"(?:\bdropdown\b|\b[a-z_][a-z0-9_]*dropdown\b|\blangdropdown\b)\s*\.\s*"
                 r"(?:value\s*=|setvaluewithoutnotify\s*\(|onvaluechanged\s*\.\s*invoke\s*\()",
                 structural,
             ))

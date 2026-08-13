@@ -883,6 +883,38 @@ def test_unity_visual_preflight_rejects_dropdown_show_without_language_selection
     assert any("select a real LanguageDropdown value" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_accepts_plain_dropdown_variable_selection(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-plain-dropdown"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Check() { "
+        'SceneManager.LoadScene("Lobby"); '
+        'var dropdownGo = GameObject.Find("LanguageDropdown"); '
+        "var dropdown = dropdownGo.GetComponent<TMPro.TMP_Dropdown>(); "
+        "Assert.IsNotNull(dropdown); dropdown.value = 1; "
+        "dropdown.onValueChanged.Invoke(dropdown.value); "
+        "var glyph = dropdown.captionText.font.HasCharacter('A'); "
+        'var json = "onebrief-evidence/runtime-evidence.json"; '
+        'var png = "onebrief-evidence/lobby.png"; } }\n',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(profile, clone, "Unity language UI")
+
+    assert not any("select a real LanguageDropdown value" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_rejects_inactive_unasserted_dropdown_selection(
     tmp_path: Path,
 ) -> None:
