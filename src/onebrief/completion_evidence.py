@@ -8,6 +8,11 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from onebrief.execution_schemas import CriterionCheck, VerificationReport, Verdict
+from onebrief.handoff_protocol import (
+    EvidenceKind,
+    EvidenceStatus,
+    create_evidence_binding,
+)
 from onebrief.schemas import IntakeRequest, OutputTarget, RequirementsAnalysis
 
 
@@ -205,3 +210,90 @@ def apply_completion_evidence_override(
         missing_information=model_report.missing_information,
         temperament_decisions=model_report.temperament_decisions,
     )
+
+
+def apply_trusted_development_evidence(
+    model_report: VerificationReport,
+    requirements: RequirementsAnalysis,
+    development_evidence: dict[str, object] | None,
+) -> VerificationReport:
+    """Let executed command receipts settle matching deterministic criteria.
+
+    Warning-rich logs remain visible to the independent verifier, but a model
+    cannot turn an exit-code-zero compiler receipt into a failed compile.
+    Runtime and visual criteria require their own executed adapters.
+    """
+
+    contract = requirements.completion_contract
+    if contract is None or not development_evidence:
+        return model_report
+    run = development_evidence.get("development_run")
+    commands = run.get("commands") if isinstance(run, dict) else None
+    if not isinstance(commands, list):
+        return model_report
+
+    passed_commands: dict[EvidenceKind, str] = {}
+    for item in commands:
+        if not isinstance(item, dict) or item.get("exit_code") != 0:
+            continue
+        command_id = str(item.get("command_id", ""))
+        normalized = command_id.casefold()
+        if "compile" in normalized or "build" in normalized:
+            passed_commands.setdefault(EvidenceKind.COMPILE, command_id)
+        if any(marker in normalized for marker in (
+            "playmode", "interaction", "e2e", "http", "runtime",
+        )):
+            passed_commands.setdefault(EvidenceKind.BEHAVIOR, command_id)
+        if any(marker in normalized for marker in (
+            "visual", "screenshot", "glyph", "render",
+        )):
+            passed_commands.setdefault(EvidenceKind.VISUAL, command_id)
+
+    def criterion_kind(text: str) -> EvidenceKind | None:
+        normalized = text.casefold()
+        if any(marker in normalized for marker in (
+            "visual", "screenshot", "rendered png", "layout", "png",
+            "시각", "스크린샷", "렌더", "레이아웃",
+        )):
+            return EvidenceKind.VISUAL
+        if any(marker in normalized for marker in (
+            "behavior", "interaction", "transition", "navigation", "playmode",
+            "동작", "상호작용", "이동", "전환",
+        )):
+            return EvidenceKind.BEHAVIOR
+        if any(marker in normalized for marker in (
+            "compile", "compilation", "build", "컴파일", "빌드",
+        )):
+            return EvidenceKind.COMPILE
+        return None
+
+    replacements: dict[str, CriterionCheck] = {}
+    for criterion in contract.quality_criteria:
+        kind = criterion_kind(
+            f"{criterion.description} {criterion.evidence_required}"
+        )
+        command_id = passed_commands.get(kind) if kind is not None else None
+        if command_id is None:
+            continue
+        binding = create_evidence_binding(
+            criterion_id=criterion.criterion_id,
+            kind=kind,
+            status=EvidenceStatus.PASSED,
+            summary=f"Trusted adapter {command_id} completed with exit code 0.",
+            command_id=command_id,
+        )
+        replacements[criterion.criterion_id] = CriterionCheck(
+            criterion_id=criterion.criterion_id,
+            criterion=criterion.description,
+            passed=True,
+            evidence=binding.summary,
+            evidence_bindings=[binding],
+        )
+    if not replacements:
+        return model_report
+    checks = [
+        check for check in model_report.criterion_checks
+        if check.criterion_id not in replacements
+    ]
+    checks.extend(replacements.values())
+    return model_report.model_copy(update={"criterion_checks": checks})

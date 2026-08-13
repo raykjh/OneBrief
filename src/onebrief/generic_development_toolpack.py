@@ -1706,7 +1706,8 @@ class ApprovedProjectDevelopmentToolPack:
     def _requires_unity_visual_runtime(goal_text: str) -> bool:
         return bool(re.search(
             r"(?:\bui\b|screen|visual|render|dropdown|locali[sz]ation|language|"
-            r"multilingual|화면|시각|드롭다운|다국어|언어|번역)",
+            r"multilingual|surface|scene|transition|navigation|login|lobby|settings|"
+            r"화면|시각|드롭다운|다국어|언어|번역|장면|전환|로그인|로비|설정)",
             goal_text,
             re.IGNORECASE,
         ))

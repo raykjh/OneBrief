@@ -864,6 +864,12 @@ def test_unity_verification_intent_excludes_future_scope_named_only_in_constrain
     assert "mobile" not in intent.casefold()
 
 
+def test_login_surface_transition_requires_unity_runtime_evidence() -> None:
+    assert ApprovedProjectDevelopmentToolPack._requires_unity_visual_runtime(
+        "The modernized Login surface reaches Lobby through the preserved transition."
+    )
+
+
 def test_unity_visual_preflight_allows_temporary_capture_camera_but_rejects_synthetic_canvas(tmp_path: Path) -> None:
     _root, registry = _approved_node_project(tmp_path)
     pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)

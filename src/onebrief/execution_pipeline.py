@@ -31,6 +31,7 @@ from onebrief.adk_convergence import (
 )
 from onebrief.completion_evidence import (
     apply_completion_evidence_override,
+    apply_trusted_development_evidence,
     validate_completion_evidence,
 )
 from onebrief.deterministic_verification import (
@@ -3043,7 +3044,10 @@ class ExecutionPipeline:
                 output_dir / f"completion_evidence_r{round_number}.json",
                 completion.model_dump_json(indent=2),
             )
-            report = apply_completion_evidence_override(model_report, completion)
+            report = apply_trusted_development_evidence(
+                model_report, requirements, evidence
+            )
+            report = apply_completion_evidence_override(report, completion)
             report = apply_deterministic_override(report, grounding)
             reality = evaluate_reality_check(intake, requirements, evidence)
             self._write(

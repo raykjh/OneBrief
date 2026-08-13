@@ -1,10 +1,18 @@
 from onebrief.completion_evidence import (
     CompletionEvidenceKind,
     apply_completion_evidence_override,
+    apply_trusted_development_evidence,
     validate_completion_evidence,
 )
 from onebrief.execution_schemas import CriterionCheck, VerificationReport, Verdict
-from onebrief.schemas import IntakeRequest, OutputTarget, RequirementsAnalysis
+from onebrief.schemas import (
+    CompletionContract,
+    EvaluationMode,
+    IntakeRequest,
+    OutputTarget,
+    QualityCriterion,
+    RequirementsAnalysis,
+)
 
 
 def requirements(goal: str) -> RequirementsAnalysis:
@@ -151,3 +159,38 @@ def test_missing_user_information_still_outranks_missing_runtime_proof() -> None
     overridden = apply_completion_evidence_override(model_report, completion)
     assert overridden.verdict == Verdict.NEEDS_INFORMATION
     assert overridden.missing_information == ["Provide the required locale list."]
+
+
+def test_trusted_compile_receipt_replaces_model_log_misclassification() -> None:
+    base = requirements("Modernize the Unity login surface.")
+    contract = CompletionContract(
+        target_state="The Unity login surface compiles.",
+        quality_criteria=[QualityCriterion(
+            criterion_id="Q01",
+            description="Unity compilation success",
+            evaluation_mode=EvaluationMode.DETERMINISTIC,
+            evidence_required="Unity compilation log with exit code zero.",
+        )],
+    )
+    report = VerificationReport(
+        verdict=Verdict.REVISE,
+        criterion_checks=[CriterionCheck(
+            criterion_id="Q01",
+            criterion="Unity compilation success",
+            passed=False,
+            evidence="A warning line looked like an exception.",
+        )],
+        blocking_issues=["Unity compilation failed."],
+        revision_instructions=["Repair the reported compiler failure."],
+        missing_information=[],
+    )
+
+    corrected = apply_trusted_development_evidence(
+        report,
+        base.model_copy(update={"completion_contract": contract}),
+        evidence("unity_compile"),
+    )
+
+    assert len(corrected.criterion_checks) == 1
+    assert corrected.criterion_checks[0].passed is True
+    assert corrected.criterion_checks[0].evidence_bindings[0].command_id == "unity_compile"
