@@ -262,7 +262,14 @@ class BudgetedGeminiClient:
         if (
             isinstance(response_schema, type)
             and issubclass(response_schema, BaseModel)
+            and response_schema.__name__ == "VerificationReport"
         ):
+            # ADK maker schemas intentionally use optional mutually-exclusive
+            # edit selectors. Converting those schemas to the all-required
+            # transport form makes Gemini invent placeholder anchors. The
+            # independent VerificationReport has no selector union and is the
+            # provider-incompatible schema observed in production, so only
+            # that verifier boundary receives the stripped transport model.
             generation.response_schema = gemini_compatible_model(response_schema)
         generation.thinking_config = self._thinking_config(model)
         max_output_tokens = int(generation.max_output_tokens or 4096)
