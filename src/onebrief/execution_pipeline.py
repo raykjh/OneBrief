@@ -803,6 +803,13 @@ class ExecutionPipeline:
                     "product binding so real Settings text changes from a deliberately different reference locale. "
                     "Preserve the existing server protocol and assets; let the unchanged observer remeasure it."
                 )
+            if "not reachable from any committed .unity/.prefab script guid" in lowered:
+                return (
+                    "The edited MonoBehaviour is detached from the executed Unity UI. Do not revise that file again. "
+                    "Use the committed scene catalog's attached_script_paths and the real failing control name to "
+                    "select the active production component, then repair one reachable binding or explicitly attach "
+                    "the intended binder in an approved scene/prefab. Keep tests and evidence unchanged."
+                )
             if "locale changed_visible_text_count must compare before/after" in lowered:
                 return (
                     "Repair only the PlayMode observer's temporal order. Snapshot the real target surface's visible "

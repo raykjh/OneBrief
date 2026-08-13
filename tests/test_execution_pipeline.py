@@ -1626,6 +1626,18 @@ def test_project_developer_consumes_an_already_applied_anchored_repair() -> None
     assert result.changes[0].content == current
 
 
+def test_development_failure_report_redirects_detached_unity_binding() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "development verification failed: changed Unity UI MonoBehaviour SettingsBinder "
+        "is not reachable from any committed .unity/.prefab script GUID, runtime initialization "
+        "entrypoint, or other production source reference"
+    )
+
+    assert report.verdict == Verdict.REVISE
+    assert "attached_script_paths" in report.revision_instructions[0]
+    assert "Do not revise that file again" in report.revision_instructions[0]
+
+
 def test_project_developer_does_not_consume_partially_applied_repair() -> None:
     previous = ProjectCodeChangeSet(
         summary="Partially changed candidate.",

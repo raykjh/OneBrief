@@ -128,6 +128,7 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
     if any(marker in text for marker in (
         "independent unity semantic visual observation failed",
         "did not visibly change any text",
+        "not reachable from any committed .unity/.prefab script guid",
         "responsive layout", "rendered ui defect", "missing glyph", "glyph",
         "overlap", "clipped", "clipping", "unreadable",
     )):
@@ -182,6 +183,10 @@ def extract_symptom_keys(
         ("wrong_language", (
             "wrong language", "untranslated", "translation missing",
             "did not visibly change any text",
+        )),
+        ("inactive_binding", (
+            "not reachable from any committed .unity/.prefab script guid",
+            "detached source file",
         )),
         ("navigation", ("navigation failed", "screen transition", "route failed")),
         ("runtime_failure", ("runtime test failed", "playmode failed", "interaction failed")),
@@ -349,6 +354,24 @@ def _hypothesis(
             "while previously passing surfaces remain unchanged."
         )
         boundary = "One diagnosed production RectTransform ancestry and one visible symptom."
+    if (
+        layer == FailureLayer.SEMANTIC_PRODUCT
+        and "not reachable from any committed .unity/.prefab script guid"
+        in evidence_signature.casefold()
+    ):
+        cause = (
+            "The edited Unity MonoBehaviour compiles but is not attached to a committed scene/prefab and has no "
+            "runtime production reference, so it cannot change the observed UI."
+        )
+        probe = (
+            "Use committed scene script-GUID metadata to identify the active component that owns the failing "
+            "control, then make one bounded production repair there or explicitly attach the intended binder."
+        )
+        signal = (
+            "The repaired component is reachable in the executed scene and the unchanged observer measures a real "
+            "visible state change."
+        )
+        boundary = "One active Unity component binding; the detached source and proof surface remain frozen."
     return RepairHypothesis(
         hypothesis_id=_digest("RH", [observation_id, layer.value, probe]),
         suspected_cause=cause,
@@ -514,6 +537,7 @@ class ConvergencePolicy:
         permitted_paths = (
             []
             if observation.layer == FailureLayer.EVIDENCE_TOPOLOGY
+            or "artifact:inactive_binding" in observation.symptom_keys
             else observation.affected_paths
         )
         return RepairContract(

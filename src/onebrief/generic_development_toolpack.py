@@ -756,6 +756,15 @@ class ApprovedProjectDevelopmentToolPack:
             lowered = path.casefold()
             return (-sum(term in lowered for term in surface_terms), lowered)
 
+        guid_to_script: dict[str, str] = {}
+        for relative in tracked:
+            if not relative.casefold().endswith(".cs.meta"):
+                continue
+            meta = self._blob(head, relative).decode("utf-8", errors="replace")
+            match = re.search(r"(?m)^guid:\s*([a-f0-9]{32})\s*$", meta)
+            if match:
+                guid_to_script[match.group(1)] = relative.removesuffix(".meta")
+
         scenes: list[dict[str, object]] = []
         for relative in sorted(scene_paths, key=scene_rank)[:12]:
             text = self._blob(head, relative).decode("utf-8", errors="replace")
@@ -771,10 +780,22 @@ class ApprovedProjectDevelopmentToolPack:
                 -sum(term in name.casefold() for term in surface_terms),
                 name.casefold(),
             ))
+            attached_scripts = sorted({
+                guid_to_script[guid]
+                for guid in re.findall(
+                    r"m_Script:\s*\{[^}\n]*guid:\s*([a-f0-9]{32})",
+                    text,
+                )
+                if guid in guid_to_script
+            }, key=lambda path: (
+                -sum(term in path.casefold() for term in surface_terms),
+                path.casefold(),
+            ))
             scenes.append({
                 "scene_path": relative,
                 "scene_name": PurePosixPath(relative).stem,
                 "object_names": names[:30],
+                "attached_script_paths": attached_scripts[:48],
             })
         payload = {
             "schema_version": "onebrief-unity-scene-catalog-v1",
@@ -795,6 +816,14 @@ class ApprovedProjectDevelopmentToolPack:
         unity_scene_catalog = self._unity_scene_catalog(
             head, tracked, read_prefixes, focus_text
         )
+        unity_attached_scripts: set[str] = set()
+        if unity_scene_catalog is not None:
+            catalog_payload = json.loads(unity_scene_catalog)
+            unity_attached_scripts = {
+                str(path)
+                for scene in catalog_payload.get("scenes", [])
+                for path in scene.get("attached_script_paths", [])
+            }
 
         focus_terms = {
             item for item in re.findall(r"[a-z0-9가-힣][a-z0-9가-힣_-]{1,}", focus_text.casefold())
@@ -965,6 +994,7 @@ class ApprovedProjectDevelopmentToolPack:
                     key=lambda relative: (
                         0 if PurePosixPath(relative).suffix.casefold() in code_suffixes else 1,
                         0 if any(relative.startswith(prefix) for prefix in write_prefixes) else 1,
+                        0 if relative in unity_attached_scripts else 1,
                         domain_fit(relative),
                         0 if path_terms(relative) & preferred_surface_terms else 1,
                         (
@@ -982,6 +1012,7 @@ class ApprovedProjectDevelopmentToolPack:
                 remaining.remove(best)
             remaining.sort(key=lambda relative: (
                 1 if path_terms(relative) & vendor_markers else 0,
+                0 if relative in unity_attached_scripts else 1,
                 rank(relative),
             ))
             tracked = diversified + remaining
@@ -1275,12 +1306,17 @@ class ApprovedProjectDevelopmentToolPack:
                     if Path(relative).suffix.casefold() == ".cs"
                     and (path := clone / Path(*PurePosixPath(relative).parts)).is_file()
                 )
+                project_sources = {
+                    path.resolve(): path.read_text(encoding="utf-8", errors="replace")
+                    for path in (clone / "Assets").rglob("*.cs")
+                    if path.is_file() and not path.is_symlink()
+                }
                 for relative in production_paths:
                     if Path(relative).suffix.casefold() != ".cs":
                         continue
                     source = clone / Path(*PurePosixPath(relative).parts)
                     original = self.root / Path(*PurePosixPath(relative).parts)
-                    if original.is_file() or not source.is_file():
+                    if not source.is_file():
                         continue
                     content = source.read_text(encoding="utf-8", errors="replace")
                     class_match = re.search(
@@ -1293,13 +1329,46 @@ class ApprovedProjectDevelopmentToolPack:
                     runtime_entry = any(marker in content for marker in (
                         "RuntimeInitializeOnLoadMethod", "InitializeOnLoadMethod", "ExecuteAlways",
                     ))
-                    referenced_by_other_production = changed_production_source.count(class_name) > 1
-                    if not (
+                    referenced_by_other_production = any(
+                        class_name in other_content
+                        for other_path, other_content in project_sources.items()
+                        if other_path != source.resolve()
+                    )
+                    if not original.is_file() and not (
                         runtime_entry or changed_scene_assets or referenced_by_other_production
                     ):
                         issues.append(
                             f"new Unity UI MonoBehaviour {class_name} is not attached to a changed scene/prefab and "
                             "has no runtime initialization entrypoint; an inert source file does not implement the UI"
+                        )
+                        continue
+                    meta = source.with_name(source.name + ".meta")
+                    guid_match = (
+                        re.search(
+                            r"(?m)^guid:\s*([a-f0-9]{32})\s*$",
+                            meta.read_text(encoding="utf-8", errors="replace"),
+                        )
+                        if meta.is_file() else None
+                    )
+                    serialized_reference = False
+                    if guid_match:
+                        guid = guid_match.group(1)
+                        serialized_reference = any(
+                            guid in asset.read_text(encoding="utf-8", errors="replace")
+                            for suffix in ("*.unity", "*.prefab")
+                            for asset in (clone / "Assets").rglob(suffix)
+                            if asset.is_file() and not asset.is_symlink()
+                        )
+                    if original.is_file() and not (
+                        runtime_entry
+                        or changed_scene_assets
+                        or referenced_by_other_production
+                        or serialized_reference
+                    ):
+                        issues.append(
+                            f"changed Unity UI MonoBehaviour {class_name} is not reachable from any committed "
+                            ".unity/.prefab script GUID, runtime initialization entrypoint, or other production "
+                            "source reference; repair or attach the active component instead of editing a detached source file"
                         )
         if not test_sources:
             issues.append(

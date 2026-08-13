@@ -73,6 +73,27 @@ def test_unchanged_requested_unity_locale_is_a_semantic_product_failure() -> Non
     assert observation.symptom_keys == ["artifact:wrong_language"]
 
 
+def test_detached_unity_component_opens_a_new_unrestricted_binding_probe() -> None:
+    policy = ConvergencePolicy()
+    observation = policy.observe(
+        context="development_verification",
+        failure_text=(
+            "changed Unity UI MonoBehaviour SettingsBinder is not reachable from any committed "
+            ".unity/.prefab script GUID, runtime initialization entrypoint, or other production "
+            "source reference; repair or attach the active component instead of editing a detached source file"
+        ),
+        attempt_number=1,
+        affected_paths=["Assets/UI/SettingsBinder.cs"],
+    )
+    contract = policy.issue_contract(ConvergenceLedger(), observation)
+
+    assert observation.layer == FailureLayer.SEMANTIC_PRODUCT
+    assert observation.symptom_keys == ["artifact:inactive_binding"]
+    assert contract.execution_allowed is True
+    assert contract.permitted_paths == []
+    assert "active component" in contract.hypothesis.cheapest_probe
+
+
 def test_locale_observer_measurement_order_is_evidence_topology() -> None:
     observation = ConvergencePolicy().observe(
         context="development_verification",

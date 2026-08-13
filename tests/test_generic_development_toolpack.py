@@ -56,6 +56,10 @@ def test_unity_scene_catalog_exposes_real_scene_and_object_anchors_without_edit_
         ),
         "Assets/LobbyScene_All.unity": (
             b"--- !u!1 &3\nGameObject:\n  m_Name: LobbyCanvas\n"
+            b"  m_Script: {fileID: 11500000, guid: 11111111111111111111111111111111, type: 3}\n"
+        ),
+        "Assets/Scripts/LobbyController.cs.meta": (
+            b"fileFormatVersion: 2\nguid: 11111111111111111111111111111111\n"
         ),
     }
     pack._blob = lambda _head, relative: blobs[relative]
@@ -73,6 +77,9 @@ def test_unity_scene_catalog_exposes_real_scene_and_object_anchors_without_edit_
     scenes = {item["scene_name"]: item for item in payload["scenes"]}
     assert "LoginScene_All" in scenes
     assert "LoginButton" in scenes["LoginScene_All"]["object_names"]
+    assert scenes["LobbyScene_All"]["attached_script_paths"] == [
+        "Assets/Scripts/LobbyController.cs"
+    ]
 
 
 def test_proposed_exact_edit_supports_mature_single_file_components() -> None:
@@ -1537,6 +1544,50 @@ def test_unity_visual_preflight_rejects_inert_new_ui_monobehaviour(tmp_path: Pat
     )
 
     assert any("inert source file" in issue for issue in issues)
+
+
+def test_unity_visual_preflight_rejects_changed_detached_existing_monobehaviour(
+    tmp_path: Path,
+) -> None:
+    root, registry = _approved_node_project(tmp_path)
+    original = root / "Assets" / "Scripts"
+    original.mkdir(parents=True)
+    (original / "DetachedSettingsBinder.cs").write_text(
+        "using UnityEngine; public class DetachedSettingsBinder : MonoBehaviour {}\n",
+        encoding="utf-8",
+    )
+    (original / "DetachedSettingsBinder.cs.meta").write_text(
+        "fileFormatVersion: 2\nguid: 22222222222222222222222222222222\n",
+        encoding="utf-8",
+    )
+    clone = tmp_path / "unity-detached-existing-clone"
+    shutil.copytree(root, clone)
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'UnityEngine.SceneManagement.SceneManager.LoadScene("Lobby"); '
+        'var schema="onebrief-unity-visual-evidence-v1"; '
+        'var scenarios="scenarios scenario_id observed_state interaction assertion_count viewport_width viewport_height screenshot_path"; '
+        'var evidence="runtime-evidence.json"; var png="settings.png"; } }',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+
+    issues = pack._unity_visual_contract_issues(
+        profile,
+        clone,
+        "Modernize settings UI.",
+        ["Assets/Scripts/DetachedSettingsBinder.cs", "Assets/Tests/PlayMode/OneBriefVisualTests.cs"],
+    )
+
+    assert any("not reachable from any committed" in issue for issue in issues)
 
 
 def test_change_set_hashes_are_bound_to_trusted_inspection(tmp_path: Path) -> None:
