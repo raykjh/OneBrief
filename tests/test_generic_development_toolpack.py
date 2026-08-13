@@ -1257,6 +1257,9 @@ def test_unity_visual_preflight_requires_exact_real_settings_scene(tmp_path: Pat
     (clone / "Assets" / "LobbyScene_All.unity").write_text(
         "--- !u!1 &1\nGameObject:\n  m_Name: LanguageDropdown\n", encoding="utf-8"
     )
+    (clone / "Assets" / "LoginScene_All.unity").write_text(
+        "--- !u!1 &2\nGameObject:\n  m_Name: LoginButton\n", encoding="utf-8"
+    )
     (tests / "OneBriefVisualTests.cs").write_text(
         "namespace OneBrief.Visual { [UnityTest] public void SwitchLanguage() { "
         "UnityEngine.SceneManagement.SceneManager.LoadScene(\"LoginScene\"); "
@@ -1274,6 +1277,7 @@ def test_unity_visual_preflight_requires_exact_real_settings_scene(tmp_path: Pat
     issues = pack._unity_visual_contract_issues(profile, clone, "Unity localization UI")
 
     assert any("scene that does not exist" in issue for issue in issues)
+    assert any("LoginScene -> LoginScene_All" in issue for issue in issues)
     assert any("LobbyScene_All" in issue for issue in issues)
     assert any("scene containing the real LanguageDropdown" in issue for issue in issues)
 

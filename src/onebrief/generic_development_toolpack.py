@@ -1650,9 +1650,22 @@ class ApprovedProjectDevelopmentToolPack:
             if project_scenes and requested_scenes:
                 missing_scenes = [name for name in requested_scenes if name not in project_scenes]
                 if missing_scenes:
+                    replacements = {
+                        missing: sorted(
+                            name for name in project_scenes
+                            if name.casefold().startswith(missing.casefold() + "_")
+                        )
+                        for missing in missing_scenes
+                    }
+                    mapped = [
+                        f"{missing} -> {', '.join(candidates)}"
+                        for missing, candidates in replacements.items()
+                        if candidates
+                    ]
                     issues.append(
-                        "the OneBrief.Visual test names a scene that does not exist; use an exact project scene name: "
+                        "the OneBrief.Visual test names a scene that does not exist: "
                         + ", ".join(missing_scenes)
+                        + ("; exact project replacements: " + "; ".join(mapped) if mapped else "")
                         + "; available: "
                         + ", ".join(sorted(project_scenes)[:12])
                     )
