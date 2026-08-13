@@ -1747,7 +1747,8 @@ class ApprovedProjectDevelopmentToolPack:
                     "선택", "열기", "뒤로", "복귀", "로그인", "설정",
                 )
                 action_tokens = (
-                    ".onclick.invoke", "executeevents.execute", "pointerclickevent", "submitevent",
+                    ".onclick.invoke", ".onvaluechanged.invoke", "executeevents.execute",
+                    "pointerclickevent", "submitevent",
                 )
                 for state, interaction, start, end in literal_scenarios:
                     lowered_interaction = interaction.casefold()
@@ -1763,7 +1764,7 @@ class ApprovedProjectDevelopmentToolPack:
                     segment = combined_source[start:end]
                     segment_structural = _csharp_code_only(segment).casefold()
                     dropdown_assignment = re.search(
-                        r"\b[a-z_][a-z0-9_]*dropdown[a-z0-9_]*\s*\.\s*value\s*=",
+                        r"\b(?:dropdown|[a-z_][a-z0-9_]*dropdown[a-z0-9_]*)\s*\.\s*value\s*=",
                         segment_structural,
                     )
                     if (
