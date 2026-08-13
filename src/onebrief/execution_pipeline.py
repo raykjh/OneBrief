@@ -1941,10 +1941,52 @@ class ExecutionPipeline:
                         }, ensure_ascii=False, indent=2),
                     )
                     if not allowed_changes:
-                        raise PermissionError(
-                            f"{active_phase.value} proposal contains no path inside its approved scope: "
-                            + ", ".join(deferred_paths)
+                        required_surface = (
+                            "product source rather than tests or evidence"
+                            if active_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+                            else "the executable evidence harness rather than product behavior"
                         )
+                        feedback = (
+                            f"The trusted failure is owned by {active_phase.value}, but the proposal "
+                            f"changed only the other phase: {', '.join(deferred_paths)}. "
+                            f"Keep the rejected files unchanged and repair the smallest {required_surface}."
+                        )
+                        convergence_contract = record_convergence_failure(
+                            context="development_phase_scope_mismatch",
+                            failure_text=feedback,
+                            attempt_number=round_number + 1,
+                            affected_paths=deferred_paths,
+                            strategy_fingerprint=development_change_strategy_fingerprint(raw),
+                        )
+                        if not convergence_contract.execution_allowed:
+                            raise RuntimeError(
+                                "convergence progress gate blocked repeated cross-phase repair: "
+                                + convergence_contract.rationale
+                            )
+                        report = VerificationReport(
+                            verdict=Verdict.REVISE,
+                            criterion_checks=[{
+                                "criterion": f"Repair the {active_phase.value} failure on its owning surface",
+                                "passed": False,
+                                "evidence": feedback,
+                            }],
+                            blocking_issues=[feedback],
+                            revision_instructions=[
+                                f"Do not request broader authority. Modify only {required_surface}, then rerun the unchanged trusted check."
+                            ],
+                            missing_information=[],
+                        )
+                        repair_plan = prepare_repair(report, round_number)
+                        return {
+                            MAKER_STATE_KEY: previous_change_set.model_dump(mode="json"),
+                            VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
+                            **({
+                                REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
+                            } if repair_plan is not None else {}),
+                            REPAIR_CONTRACT_STATE_KEY: convergence_contract.model_dump(mode="json"),
+                            EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
+                            SKIP_VERIFIER_STATE_KEY: True,
+                        }
                     raw = raw.model_copy(update={"changes": allowed_changes})
                     proposed_paths = [
                         str(getattr(item, "path", "")).replace("\\", "/")
