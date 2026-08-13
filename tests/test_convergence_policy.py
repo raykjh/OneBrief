@@ -195,6 +195,47 @@ def test_exact_observation_replay_is_idempotent_not_a_new_failure() -> None:
     assert replayed_ledger == ledger
 
 
+def test_restart_replay_is_idempotent_when_strategy_metadata_is_absent() -> None:
+    policy = ConvergencePolicy()
+    failure = (
+        "development verification failed: unity_playmode_visual_tests (exit_code=2) | "
+        "UNITY TEST FAILURES LanguageDropdown not found in LobbyScene"
+    )
+    first_observation = policy.observe(
+        context="development_verification",
+        failure_text=failure,
+        attempt_number=1,
+        affected_paths=["Assets/Tests/PlayMode/OneBriefVisualTest.cs"],
+        strategy_fingerprint="candidate-a",
+    )
+    first_contract = policy.issue_contract(ConvergenceLedger(), first_observation)
+    ledger = policy.record(ConvergenceLedger(), first_observation, first_contract)
+
+    resumed_observation = policy.observe(
+        context="development_verification",
+        failure_text=failure,
+        attempt_number=1,
+    )
+    resumed_contract = policy.issue_contract(ledger, resumed_observation)
+
+    assert resumed_observation.observation_id == first_observation.observation_id
+    assert resumed_contract.contract_id == first_contract.contract_id
+    assert resumed_contract.execution_allowed is True
+
+
+def test_all_static_unity_visual_contract_failures_are_evidence_topology() -> None:
+    observation = ConvergencePolicy().observe(
+        context="development_verification",
+        failure_text=(
+            "Unity visual test contract: runtime evidence must record actual captured "
+            "PNG texture dimensions"
+        ),
+        attempt_number=1,
+    )
+
+    assert observation.layer == FailureLayer.EVIDENCE_TOPOLOGY
+
+
 def test_one_materially_different_hypothesis_is_allowed() -> None:
     policy = ConvergencePolicy()
     ledger = ConvergenceLedger()

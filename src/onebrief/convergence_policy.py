@@ -112,6 +112,7 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
         return FailureLayer.STRUCTURED_OUTPUT
     if any(marker in text for marker in (
         "unity visual test contract: add",
+        "unity visual test contract:",
         "unity visual evidence requires a distinct rendered scenario",
         "responsive unity visual evidence must define and capture",
         "unity visual evidence reused an identical screenshot",
@@ -397,7 +398,11 @@ class ConvergencePolicy:
     ) -> FailureObservation:
         normalized = _normalize(failure_text)
         evidence_sha = hashlib.sha256(failure_text.encode("utf-8")).hexdigest()
-        identity = [context, normalized, sorted(affected_paths or [])]
+        # Changed paths describe the attempted strategy, not the trusted
+        # failure's identity. A restart can preserve the exact verifier output
+        # without reconstructing that optional envelope; binding the ID to the
+        # paths turns one durable observation into a false extra occurrence.
+        identity = [context, normalized]
         return FailureObservation(
             observation_id=_digest("FO", identity),
             context=context,
@@ -422,7 +427,16 @@ class ConvergencePolicy:
     ) -> RepairContract:
         exact_replay = next((
             item for item in reversed(ledger.observations)
-            if item.model_dump(mode="json") == observation.model_dump(mode="json")
+            if (
+                item.model_dump(mode="json") == observation.model_dump(mode="json")
+                or (
+                    not observation.affected_paths
+                    and observation.strategy_fingerprint is None
+                    and item.context == observation.context
+                    and item.normalized_signature == observation.normalized_signature
+                    and item.evidence_sha256 == observation.evidence_sha256
+                )
+            )
         ), None)
         if exact_replay is not None:
             existing_contract = next((
