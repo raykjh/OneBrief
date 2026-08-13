@@ -9,6 +9,7 @@ from uuid import uuid4
 
 HELPER_FILENAME = "OneBriefAtomicScreenshot.cs"
 HELPER_MARKER = "OneBriefAtomicScreenshot.Capture"
+SCENARIO_HELPER_MARKER = "OneBriefAtomicScreenshot.CaptureScenario"
 
 
 ATOMIC_SCREENSHOT_SOURCE = r'''using System;
@@ -31,6 +32,26 @@ namespace OneBrief.Visual
             public int viewport_width;
             public int viewport_height;
             public string sha256;
+        }
+
+        [Serializable]
+        public sealed class ScenarioReceipt
+        {
+            public string scenario_id;
+            public string observed_state;
+            public string interaction;
+            public int assertion_count;
+            public string screenshot_path;
+            public int viewport_width;
+            public int viewport_height;
+            public string sha256;
+        }
+
+        [Serializable]
+        private sealed class ScenarioManifest
+        {
+            public string schema_version = "onebrief-unity-visual-evidence-v1";
+            public ScenarioReceipt[] scenarios;
         }
 
         private sealed class CanvasState
@@ -141,6 +162,61 @@ namespace OneBrief.Visual
                 if (target != null) RenderTexture.ReleaseTemporary(target);
                 Canvas.ForceUpdateCanvases();
             }
+        }
+
+        public static ScenarioReceipt CaptureScenario(
+            string scenarioId,
+            string observedState,
+            string interaction,
+            int assertionCount,
+            string relativePath,
+            Camera sceneCamera,
+            int width,
+            int height,
+            IEnumerable<Canvas> measuredCanvases)
+        {
+            if (string.IsNullOrWhiteSpace(scenarioId))
+                throw new ArgumentException("Scenario ID is empty.");
+            if (string.IsNullOrWhiteSpace(observedState))
+                throw new ArgumentException("Observed state is empty.");
+            if (string.IsNullOrWhiteSpace(interaction))
+                throw new ArgumentException("Interaction is empty.");
+            if (assertionCount < 1)
+                throw new ArgumentOutOfRangeException(nameof(assertionCount));
+            CaptureReceipt capture = Capture(
+                relativePath, sceneCamera, width, height, measuredCanvases);
+            return new ScenarioReceipt {
+                scenario_id = scenarioId,
+                observed_state = observedState,
+                interaction = interaction,
+                assertion_count = assertionCount,
+                screenshot_path = capture.screenshot_path,
+                viewport_width = capture.viewport_width,
+                viewport_height = capture.viewport_height,
+                sha256 = capture.sha256,
+            };
+        }
+
+        public static void WriteManifestAtomically(params ScenarioReceipt[] scenarios)
+        {
+            if (scenarios == null || scenarios.Length == 0)
+                throw new ArgumentException("No scenarios supplied.");
+            var captures = scenarios.Select(scenario => {
+                if (scenario == null) throw new ArgumentException("Scenario is null.");
+                if (string.IsNullOrWhiteSpace(scenario.scenario_id)
+                    || string.IsNullOrWhiteSpace(scenario.observed_state)
+                    || string.IsNullOrWhiteSpace(scenario.interaction)
+                    || scenario.assertion_count < 1)
+                    throw new InvalidOperationException("Scenario evidence fields are incomplete.");
+                return new CaptureReceipt {
+                    screenshot_path = scenario.screenshot_path,
+                    viewport_width = scenario.viewport_width,
+                    viewport_height = scenario.viewport_height,
+                    sha256 = scenario.sha256,
+                };
+            }).ToArray();
+            string json = JsonUtility.ToJson(new ScenarioManifest { scenarios = scenarios });
+            WriteManifestAtomically(json, captures);
         }
 
         public static void WriteManifestAtomically(string json, params CaptureReceipt[] captures)

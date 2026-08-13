@@ -41,3 +41,9 @@ reads pixels synchronously, writes and flushes a temporary PNG, verifies its
 decoded dimensions, atomically publishes it, and only then permits atomic
 publication of `runtime-evidence.json`. The helper is validator-owned evidence
 infrastructure and is never applied to the user's product repository.
+
+Tests submit observed state through the typed `CaptureScenario` API. The helper
+creates the required scenario fields from the durable capture receipt and
+publishes the manifest through `WriteManifestAtomically`. A maker therefore
+owns scene navigation, interaction, and assertions, but never hand-writes the
+evidence schema or substitutes requested dimensions for measured PNG values.

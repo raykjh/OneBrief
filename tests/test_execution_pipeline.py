@@ -2717,9 +2717,9 @@ def test_fake_unity_evidence_helper_failure_requires_the_supplied_exact_api() ->
 
     instructions = "\n".join(report.revision_instructions)
     assert "Delete the test-side OneBriefAtomicScreenshot class completely" in instructions
-    assert "five-argument Capture" in instructions
+    assert "CaptureScenario" in instructions
     assert "Do not create a fallback or wrapper" in instructions
-    assert "CaptureReceipt" in instructions
+    assert "WriteManifestAtomically(scenarioReceipt)" in instructions
 
 
 def test_atomic_unity_harness_instruction_publishes_exact_helper_contract() -> None:
@@ -2733,8 +2733,8 @@ def test_atomic_unity_harness_instruction_publishes_exact_helper_contract() -> N
     instructions = "\n".join(report.revision_instructions)
     assert "atomic two-file repair" in instructions
     assert "runner supplies immutable OneBriefAtomicScreenshot" in instructions
-    assert "Capture(relativePngPath, sceneCamera, width, height, activeCanvases)" in instructions
-    assert "WriteManifestAtomically(completeSchemaJson, captureReceipts)" in instructions
+    assert "CaptureScenario(scenarioId, observedState, interaction, assertionCount" in instructions
+    assert "WriteManifestAtomically(scenarioReceipt)" in instructions
 
 
 def test_related_unity_contract_failures_remain_one_coherent_repair_scope() -> None:

@@ -50,6 +50,7 @@ from onebrief.unity_layout_diagnostics import (
 )
 from onebrief.unity_atomic_evidence import (
     HELPER_MARKER,
+    SCENARIO_HELPER_MARKER,
     install_atomic_unity_evidence_helper,
 )
 from onebrief.web_runtime_evidence import (
@@ -1877,21 +1878,26 @@ class ApprovedProjectDevelopmentToolPack:
             issues.append(
                 "add a discoverable Unity PlayMode test whose namespace/full name begins "
                 "with OneBrief.Visual; in that same atomic test bundle, capture every rendered state with the "
-                "trusted OneBriefAtomicScreenshot.Capture helper and publish the measured scenarios only with "
+                "trusted OneBriefAtomicScreenshot.CaptureScenario helper and publish the measured scenarios only with "
                 "OneBriefAtomicScreenshot.WriteManifestAtomically"
             )
         else:
             combined_source = "\n".join(test_sources)
             combined = combined_source.casefold()
             structural = _csharp_code_only(combined_source).casefold()
+            uses_scenario_api = (
+                SCENARIO_HELPER_MARKER.casefold() in structural
+                and "onebriefatomicscreenshot.writemanifestatomically" in structural
+            )
             if re.search(
                 r"\b(?:class|struct)\s+onebriefatomicscreenshot\b",
                 structural,
             ):
                 issues.append(
                     "the PlayMode test must not declare, duplicate, or replace OneBriefAtomicScreenshot; it is "
-                    "trusted runner code installed beside the test. Call Capture(relativePngPath, sceneCamera, "
-                    "width, height, canvases) and WriteManifestAtomically(json, captures) on that supplied type"
+                    "trusted runner code installed beside the test. Call CaptureScenario(scenarioId, "
+                    "observedState, interaction, assertionCount, relativePngPath, sceneCamera, width, height, "
+                    "canvases) and WriteManifestAtomically(scenarioReceipt) on that supplied type"
                 )
             if re.search(
                 r"onebriefatomicscreenshot\.capture\s*\(\s*[^,()]+\s*\)",
@@ -1912,9 +1918,9 @@ class ApprovedProjectDevelopmentToolPack:
                 )
             if '${"' in combined or "${'" in combined:
                 issues.append("use valid C# interpolation ($\"...\"), never JavaScript-style ${...}")
-            if "runtime-evidence.json" not in combined:
+            if "runtime-evidence.json" not in combined and not uses_scenario_api:
                 issues.append("the OneBrief.Visual test must write onebrief-evidence/runtime-evidence.json")
-            elif (
+            elif not uses_scenario_api and (
                 "onebrief-unity-visual-evidence-v1" not in combined
                 or "scenarios" not in combined
             ):
@@ -1922,7 +1928,7 @@ class ApprovedProjectDevelopmentToolPack:
                     "runtime-evidence.json must use schema_version onebrief-unity-visual-evidence-v1 and contain "
                     "a scenarios array derived from the executed UI states"
                 )
-            elif not all(field in combined for field in (
+            elif not uses_scenario_api and not all(field in combined for field in (
                 "scenario_id", "observed_state", "interaction", "assertion_count",
                 "viewport_width", "viewport_height", "screenshot_path",
             )):
@@ -1952,12 +1958,16 @@ class ApprovedProjectDevelopmentToolPack:
                 )
             if ".png" not in combined and "capturescreenshot" not in combined:
                 issues.append("the OneBrief.Visual test must capture PNG runtime evidence")
-            if HELPER_MARKER.casefold() not in structural or (
+            if (
+                HELPER_MARKER.casefold() not in structural
+                and SCENARIO_HELPER_MARKER.casefold() not in structural
+            ) or (
                 "onebriefatomicscreenshot.writemanifestatomically" not in structural
             ):
                 issues.append(
-                    "the OneBrief.Visual test must use the trusted OneBriefAtomicScreenshot.Capture and "
-                    "WriteManifestAtomically helpers so PNG bytes are durable before the manifest is published"
+                    "the OneBrief.Visual test must use the trusted OneBriefAtomicScreenshot.CaptureScenario and "
+                    "WriteManifestAtomically helpers so scenario fields and PNG bytes are durable before the "
+                    "manifest is published"
                 )
             if "screencapture.capturescreenshot" in structural and not all(
                 token in structural for token in ("readpixels", "encodetopng", "file.writeallbytes")

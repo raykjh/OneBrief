@@ -711,6 +711,43 @@ def test_visual_preflight_uses_authoritative_goal_when_compact_contract_omits_vi
     assert any("OneBriefAtomicScreenshot.Capture" in issue for issue in issues)
 
 
+def test_structured_scenario_api_satisfies_manifest_contract_without_handwritten_json(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-structured-evidence"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Login() { "
+        "UnityEngine.SceneManagement.SceneManager.LoadScene(\"Login\"); "
+        "var button = UnityEngine.GameObject.Find(\"LoginButton\")"
+        ".GetComponent<UnityEngine.UI.Button>(); Assert.IsNotNull(button); "
+        "button.onClick.Invoke(); Assert.IsTrue(destinationVisible); "
+        "var scenario = OneBriefAtomicScreenshot.CaptureScenario("
+        "\"login_to_lobby\", \"Lobby\", \"click_login\", 2, \"login.png\", "
+        "camera, 1920, 1080, canvases); "
+        "OneBriefAtomicScreenshot.WriteManifestAtomically(scenario); } }\n",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True,
+        adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile,
+        clone,
+        "Complete rendered key-screen evidence for the Login to Lobby UI transition.",
+    )
+
+    assert issues == []
+
+
 def test_visual_preflight_rejects_test_owned_or_short_form_atomic_screenshot_helper(
     tmp_path: Path,
 ) -> None:

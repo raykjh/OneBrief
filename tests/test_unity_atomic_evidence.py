@@ -25,6 +25,10 @@ def test_atomic_helper_is_installed_beside_visual_test_assembly(tmp_path: Path) 
     assert "stream.Flush(true)" in source
     assert "File.Move(temporaryPath, finalPath)" in source
     assert "WriteManifestAtomically" in source
+    assert "ScenarioReceipt" in source
+    assert "CaptureScenario" in source
+    assert 'schema_version = "onebrief-unity-visual-evidence-v1"' in source
+    assert "JsonUtility.ToJson" in source
     assert "ScreenCapture.CaptureScreenshot" not in source
 
 

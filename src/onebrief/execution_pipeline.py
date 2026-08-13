@@ -982,17 +982,26 @@ class ExecutionPipeline:
             if "must not declare, duplicate, or replace onebriefatomicscreenshot" in lowered:
                 return (
                     "Delete the test-side OneBriefAtomicScreenshot class completely. The isolated runner installs "
-                    "the trusted helper beside the test. Call its five-argument Capture(relativePngPath, "
-                    "sceneCamera, width, height, activeCanvases), preserve each returned CaptureReceipt, build the "
-                    "scenario JSON from that receipt, and pass the JSON plus all receipts to "
-                    "WriteManifestAtomically. Do not create a fallback or wrapper with the same name."
+                    "the trusted helper beside the test. Call CaptureScenario(scenarioId, observedState, "
+                    "interaction, assertionCount, relativePngPath, sceneCamera, width, height, activeCanvases), "
+                    "then WriteManifestAtomically(scenarioReceipt). Do not create a fallback or wrapper with the "
+                    "same name and do not hand-write runtime-evidence.json."
                 )
             if "capture requires exactly" in lowered or "zero-argument log-only call" in lowered:
                 return (
-                    "Use the trusted helper's exact API: Capture(relativePngPath, sceneCamera, width, height, "
-                    "activeCanvases) returns a CaptureReceipt. Use its screenshot_path, viewport_width, and "
-                    "viewport_height in the scenario, then call WriteManifestAtomically(completeSchemaJson, "
-                    "captureReceipts). Do not redefine the helper or call either method with fewer arguments."
+                    "Replace the short-form call with the trusted structured API: CaptureScenario(scenarioId, "
+                    "observedState, interaction, assertionCount, relativePngPath, sceneCamera, width, height, "
+                    "activeCanvases), followed by WriteManifestAtomically(scenarioReceipt). Do not redefine the "
+                    "helper, call either method with fewer arguments, or hand-write runtime-evidence.json."
+                )
+            if "must use the trusted onebriefatomicscreenshot.capturescenario" in lowered:
+                return (
+                    "Use the runner-supplied structured API instead of hand-writing evidence JSON: "
+                    "var scenario = OneBriefAtomicScreenshot.CaptureScenario(scenarioId, observedState, "
+                    "interaction, assertionCount, relativePngPath, sceneCamera, width, height, activeCanvases); "
+                    "then call OneBriefAtomicScreenshot.WriteManifestAtomically(scenario). The helper derives "
+                    "viewport and screenshot fields from durable PNG bytes; do not write runtime-evidence.json "
+                    "yourself and do not redefine the helper."
                 )
             if "unity visual test contract" in lowered and "synthetic ui" in lowered:
                 return (
@@ -1144,10 +1153,10 @@ class ExecutionPipeline:
                 )
             if "unity visual test contract" in lowered and "png" in lowered:
                 return (
-                    "Use the trusted evidence-only OneBrief.Visual.OneBriefAtomicScreenshot.Capture helper already "
-                    "installed beside the PlayMode test, then publish the manifest through "
-                    "WriteManifestAtomically only after every CaptureReceipt exists. Do not call "
-                    "ScreenCapture.CaptureScreenshot and do not copy or replace the trusted helper."
+                    "Use the trusted evidence-only OneBrief.Visual.OneBriefAtomicScreenshot.CaptureScenario helper "
+                    "already installed beside the PlayMode test, then call WriteManifestAtomically with the "
+                    "returned ScenarioReceipt. Do not call ScreenCapture.CaptureScreenshot, hand-write the "
+                    "manifest, or copy or replace the trusted helper."
                 )
             if "unity visual test contract" in lowered and "visible ui" in lowered:
                 return (
@@ -1186,9 +1195,10 @@ class ExecutionPipeline:
                     "discoverable OneBrief.Visual PlayMode .cs source and one sibling .asmdef whose "
                     "optionalUnityReferences contains TestAssemblies. Do not submit or retain only one half. "
                     "The runner supplies immutable OneBriefAtomicScreenshot; never declare a fallback with that "
-                    "name. Call Capture(relativePngPath, sceneCamera, width, height, activeCanvases), serialize "
-                    "the returned screenshot_path, viewport_width, and viewport_height into each scenario, then "
-                    "call WriteManifestAtomically(completeSchemaJson, captureReceipts)."
+                    "name. Call CaptureScenario(scenarioId, observedState, interaction, assertionCount, "
+                    "relativePngPath, sceneCamera, width, height, activeCanvases), then call "
+                    "WriteManifestAtomically(scenarioReceipt). The helper creates the schema and binds measured "
+                    "PNG dimensions; do not hand-write runtime-evidence.json."
                 ]
                 if requires_atomic_unity_evidence_pair(detail)
                 else []
