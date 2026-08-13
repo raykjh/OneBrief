@@ -192,6 +192,8 @@ class ModelExecutionPolicy(BaseModel):
             "selected real languagedropdown exists and is visible",
             "stalled after two identical candidates",
             "identical candidate",
+            "exact content did not improve the trusted evidence",
+            "do not repeat it",
             "wrong repair strategy",
             "failed acceptance criterion",
             "evidence harness is an atomic bundle",

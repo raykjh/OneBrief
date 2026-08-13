@@ -207,6 +207,22 @@ def test_cross_phase_repeat_escalates_same_maker_to_pro() -> None:
     assert decision.selected_model == ApprovedModel.GEMINI_3_1_PRO_PREVIEW
 
 
+def test_rejected_identical_evidence_delta_escalates_same_maker_to_pro() -> None:
+    decision = _escalation_policy().select_after_failure(
+        "long_form_draft",
+        failure_text=(
+            "Rejected repair delta changed Assets/Tests/PlayMode/OneBriefVisualTest.cs. "
+            "This exact content did not improve the trusted evidence; do not repeat it."
+        ),
+        difficulty="complex",
+        attempt=2,
+    )
+
+    assert decision.escalated is True
+    assert decision.selected_model == ApprovedModel.GEMINI_3_1_PRO_PREVIEW
+    assert decision.call_stage == "long_form_draft_reasoning_escalation_r2"
+
+
 def test_relabelled_scene_load_escalates_same_maker_to_pro() -> None:
     decision = _escalation_policy().select_after_failure(
         "long_form_draft",
