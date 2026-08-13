@@ -156,6 +156,7 @@ class RecoveryPolicy:
         )) or message.startswith((
             "unity visual scenario ",
             "unity visual evidence ",
+            "unity visual verification requires ",
         )):
             error_class = ErrorClass.ARTIFACT_VALIDATION
             action = RecoveryAction.RETURN_TO_AGENT

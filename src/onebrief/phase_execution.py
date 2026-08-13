@@ -288,6 +288,7 @@ def classify_failure_owner(
     if any(marker in normalized for marker in (
         "evidence harness", "evidence topology", "unity visual test contract",
         "missing playmode test",
+        "executed onebrief.visual playmode test",
         "add a discoverable unity playmode test", "testassemblies",
         "runtime-evidence.json", "screenshot capture is missing",
     )):

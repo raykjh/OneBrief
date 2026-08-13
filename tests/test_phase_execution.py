@@ -153,6 +153,21 @@ def test_batchmode_framebuffer_failure_cannot_open_product_edit_authority() -> N
     )
 
 
+def test_zero_discovered_visual_tests_selects_evidence_construction() -> None:
+    decision = decide_repair_phase(
+        context="development_verification",
+        failure_text=(
+            "Unity visual verification requires at least one executed "
+            "OneBrief.Visual PlayMode test"
+        ),
+        round_number=1,
+    )
+
+    assert decision.failure_owner == FailureOwner.EVIDENCE
+    assert decision.next_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
+    assert decision.model_repair_allowed is True
+
+
 def test_unity_visual_contract_remains_evidence_owned_with_mixed_candidate() -> None:
     decision = decide_repair_phase(
         context="development_acceptance_verification",

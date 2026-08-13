@@ -194,7 +194,9 @@ def _test_count(results_path: Path) -> int:
     ]
     if count < 1 or not any("OneBrief.Visual" in name for name in names):
         raise RuntimeError(
-            "Unity visual verification requires at least one executed OneBrief.Visual PlayMode test"
+            "Unity visual verification requires at least one executed OneBrief.Visual PlayMode test; "
+            "create a discoverable PlayMode test whose namespace/full name begins with OneBrief.Visual "
+            "and a sibling test asmdef with optionalUnityReferences containing TestAssemblies"
         )
     if failed:
         raise RuntimeError(f"Unity visual verification reported {failed} failed test(s)")

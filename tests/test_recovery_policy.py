@@ -135,6 +135,21 @@ def test_missing_unity_runtime_screenshot_returns_to_maker() -> None:
     )
 
     assert decision.error_class == ErrorClass.ARTIFACT_VALIDATION
+
+
+def test_zero_discovered_unity_visual_tests_returns_to_evidence_maker() -> None:
+    decision = RecoveryPolicy().decide(
+        RuntimeError(
+            "Unity visual verification requires at least one executed OneBrief.Visual PlayMode test"
+        ),
+        context="development_verification",
+        attempt_number=1,
+    )
+
+    assert decision.error_class == ErrorClass.ARTIFACT_VALIDATION
+    assert decision.action == RecoveryAction.RETURN_TO_AGENT
+    assert decision.retry_allowed is True
+    assert decision.responsible_party == "maker"
     assert decision.action == RecoveryAction.RETURN_TO_AGENT
     assert decision.responsible_party == "maker"
     assert decision.retry_allowed is True
