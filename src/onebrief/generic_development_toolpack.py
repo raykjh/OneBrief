@@ -1987,6 +1987,11 @@ class ApprovedProjectDevelopmentToolPack:
             project_scenes = {
                 path.stem: path for path in (clone / "Assets").rglob("*.unity") if path.is_file()
             }
+            language_requested = bool(re.search(
+                r"(?:language|locali[sz]ation|다국어|언어|glyph|글리프)",
+                goal_text,
+                re.IGNORECASE,
+            ))
             if project_scenes and requested_scenes:
                 missing_scenes = [name for name in requested_scenes if name not in project_scenes]
                 if missing_scenes:
@@ -2022,7 +2027,8 @@ class ApprovedProjectDevelopmentToolPack:
                     ))
                 )
                 if (
-                    settings_scenes
+                    language_requested
+                    and settings_scenes
                     and not any(name in settings_scenes for name in requested_scenes)
                     and not verified_navigation_to_settings_scene
                 ):
@@ -2105,9 +2111,6 @@ class ApprovedProjectDevelopmentToolPack:
                 issues.append(
                     "the OneBrief.Visual test must inspect and interact with visible UI objects from the loaded scene"
                 )
-            language_requested = bool(re.search(
-                r"(?:language|locali[sz]ation|다국어|언어)", goal_text, re.IGNORECASE
-            ))
             dropdown_discovered = bool(
                 re.search(r"GameObject\.Find\s*\(\s*\"LanguageDropdown\"", combined_source)
                 or "getcomponent<tmp_dropdown" in structural
@@ -2202,7 +2205,8 @@ class ApprovedProjectDevelopmentToolPack:
                         "invoking any Close, Back, or Return navigation, and never rewrite product labels in the test"
                     )
             if (
-                "textinfo.characterinfo" not in structural
+                language_requested
+                and "textinfo.characterinfo" not in structural
                 and ".hascharacter" not in structural
                 and "getmissingcharacters" not in structural
             ):

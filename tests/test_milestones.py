@@ -360,7 +360,7 @@ def test_executor_scopes_each_slice_and_finishes_on_clean_baseline(
         source_revision="a" * 40,
         integration_base_revision="b" * 40,
     )
-    calls: list[tuple[Path, str]] = []
+    calls: list[tuple[Path, str, str | None]] = []
     durable_checkpoints: list[str] = []
 
     class FakeLifecycle:
@@ -378,7 +378,7 @@ def test_executor_scopes_each_slice_and_finishes_on_clean_baseline(
             self.registry = registry
 
         def run(self, *, intake, requirements, sources, output_dir):
-            calls.append((self.registry, intake.goal))
+            calls.append((self.registry, intake.goal, intake.desired_output))
             development = output_dir / "development"
             (development / "changed_files" / "Assets").mkdir(parents=True, exist_ok=True)
             (development / "change_set.json").write_text(
@@ -420,7 +420,11 @@ def test_executor_scopes_each_slice_and_finishes_on_clean_baseline(
     assert result.status == PipelineStatus.COMPLETE
     assert calls[-1][0] == baseline_registry
     assert calls[-1][1] == "Modernize JULPAE"
-    assert all("Milestone M" in goal for _registry, goal in calls[:-1])
+    assert all("Milestone M" in goal for _registry, goal, _output in calls[:-1])
+    first_slice_output = calls[0][2] or ""
+    assert "Milestone outcome:" in first_slice_output
+    assert "Responsive visual layout" not in first_slice_output
+    assert "localization glyph integrity" not in first_slice_output
     assert (tmp_path / "work" / "development" / "change_set.json").is_file()
     store = MilestoneStore(tmp_path / "work" / "milestone_state", plan)
     assert all(store.checkpoint(item.milestone_id) is not None for item in plan.milestones)

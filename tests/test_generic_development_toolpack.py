@@ -679,6 +679,40 @@ def test_unity_visual_preflight_requires_discoverable_test_and_evidence(tmp_path
     assert any("never be placed above production scripts" in issue for issue in unsafe_issues)
 
 
+def test_unity_visual_preflight_does_not_leak_future_language_contract_into_login_slice(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-login-slice"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Login() { "
+        "UnityEngine.SceneManagement.SceneManager.LoadScene(\"Login\"); "
+        "var button = UnityEngine.Object.FindFirstObjectByType<UnityEngine.UI.Button>(); "
+        "button.onClick.Invoke(); var evidence = \"onebrief-evidence/runtime-evidence.json\"; "
+        "var screenshot = \"onebrief-evidence/login.png\"; } }\n",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True,
+        adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile,
+        clone,
+        "Milestone M01: modernize the Login surface and verify authentication handoff.",
+    )
+
+    assert not any("LanguageDropdown" in issue for issue in issues)
+    assert not any("glyph" in issue.lower() for issue in issues)
+
+
 def test_unity_visual_preflight_allows_temporary_capture_camera_but_rejects_synthetic_canvas(tmp_path: Path) -> None:
     _root, registry = _approved_node_project(tmp_path)
     pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)

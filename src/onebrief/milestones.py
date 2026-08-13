@@ -949,6 +949,13 @@ def execute_milestone_plan(
         pipeline = pipeline_factory(Path(workspace.integration_registry_root))
         milestone_intake = intake.model_copy(update={
             "goal": scoped.normalized_goal,
+            "desired_output": "\n".join([
+                f"Milestone outcome: {milestone.contract.target_state}",
+                "Deliverables:",
+                *(f"- {item}" for item in milestone.contract.deliverables),
+                "Evidence required now:",
+                *(f"- {item}" for item in milestone.contract.evidence_requirements),
+            ]),
             "max_revision_rounds": milestone.contract.max_revision_rounds,
         })
         checkpoint = pipeline.run(
