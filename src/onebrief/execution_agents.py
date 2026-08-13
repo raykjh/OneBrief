@@ -445,6 +445,85 @@ class DeveloperAgent:
         return self.change_set_schema.model_validate(raw)
 
     @staticmethod
+    def source_binding_anchors(
+        proposal: object,
+        approved_sources: list[dict[str, Any]] | None,
+    ) -> list[dict[str, object]]:
+        """Build exact source windows after a stale search selector is rejected.
+
+        This is a deterministic recovery step, not a fuzzy edit. It only
+        exposes small windows from the already approved source when a stable
+        line from the proposed search can be found exactly once in that source.
+        The next maker turn must select the resulting digest-bound anchor ID;
+        trusted promotion still performs the actual exact replacement.
+        """
+
+        payload = (
+            proposal.model_dump(mode="json")
+            if isinstance(proposal, BaseModel)
+            else proposal
+        )
+        if not isinstance(payload, dict):
+            return []
+        source_map = {
+            str(item.get("repository_path", "")): str(item.get("content", ""))
+            for item in (approved_sources or [])
+            if item.get("repository_path") and isinstance(item.get("content"), str)
+        }
+        groups: list[dict[str, object]] = []
+        for raw_change in payload.get("changes", []):
+            if not isinstance(raw_change, dict):
+                continue
+            path = str(raw_change.get("path", ""))
+            search = raw_change.get("search")
+            content = source_map.get(path, "")
+            if not path or not isinstance(search, str) or not content:
+                continue
+            source_lines = content.splitlines()
+            search_lines = [line.strip() for line in search.splitlines() if line.strip()]
+            candidates: list[tuple[int, int, str]] = []
+            for search_line in search_lines:
+                if len(search_line) < 8 or not re.search(r"[A-Za-z0-9_가-힣]", search_line):
+                    continue
+                matches = [
+                    index for index, source_line in enumerate(source_lines)
+                    if source_line.strip() == search_line
+                ]
+                if len(matches) != 1:
+                    continue
+                # Prefer declarations and identifier-rich lines over braces or
+                # generic control flow when several exact fragments survived.
+                score = len(set(re.findall(r"[A-Za-z_][A-Za-z0-9_]{3,}", search_line)))
+                if re.search(r"\b(class|struct|interface|void|public|private|protected|function|def)\b", search_line):
+                    score += 8
+                candidates.append((score, matches[0], search_line))
+            anchors: list[dict[str, object]] = []
+            used: set[tuple[int, int]] = set()
+            for _score, index, _line in sorted(candidates, reverse=True):
+                start = max(0, index - 1)
+                end = min(len(source_lines), index + 3)
+                span = (start, end)
+                if span in used:
+                    continue
+                used.add(span)
+                text = "\n".join(source_lines[start:end])
+                if not text or content.count(text) != 1:
+                    continue
+                anchors.append({
+                    "anchor_id": "A" + hashlib.sha256(
+                        (path + "\0" + text).encode("utf-8")
+                    ).hexdigest()[:12],
+                    "start_line": start + 1,
+                    "end_line": end,
+                    "text": text,
+                })
+                if len(anchors) >= 6:
+                    break
+            if anchors:
+                groups.append({"path": path, "anchors": anchors})
+        return groups
+
+    @staticmethod
     def exact_edit_anchors(
         previous_change_set: BaseModel | None,
         verification_feedback: str | None,

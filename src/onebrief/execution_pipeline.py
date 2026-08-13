@@ -2154,6 +2154,11 @@ class ExecutionPipeline:
                     item for item in raw_payload.get("changes", [])
                     if isinstance(item, dict)
                 ]
+                source_binding_anchors = developer.source_binding_anchors(
+                    raw_payload, prepared_sources
+                )
+                if source_binding_anchors:
+                    current_exact_edit_anchors = source_binding_anchors
                 convergence_contract = record_convergence_failure(
                     context="development_candidate_promotion",
                     failure_text=str(exc),
@@ -2198,7 +2203,12 @@ class ExecutionPipeline:
                     }],
                     blocking_issues=[feedback],
                     revision_instructions=[
-                        convergence_contract.hypothesis.cheapest_probe,
+                        (
+                            "Choose exactly one anchor_id from exact_edit_anchors and return the complete replacement "
+                            "for that displayed approved-source window; do not retype search text."
+                            if source_binding_anchors
+                            else convergence_contract.hypothesis.cheapest_probe
+                        ),
                         convergence_contract.hypothesis.repair_boundary,
                     ],
                     missing_information=[],
