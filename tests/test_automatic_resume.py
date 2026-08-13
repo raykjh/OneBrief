@@ -814,6 +814,27 @@ def test_partial_identical_repair_candidate_can_resume_with_unused_budget(tmp_pa
     assert can_attempt_bounded_repair_resume(job) is True
 
 
+def test_phase_wallet_block_can_resume_with_unused_aggregate_budget(tmp_path: Path) -> None:
+    job = tmp_path / "phase-wallet-block"
+    _failed_job(job)
+    record = JobRecord.model_validate_json((job / "job.json").read_text("utf-8"))
+    record = record.model_copy(update={
+        "status": JobStatus.NEEDS_BUDGET,
+        "current_stage": "budget_gate",
+        "message": (
+            "call blocked before provider invocation: evidence_construction wallet "
+            "would be exceeded; phase remaining $0.16; needs $0.22, remaining $4.12"
+        ),
+    })
+    (job / "job.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    (job / "work" / "development_verification_failure.txt").write_text(
+        "development verification failed: Unity visual test contract rejected",
+        encoding="utf-8",
+    )
+
+    assert can_attempt_bounded_repair_resume(job) is True
+
+
 def test_stalled_distinct_unity_surface_evidence_can_resume(tmp_path: Path) -> None:
     job = tmp_path / "stalled-unity-surface"
     _failed_job(job)

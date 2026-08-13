@@ -510,6 +510,7 @@ def can_attempt_bounded_repair_resume(job_dir: Path) -> bool:
         record.status in {
             JobStatus.FAILED,
             JobStatus.PARTIAL,
+            JobStatus.NEEDS_BUDGET,
             JobStatus.NEEDS_AUTHORIZATION,
             JobStatus.NEEDS_INFORMATION,
         }
