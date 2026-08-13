@@ -275,6 +275,12 @@ def test_upload_outputs_publishes_terminal_job_record_last(tmp_path: Path, monke
     (job_dir / "job.json").write_text("{}", encoding="utf-8")
     (job_dir / "work" / "execution_graph_state.json").write_text("{}", encoding="utf-8")
     (job_dir / "run" / "cost_ledger.json").write_text("{}", encoding="utf-8")
+    snapshot = job_dir / "work" / "project_snapshot"
+    (snapshot / "repository" / "Assets").mkdir(parents=True)
+    (snapshot / "registry" / "project").mkdir(parents=True)
+    (snapshot / "repository" / "Assets" / "large.asset").write_text("ephemeral")
+    (snapshot / "registry" / "project" / "toolpack.json").write_text("ephemeral")
+    (snapshot / "restore_evidence.json").write_text("{}", encoding="utf-8")
     uploaded = []
     repository = GCSJobStore("gs://onebrief-test/jobs/ordered", client=Client())
     monkeypatch.setattr(
@@ -287,6 +293,9 @@ def test_upload_outputs_publishes_terminal_job_record_last(tmp_path: Path, monke
 
     assert uploaded[-1] == "job.json"
     assert "work/execution_graph_state.json" in uploaded[:-1]
+    assert "work/project_snapshot/restore_evidence.json" in uploaded[:-1]
+    assert not any("project_snapshot/repository" in item for item in uploaded)
+    assert not any("project_snapshot/registry" in item for item in uploaded)
 
 
 def test_budget_amendment_downloads_only_allowlisted_cloud_artifacts(tmp_path: Path) -> None:

@@ -131,7 +131,14 @@ def _local_job_files(job_dir: Path) -> list[Path]:
         if (
             len(relative.parts) >= 2
             and relative.parts[0] == "work"
-            and relative.parts[1] == "milestone_workspace"
+            and (
+                relative.parts[1] == "milestone_workspace"
+                or (
+                    relative.parts[1] == "project_snapshot"
+                    and len(relative.parts) >= 3
+                    and relative.parts[2] in {"repository", "registry"}
+                )
+            )
         ):
             continue
         files.append(path)
