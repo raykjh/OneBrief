@@ -317,11 +317,47 @@ def test_non_escalated_phase_call_cannot_borrow_reserve(tmp_path: Path) -> None:
 
     with pytest.raises(BudgetExceeded, match="wallet would be exceeded"):
         store.reserve_call(
-            stage="product_implementation::repair::long_form_draft",
+            stage="product_implementation::long_form_draft",
             model="gemini-3.5-flash",
             input_token_cap=1_000,
             output_token_cap=1_000,
         )
+
+
+def test_authority_preserving_evidence_repair_can_borrow_unused_reserve(
+    tmp_path: Path,
+) -> None:
+    estimate = _estimate().model_copy(update={
+        "phase_budgets": [
+            PhaseBudgetEstimate(
+                phase=ExecutionPhase.EVIDENCE_CONSTRUCTION,
+                minimum_cost_usd=0.001,
+                recommended_cost_usd=0.001,
+                maximum_cost_usd=0.001,
+                max_ai_repair_calls=2,
+                max_deterministic_attempts=2,
+            ),
+            PhaseBudgetEstimate(
+                phase=ExecutionPhase.RESERVE,
+                minimum_cost_usd=0,
+                recommended_cost_usd=0,
+                maximum_cost_usd=0,
+            ),
+        ]
+    })
+    store = BudgetStore(tmp_path / "run")
+    store.approve(estimate, 0.1)
+
+    call = store.reserve_call(
+        stage="evidence_construction::repair::long_form_draft",
+        model="gemini-3.5-flash",
+        input_token_cap=1_000,
+        output_token_cap=1_000,
+    )
+
+    assert call.phase_reserve_borrowed_usd_micros > 0
+    summary = store.phase_summary()
+    assert summary["evidence_construction"]["borrowed_from_reserve_usd_micros"] > 0
 
 
 def test_deterministic_attempts_have_a_separate_hard_limit(tmp_path: Path) -> None:

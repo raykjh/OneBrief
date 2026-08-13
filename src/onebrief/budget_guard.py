@@ -390,16 +390,15 @@ class BudgetStore:
                             - reserve_spent
                             - already_borrowed,
                         )
-                        # The owner approved the elevated model rung and the
-                        # total hard cap up front. Only that policy-qualified
-                        # reasoning escalation may borrow unused reserve; an
-                        # ordinary phase overrun still stops for a new decision.
-                        approved_escalation = bool(
-                            re.search(r"_reasoning_escalation_r\d+", stage)
-                        )
+                        # The owner approved the total hard cap up front.
+                        # A repair that remains inside its existing authority
+                        # may borrow unused reserve instead of stopping over a
+                        # tiny phase-estimation error. A new product stage or
+                        # broader authority still requires a new decision.
+                        approved_repair = is_ai_repair_stage(stage)
                         if (
                             phase != ExecutionPhase.RESERVE
-                            and approved_escalation
+                            and approved_repair
                             and shortfall <= reserve_available
                         ):
                             phase_reserve_borrowed = shortfall
