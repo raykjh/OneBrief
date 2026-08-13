@@ -550,6 +550,66 @@ def test_static_unity_topology_resume_skips_duplicate_revalidation_and_stale_gat
     assert not (child / "work" / "repair_contract.json").exists()
 
 
+def test_batchmode_framebuffer_resume_discards_stale_convergence_gate(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source-framebuffer-topology"
+    source.mkdir()
+    ledger = BudgetStore(source / "run").approve(_estimate(), 0.01)
+    record = JobRecord(
+        job_id=source.name,
+        status=JobStatus.FAILED,
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:01+00:00",
+        attempts=1,
+        current_stage="failed",
+        message="RuntimeError: development verification failed",
+        run_id=ledger.run_id,
+    )
+    (source / "job.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    inputs = source / "inputs"
+    inputs.mkdir()
+    intake = IntakeRequest(goal="Improve the Unity project.", public_research_allowed=True)
+    requirements = RequirementsAnalysis(
+        supported=True, support_reason="Ready.", normalized_goal=intake.goal,
+        deliverables=["Result"], mandatory_information=[], optional_information=[],
+        acceptance_criteria=["PlayMode evidence passes."], assumptions=[],
+        consolidated_questions=[], ready_for_estimate=True,
+    )
+    (inputs / "intake.json").write_text(intake.model_dump_json(), encoding="utf-8")
+    (inputs / "requirements.json").write_text(
+        requirements.model_dump_json(), encoding="utf-8"
+    )
+    (inputs / "sources.json").write_text("[]", encoding="utf-8")
+    (inputs / "budget_estimate.json").write_text(
+        _estimate().model_dump_json(), encoding="utf-8"
+    )
+    work = source / "work"
+    work.mkdir()
+    (work / "analysis.json").write_text('{"ready":true}', encoding="utf-8")
+    (work / "code_change_set.json").write_text('{"candidate":true}', encoding="utf-8")
+    (work / "development_verification_failure.txt").write_text(
+        "development verification failed: UNITY TEST FAILURES: ReadPixels was called "
+        "to read pixels from system frame buffer, while not inside drawing frame.",
+        encoding="utf-8",
+    )
+    (work / "convergence_ledger.json").write_text(
+        '{"schema_version":"onebrief-convergence-ledger-v1","observations":[],"repair_contracts":[]}',
+        encoding="utf-8",
+    )
+    (work / "repair_contract.json").write_text(
+        '{"schema_version":"onebrief-repair-contract-v1","execution_allowed":false}',
+        encoding="utf-8",
+    )
+
+    assert can_attempt_bounded_repair_resume(source) is True
+    child, _plan = create_bounded_repair_resume(source, tmp_path / "jobs")
+
+    assert (child / "work" / "reverify_existing_candidate.json").is_file()
+    assert not (child / "work" / "convergence_ledger.json").exists()
+    assert not (child / "work" / "repair_contract.json").exists()
+
+
 def test_bounded_resume_prefers_playmode_checkpoint_over_stale_static_best(
     tmp_path: Path, monkeypatch
 ) -> None:
