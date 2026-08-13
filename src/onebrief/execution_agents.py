@@ -347,6 +347,31 @@ class DeveloperAgent:
                             starts = anchor_spans(start_anchor, candidate, end=False)
                             ends = anchor_spans(end_anchor, candidate, end=True)
                             spans = [(start, end) for start in starts for end in ends if end >= start]
+                            repair_reason = str(change.get("reason") or "").casefold()
+                            duplicate_removal = (
+                                "duplicate" in repair_reason
+                                and any(token in repair_reason for token in (
+                                    "remove", "repeated", "second", "again",
+                                ))
+                            )
+                            if (
+                                len(spans) > 1
+                                and len(ends) == 1
+                                and duplicate_removal
+                            ):
+                                # Two identical appended blocks can share the
+                                # same start anchor while a following boundary
+                                # remains unique.  Selecting the nearest start
+                                # before that boundary removes only the second
+                                # copy—the smallest deterministic range.
+                                nearest_start = max(
+                                    (start for start in starts if ends[0] >= start),
+                                    default=None,
+                                )
+                                spans = (
+                                    [(nearest_start, ends[0])]
+                                    if nearest_start is not None else spans
+                                )
                             if len(spans) == 1:
                                 baseline = candidate
                                 match = spans[0]

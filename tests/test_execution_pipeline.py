@@ -1794,6 +1794,42 @@ def test_anchored_repair_bounds_copied_whole_range_before_validation() -> None:
     assert change.end_anchor == copied_range[-1000:]
 
 
+def test_duplicate_removal_uses_the_nearest_repeated_start_before_unique_end() -> None:
+    repeated = "            var closeButton = FindClose();\n            Close();\n"
+    ending = "            WriteEvidence();\n"
+    candidate = "void Flow() {\n" + repeated + repeated + ending + "}\n"
+    previous = ProjectCodeChangeSet(
+        summary="Candidate with one duplicated navigation block.",
+        changes=[{
+            "path": "Assets/Tests/PlayMode/VisualFlowTest.cs",
+            "base_sha256": None,
+            "content": candidate,
+            "reason": "Prior candidate.",
+        }],
+    )
+    proposal = AnchoredRangeRepairProjectCodeChangeSet.model_validate({
+        "summary": "Remove the duplicate navigation.",
+        "changes": [{
+            "path": "Assets/Tests/PlayMode/VisualFlowTest.cs",
+            "base_sha256": None,
+            "start_anchor": repeated.splitlines()[0],
+            "end_anchor": ending.strip(),
+            "replace": ending,
+            "reason": "Remove the second identical duplicate navigation block.",
+        }],
+    })
+    developer = DeveloperAgent(
+        object(), change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/", path_approver=lambda path: path,
+    )
+
+    result = developer.promote_candidate(proposal, [], previous, [])
+
+    content = result.changes[0].content
+    assert content.count("var closeButton = FindClose();") == 1
+    assert content.count("WriteEvidence();") == 1
+
+
 def test_project_developer_compact_retry_rejects_full_existing_file_replacement() -> None:
     source = "export const label = 'old';\n"
     proposal = CompactProposedProjectCodeChangeSet.model_validate({
