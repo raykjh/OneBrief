@@ -393,7 +393,12 @@ def build_text_convergence_agent(
         instruction=contextual_verifier_instruction,
         output_schema=VerificationReport,
         output_key=VERIFICATION_STATE_KEY,
-        include_contents="default",
+        # The verifier receives the current artifact and trusted implementation
+        # evidence through contextual_verifier_instruction.  Replaying the
+        # original repository payload and every maker turn duplicates tens of
+        # thousands of tokens, weakens role separation, and can make an
+        # otherwise valid Vertex request exceed provider limits.
+        include_contents="none",
         mode="single_turn",
         generate_content_config=types.GenerateContentConfig(
             temperature=0.0, max_output_tokens=verifier_output_tokens

@@ -19,6 +19,7 @@ from onebrief.adk_convergence import (
     EXACT_EDIT_ANCHORS_STATE_KEY,
     REPAIR_CONTRACT_STATE_KEY,
     REPAIR_PLAN_STATE_KEY,
+    VERIFIER_CONTEXT_STATE_KEY,
     VERIFICATION_STATE_KEY,
     AdkConvergenceAgent,
     BudgetedAdkLlm,
@@ -522,6 +523,60 @@ def test_real_adk_llm_agents_exchange_structured_revision_state() -> None:
         "long_form_draft", "independent_verification",
     ]
     assert [event["author"] for event in trace].count("onebrief_maker") == 2
+
+
+def test_independent_verifier_receives_state_projection_not_repository_conversation() -> None:
+    class InspectingGateway(BudgetedGeminiClient):
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, list[types.Content], str]] = []
+            self.outputs = [
+                DraftArtifact(
+                    title="Bounded result",
+                    body_markdown="A bounded artifact with enough detail for independent verification.",
+                    cited_finding_ids=["F01"],
+                    drafting_decisions=[],
+                ).model_dump(mode="json"),
+                _report(Verdict.PASS),
+            ]
+
+        def generate_adk_response(self, **kwargs: Any) -> types.GenerateContentResponse:
+            contents = list(kwargs["contents"])
+            instruction = str(getattr(kwargs["config"], "system_instruction", ""))
+            self.calls.append((str(kwargs["stage"]), contents, instruction))
+            payload = self.outputs.pop(0)
+            return types.GenerateContentResponse(candidates=[types.Candidate(
+                content=types.Content(
+                    role="model", parts=[types.Part(text=json.dumps(payload))]
+                ),
+                finish_reason=types.FinishReason.STOP,
+            )])
+
+    gateway = InspectingGateway()
+    agent = build_text_convergence_agent(
+        gateway=gateway,
+        maker_model="maker-model",
+        verifier_model="verifier-model",
+        maker_schema=DraftArtifact,
+        max_revision_rounds=0,
+        maker_instruction="Create the artifact.",
+        verifier_instruction="Verify the artifact.",
+    )
+    huge_repository_payload = "repository-context-should-not-reach-verifier-" * 2000
+
+    asyncio.run(run_convergence_agent(agent, {
+        "goal": "Finish it.",
+        "approved_repository_files": huge_repository_payload,
+    }, initial_state={
+        VERIFIER_CONTEXT_STATE_KEY: {"commands": [{"command_id": "compile", "exit_code": 0}]}
+    }))
+
+    maker_call, verifier_call = gateway.calls
+    assert huge_repository_payload in str(maker_call[1])
+    assert huge_repository_payload not in str(verifier_call[1])
+    assert huge_repository_payload not in verifier_call[2]
+    assert "VERIFICATION PAYLOAD" in verifier_call[2]
+    assert "Bounded result" in verifier_call[2]
+    assert "compile" in verifier_call[2]
 
 
 def test_same_adk_maker_changes_model_rung_after_verified_failure() -> None:
