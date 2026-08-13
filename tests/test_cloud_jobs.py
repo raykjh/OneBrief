@@ -453,6 +453,10 @@ def test_continuation_reuses_milestone_evidence_but_not_parent_execution_graph(
     objects = {
         "jobs/prior/work/milestones/M01/completion_ledger.json": b'{"complete":false}',
         "jobs/prior/work/milestones/M01/execution_graph_state.json": b'{"team_plan":"parent"}',
+        "jobs/prior/work/milestones/M01/execution_checkpoint.json": b'{"status":"failed"}',
+        "jobs/prior/work/milestones/M01/development/development_run.json": b'{"head":"parent"}',
+        "jobs/prior/work/milestones/M01/toolpacks/project_development/evidence/repository_inspection.json": b'{"head":"parent"}',
+        "jobs/prior/work/milestones/M01/handoffs/WH-parent.json": b'{"source":"parent"}',
     }
 
     class Blob:
@@ -486,6 +490,10 @@ def test_continuation_reuses_milestone_evidence_but_not_parent_execution_graph(
     assert "milestones/M01/completion_ledger.json" in copied
     assert (work / "milestones/M01/completion_ledger.json").is_file()
     assert not (work / "milestones/M01/execution_graph_state.json").exists()
+    assert not (work / "milestones/M01/execution_checkpoint.json").exists()
+    assert not (work / "milestones/M01/development").exists()
+    assert not (work / "milestones/M01/toolpacks").exists()
+    assert not (work / "milestones/M01/handoffs").exists()
 
 
 def test_missing_newer_code_candidate_does_not_delete_base_candidate(tmp_path: Path) -> None:

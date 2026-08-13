@@ -50,7 +50,15 @@ REUSABLE_WORK_ARTIFACTS = (
 # worse, skip work under stale ownership).  Durable milestone evidence remains
 # reusable; executor runtime state does not.
 NON_REUSABLE_MILESTONE_ARTIFACTS = {
+    "execution_checkpoint.json",
     "execution_graph_state.json",
+}
+NON_REUSABLE_MILESTONE_DIRECTORIES = {
+    "development",
+    "handoffs",
+    "handoff_receipts",
+    "model_selection_receipts",
+    "toolpacks",
 }
 
 
@@ -362,6 +370,14 @@ class GCSJobStore:
                 ):
                     raise ValueError("unsafe reusable milestone artifact")
                 if relative.name in NON_REUSABLE_MILESTONE_ARTIFACTS:
+                    continue
+                if (
+                    relative.parts[0] == "milestones"
+                    and any(
+                        part in NON_REUSABLE_MILESTONE_DIRECTORIES
+                        for part in relative.parts[2:]
+                    )
+                ):
                     continue
                 target = (destination_work / Path(*relative.parts)).resolve()
                 if not target.is_relative_to(destination_work):
