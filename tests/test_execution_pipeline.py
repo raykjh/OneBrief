@@ -19,12 +19,14 @@ from onebrief.execution_pipeline import (
     development_repair_requires_anchored_range,
     evidence_repair_has_bounded_uncommitted_candidate,
     development_repair_difficulty,
+    development_maker_schema_for,
     visual_repair_production_candidate,
     visual_repair_has_uncommitted_product_candidate,
     visual_repair_production_target_allowed,
     is_unity_evidence_contract_feedback,
     missing_unity_evidence_bundle_paths,
     normalize_atomic_unity_evidence_bundle,
+    should_preserve_unity_evidence_checkpoint,
     is_unity_localization_product_failure,
     unity_evidence_contract_target_allowed,
 )
@@ -1602,6 +1604,89 @@ def test_atomic_unity_evidence_rehydrates_from_adk_state_dictionary() -> None:
         "Assets/Tests/PlayMode/OneBriefVisualFlowTest.cs",
         "Assets/Tests/PlayMode/OneBrief.Visual.Tests.asmdef",
     ]
+
+
+def test_executable_atomic_evidence_is_preserved_when_deeper_checks_fail() -> None:
+    candidate = ProjectCodeChangeSet(
+        summary="Product and executable evidence candidate.",
+        changes=[
+            {
+                "path": "Assets/UI/Settings.cs",
+                "base_sha256": "a" * 64,
+                "content": "public class Settings {}\n",
+                "reason": "Modernize product UI.",
+            },
+            {
+                "path": "Assets/Tests/PlayMode/Flow.cs",
+                "base_sha256": None,
+                "content": "namespace OneBrief.Visual { class Flow {} }\n",
+                "reason": "Execute the UI flow.",
+            },
+            {
+                "path": "Assets/Tests/PlayMode/Flow.asmdef",
+                "base_sha256": None,
+                "content": '{"optionalUnityReferences":["TestAssemblies"]}\n',
+                "reason": "Discover the test.",
+            },
+        ],
+    )
+
+    assert should_preserve_unity_evidence_checkpoint(
+        candidate,
+        "Unity visual test contract: the OneBrief.Visual test must write runtime-evidence.json",
+    ) is True
+    assert should_preserve_unity_evidence_checkpoint(
+        candidate,
+        "Unity visual test contract: add a discoverable Unity PlayMode test",
+    ) is False
+
+
+def test_atomic_schema_returns_to_bounded_repair_after_pair_exists() -> None:
+    feedback = (
+        "Unity visual test contract: add a discoverable Unity PlayMode test | "
+        "Unity visual test contract: add a Unity test .asmdef"
+    )
+    report = ExecutionPipeline._development_failure_report(feedback)
+    product_only = ProjectCodeChangeSet(
+        summary="Product only.",
+        changes=[{
+            "path": "Assets/UI/Settings.cs",
+            "base_sha256": "a" * 64,
+            "content": "public class Settings {}\n",
+            "reason": "Modernize product UI.",
+        }],
+    )
+    with_pair = ProjectCodeChangeSet(
+        summary="Product plus evidence.",
+        changes=[
+            *product_only.changes,
+            ProjectCodeChangeSet.model_validate({
+                "summary": "Test.",
+                "changes": [{
+                    "path": "Assets/Tests/PlayMode/Flow.cs",
+                    "base_sha256": None,
+                    "content": "namespace OneBrief.Visual { class Flow {} }\n",
+                    "reason": "Execute flow.",
+                }],
+            }).changes[0],
+            ProjectCodeChangeSet.model_validate({
+                "summary": "Assembly.",
+                "changes": [{
+                    "path": "Assets/Tests/PlayMode/Flow.asmdef",
+                    "base_sha256": None,
+                    "content": '{"optionalUnityReferences":["TestAssemblies"]}\n',
+                    "reason": "Discover test.",
+                }],
+            }).changes[0],
+        ],
+    )
+
+    assert development_maker_schema_for(
+        report, product_only.model_dump(mode="json")
+    ) is AtomicUnityEvidenceBundle
+    assert development_maker_schema_for(
+        report, with_pair.model_dump(mode="json")
+    ) is CompactProposedProjectCodeChangeSet
 
 
 def test_duplicate_unity_screenshot_feedback_requires_capture_at_each_real_state() -> None:

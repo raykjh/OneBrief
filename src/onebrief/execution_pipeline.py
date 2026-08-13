@@ -242,6 +242,33 @@ def normalize_atomic_unity_evidence_bundle(raw: object) -> object:
     return raw
 
 
+def development_maker_schema_for(
+    report: VerificationReport | None, current_payload: object | None,
+) -> type | None:
+    """Select the next bounded software response contract from current state."""
+
+    if report is None or report.verdict != Verdict.REVISE:
+        return None
+    feedback = " | ".join([
+        *report.blocking_issues,
+        *report.revision_instructions,
+    ])
+    current_candidate = None
+    if current_payload is not None:
+        try:
+            current_candidate = ProjectCodeChangeSet.model_validate(current_payload)
+        except (ValidationError, ValueError):
+            current_candidate = None
+    if (
+        requires_atomic_unity_evidence_pair(feedback)
+        and missing_unity_evidence_bundle_paths(feedback, current_candidate)
+    ):
+        return AtomicUnityEvidenceBundle
+    # Dynamic schemas persist on the same LlmAgent. Explicitly restore the
+    # normal bounded repair contract after the atomic pair has been created.
+    return CompactProposedProjectCodeChangeSet
+
+
 def is_unity_evidence_contract_feedback(feedback: str) -> bool:
     normalized = " ".join(feedback.split()).casefold()
     return any(marker in normalized for marker in (
@@ -355,6 +382,30 @@ def evidence_repair_has_bounded_uncommitted_candidate(change_set) -> bool:
         and unity_evidence_contract_target_allowed(str(getattr(item, "path", "")))
         and len(str(getattr(item, "content", "")).encode("utf-8")) <= 8_000
         for item in getattr(change_set, "changes", [])
+    )
+
+
+def should_preserve_unity_evidence_checkpoint(
+    candidate: object | None, failure_text: str,
+) -> bool:
+    """Keep a newly executable proof harness when it exposes deeper defects.
+
+    A missing harness yields only two coarse topology errors. Once the atomic
+    pair exists, static/runtime verification can expose several more specific
+    blockers. Counting those blockers makes the new evidence look worse even
+    though it is the only candidate from which the maker can learn. Preserve
+    it when trusted verification no longer reports either member as absent.
+    """
+
+    if not evidence_repair_has_bounded_uncommitted_candidate(candidate):
+        return False
+    requested_pair = (
+        "Unity visual test contract: add a discoverable Unity PlayMode test | "
+        "Unity visual test contract: add a Unity test .asmdef"
+    )
+    return (
+        not is_missing_unity_evidence_harness(failure_text)
+        and not missing_unity_evidence_bundle_paths(requested_pair, candidate)
     )
 
 
@@ -2209,7 +2260,11 @@ class ExecutionPipeline:
                     rejected_change_history = discover_rejected_change_history(output_dir)
                     write_rejected_change_history(output_dir, rejected_change_history)
                 quality = development_failure_quality(feedback)
-                if best_failure_quality is None or quality >= best_failure_quality:
+                if (
+                    best_failure_quality is None
+                    or quality >= best_failure_quality
+                    or should_preserve_unity_evidence_checkpoint(candidate, str(exc))
+                ):
                     # At the same verifier-owned stage and blocker count, the
                     # latest trusted result supersedes the older checkpoint.
                     # This commonly means one scenario pair was fixed and the
@@ -2539,15 +2594,9 @@ class ExecutionPipeline:
         def select_maker_schema(
             report: VerificationReport | None, _ctx, _round_number: int
         ) -> type | None:
-            if report is None or report.verdict != Verdict.REVISE:
-                return None
-            feedback = " | ".join([
-                *report.blocking_issues,
-                *report.revision_instructions,
-            ])
-            if requires_atomic_unity_evidence_pair(feedback):
-                return AtomicUnityEvidenceBundle
-            return None
+            return development_maker_schema_for(
+                report, _ctx.session.state.get(MAKER_STATE_KEY)
+            )
         agent = build_text_convergence_agent(
             gateway=self.gateway,
             maker_model=maker_model,
