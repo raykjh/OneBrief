@@ -163,6 +163,8 @@ class ModelExecutionPolicy(BaseModel):
             "identical candidate",
             "wrong repair strategy",
             "failed acceptance criterion",
+            "evidence harness is an atomic bundle",
+            "create the missing unity evidence harness as one atomic two-file repair",
         )
         non_reasoning = any(marker in normalized for marker in non_reasoning_markers)
         explicit_reasoning = any(marker in normalized for marker in reasoning_markers)

@@ -29,6 +29,7 @@ REVERIFY_EXISTING_STATE_KEY = "onebrief_reverify_existing_candidate"
 EXACT_EDIT_ANCHORS_STATE_KEY = "onebrief_exact_edit_anchors"
 REPAIR_PLAN_STATE_KEY = "onebrief_repair_plan"
 REPAIR_CONTRACT_STATE_KEY = "onebrief_repair_contract"
+MAKER_MODEL_BINDING_STATE_KEY = "onebrief_maker_model_binding"
 
 
 class BudgetedAdkLlm(BaseLlm):
@@ -70,7 +71,9 @@ class BudgetedAdkLlm(BaseLlm):
                 parts=[types.Part(text=(
                     "The previous structured response was truncated or invalid JSON and was discarded. "
                     "Return a valid, much smaller response in the required schema. If the schema is a "
-                    "code change set, return exactly one changed path, obey the selector fields offered by "
+                    "code change set, return exactly one changed path unless the current verification "
+                    "contract explicitly requires the atomic Unity evidence pair (one PlayMode .cs and "
+                    "one sibling test .asmdef); obey the selector fields offered by "
                     "the current schema, and replace only one coherent range under 6000 characters; do not "
                     "return complete existing or candidate-file contents. If the schema is a narrative artifact, "
                     "keep its body under 8000 characters while covering every acceptance criterion with "
@@ -101,6 +104,10 @@ MakerHook = Callable[
     [Any, InvocationContext, int],
     dict[str, Any] | Awaitable[dict[str, Any] | None] | None,
 ]
+MakerModelHook = Callable[
+    [VerificationReport | None, InvocationContext, int],
+    dict[str, Any] | Awaitable[dict[str, Any] | None] | None,
+]
 
 
 class AdkConvergenceAgent(BaseAgent):
@@ -115,6 +122,7 @@ class AdkConvergenceAgent(BaseAgent):
     maker_state_key: str = MAKER_STATE_KEY
     verification_state_key: str = VERIFICATION_STATE_KEY
     max_revision_rounds: int = Field(default=2, ge=0, le=12)
+    maker_model_selector: MakerModelHook | None = None
     after_maker: MakerHook | None = None
     verification_gate: GateHook | None = None
 
@@ -149,6 +157,43 @@ class AdkConvergenceAgent(BaseAgent):
                 and ctx.session.state.get(self.maker_state_key) is not None
             )
             if not reverify_existing:
+                if self.maker_model_selector is not None:
+                    raw_verification = ctx.session.state.get(self.verification_state_key)
+                    current_report = (
+                        VerificationReport.model_validate(raw_verification)
+                        if raw_verification is not None
+                        else None
+                    )
+                    binding = self.maker_model_selector(
+                        current_report, ctx, round_number
+                    )
+                    if isinstance(binding, Awaitable):
+                        binding = await binding
+                    if binding:
+                        model = str(binding.get("model", "")).strip()
+                        stage = str(binding.get("stage", "")).strip()
+                        if not model or not stage:
+                            raise ValueError(
+                                "dynamic maker model binding requires model and stage"
+                            )
+                        budgeted_model = getattr(self.maker, "model", None)
+                        if not isinstance(budgeted_model, BudgetedAdkLlm):
+                            raise TypeError(
+                                "dynamic maker model binding requires BudgetedAdkLlm"
+                            )
+                        # Keep the exact same LlmAgent instance, conversation, role,
+                        # and artifact state. Only the pre-approved model rung and
+                        # policy-bound call stage change for this revision turn.
+                        budgeted_model.model = model
+                        budgeted_model.stage = stage
+                        yield Event(
+                            author=self.name,
+                            invocation_id=ctx.invocation_id,
+                            branch=ctx.branch,
+                            actions=EventActions(state_delta={
+                                MAKER_MODEL_BINDING_STATE_KEY: dict(binding)
+                            }),
+                        )
                 async for event in self.maker.run_async(ctx):
                     yield event
             maker_output = ctx.session.state.get(self.maker_state_key)
@@ -205,6 +250,7 @@ def build_text_convergence_agent(
     maker_stage: str = "long_form_draft",
     maker_output_tokens: int = 6000,
     verifier_output_tokens: int = 2200,
+    maker_model_selector: MakerModelHook | None = None,
     after_maker: MakerHook | None = None,
     verification_gate: GateHook | None = None,
 ) -> AdkConvergenceAgent:
@@ -265,6 +311,7 @@ def build_text_convergence_agent(
         description="ADK-native maker, verifier, and original-maker revision loop.",
         sub_agents=[maker, verifier],
         max_revision_rounds=max_revision_rounds,
+        maker_model_selector=maker_model_selector,
         after_maker=after_maker,
         verification_gate=verification_gate,
     )

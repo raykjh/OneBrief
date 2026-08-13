@@ -21,6 +21,7 @@ from onebrief.execution_pipeline import (
     visual_repair_has_uncommitted_product_candidate,
     visual_repair_production_target_allowed,
     is_unity_evidence_contract_feedback,
+    missing_unity_evidence_bundle_paths,
     is_unity_localization_product_failure,
     unity_evidence_contract_target_allowed,
 )
@@ -1483,6 +1484,60 @@ def test_missing_unity_locale_feedback_requires_measured_locale_scenario() -> No
     assert "missing_glyph_count" in instruction
     assert "exact missing locale" in instruction
     assert "real visible language dropdown" in instruction
+
+
+def test_missing_unity_harness_is_an_atomic_test_and_asmdef_pair() -> None:
+    feedback = (
+        "development verification failed: Unity visual test contract: add a discoverable "
+        "Unity PlayMode test whose namespace/full name begins with OneBrief.Visual | "
+        "Unity visual test contract: add a Unity test .asmdef with "
+        "optionalUnityReferences containing TestAssemblies"
+    )
+    product = ProjectCodeChangeSet(
+        summary="Product repair.",
+        changes=[{
+            "path": "Assets/JULPAE/Scripts/UI/Settings.cs",
+            "base_sha256": "a" * 64,
+            "content": "public class Settings {}\n",
+            "reason": "Repair active product source.",
+        }],
+    )
+    incomplete = CompactProposedProjectCodeChangeSet(
+        summary="Only half the harness.",
+        changes=[{
+            "path": "Assets/Tests/PlayMode/OneBriefVisualFlowTest.cs",
+            "base_sha256": None,
+            "content": "namespace OneBrief.Visual { public class Flow {} }\n",
+            "reason": "Add the test.",
+        }],
+    )
+    complete = CompactProposedProjectCodeChangeSet(
+        summary="Complete harness.",
+        changes=[
+            {
+                "path": "Assets/Tests/PlayMode/OneBriefVisualFlowTest.cs",
+                "base_sha256": None,
+                "content": "namespace OneBrief.Visual { public class Flow {} }\n",
+                "reason": "Add the test.",
+            },
+            {
+                "path": "Assets/Tests/PlayMode/OneBrief.Visual.Tests.asmdef",
+                "base_sha256": None,
+                "content": '{"optionalUnityReferences":["TestAssemblies"]}\n',
+                "reason": "Add the test assembly.",
+            },
+        ],
+    )
+
+    assert missing_unity_evidence_bundle_paths(
+        feedback, product, incomplete
+    ) == ["test assembly definition"]
+    assert missing_unity_evidence_bundle_paths(feedback, product, complete) == []
+    instruction = " ".join(
+        ExecutionPipeline._development_failure_report(feedback).revision_instructions
+    )
+    assert "one atomic two-file repair" in instruction
+    assert "Do not submit or retain only one half" in instruction
 
 
 def test_duplicate_unity_screenshot_feedback_requires_capture_at_each_real_state() -> None:

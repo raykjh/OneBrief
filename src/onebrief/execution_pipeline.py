@@ -179,6 +179,50 @@ def is_missing_unity_evidence_harness(feedback: str) -> bool:
     ))
 
 
+def requires_atomic_unity_evidence_pair(feedback: str) -> bool:
+    normalized = " ".join(feedback.split()).casefold()
+    return (
+        "add a discoverable unity playmode test" in normalized
+        and "add a unity test .asmdef" in normalized
+    )
+
+
+def missing_unity_evidence_bundle_paths(
+    feedback: str,
+    *change_sets: object | None,
+) -> list[str]:
+    """Return missing members of an indivisible Unity evidence harness.
+
+    A PlayMode source without its test-only assembly cannot execute, while an
+    asmdef without a discoverable test proves nothing. When trusted feedback
+    requests both, never retain either half as platform progress.
+    """
+
+    normalized = " ".join(feedback.split()).casefold()
+    required: list[tuple[str, str]] = []
+    if "add a discoverable unity playmode test" in normalized:
+        required.append(("PlayMode test source", ".cs"))
+    if "add a unity test .asmdef" in normalized:
+        required.append(("test assembly definition", ".asmdef"))
+    if not required:
+        return []
+
+    paths = {
+        str(getattr(change, "path", "")).replace("\\", "/").casefold()
+        for change_set in change_sets
+        if change_set is not None
+        for change in getattr(change_set, "changes", [])
+    }
+    playmode_paths = {
+        path for path in paths if "/tests/playmode/" in f"/{path}"
+    }
+    missing: list[str] = []
+    for label, suffix in required:
+        if not any(path.endswith(suffix) for path in playmode_paths):
+            missing.append(label)
+    return missing
+
+
 def is_unity_evidence_contract_feedback(feedback: str) -> bool:
     normalized = " ".join(feedback.split()).casefold()
     return any(marker in normalized for marker in (
@@ -879,9 +923,12 @@ class ExecutionPipeline:
                 and "namespace/full name begins" in lowered
             ):
                 return (
-                "Edit the generated PlayMode test source itself so its declared namespace begins exactly with "
-                "OneBrief.Visual. Do not change or re-emit the asmdef for this blocker."
-            )
+                    "Edit the generated PlayMode test source itself so its declared namespace begins exactly with "
+                    "OneBrief.Visual. Do not change or re-emit the asmdef for this blocker alone; preserve an "
+                    "existing valid test asmdef. When the same trusted failure also "
+                    "reports that the test asmdef is absent, create the PlayMode source and sibling asmdef in the "
+                    "same atomic repair."
+                )
             if "unity visual test contract" in lowered and "png" in lowered:
                 return (
                 "Implement PNG evidence directly inside the OneBrief.Visual PlayMode test source; do not delegate "
@@ -919,8 +966,18 @@ class ExecutionPipeline:
                 "passed": False,
                 "evidence": " | ".join(blockers),
             }]
+            atomic_bundle_instruction = (
+                [
+                    "Create the missing Unity evidence harness as one atomic two-file repair: exactly one "
+                    "discoverable OneBrief.Visual PlayMode .cs source and one sibling .asmdef whose "
+                    "optionalUnityReferences contains TestAssemblies. Do not submit or retain only one half."
+                ]
+                if requires_atomic_unity_evidence_pair(detail)
+                else []
+            )
             instructions = list(dict.fromkeys(
-                [blocker_action(item) for item in blockers]
+                atomic_bundle_instruction
+                + [blocker_action(item) for item in blockers]
                 + [
                     "Resolve the related Unity blockers as one coherent product-and-evidence repair; "
                     "do not submit only tests or only an assembly wrapper."
@@ -1658,6 +1715,42 @@ class ExecutionPipeline:
             evidence_contract_repair = is_unity_evidence_contract_feedback(
                 active_feedback
             ) or is_missing_unity_evidence_harness(active_feedback)
+            missing_atomic_members = missing_unity_evidence_bundle_paths(
+                active_feedback, previous_change_set, raw
+            )
+            if missing_atomic_members and not reverify_existing:
+                feedback = (
+                    "Unity visual test contract: the evidence harness is an atomic bundle and the proposal "
+                    "is incomplete. Missing: " + ", ".join(missing_atomic_members) + ". "
+                    "Return the PlayMode test source and its sibling TestAssemblies asmdef together; neither "
+                    "half is retained as candidate progress."
+                )
+                convergence_contract = record_convergence_failure(
+                    context="development_evidence_topology",
+                    failure_text=active_feedback + " | " + feedback,
+                    attempt_number=round_number + 1,
+                    affected_paths=proposed_paths,
+                    strategy_fingerprint=development_change_strategy_fingerprint(raw),
+                )
+                if not convergence_contract.execution_allowed:
+                    raise RuntimeError(
+                        "convergence progress gate blocked an incomplete Unity evidence bundle: "
+                        + convergence_contract.rationale
+                    )
+                report = self._development_failure_report(
+                    active_feedback + " | " + feedback
+                )
+                repair_plan = prepare_repair(report, round_number)
+                return {
+                    MAKER_STATE_KEY: previous_change_set.model_dump(mode="json"),
+                    VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
+                    **({
+                        REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
+                    } if repair_plan is not None else {}),
+                    REPAIR_CONTRACT_STATE_KEY: convergence_contract.model_dump(mode="json"),
+                    EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
+                    SKIP_VERIFIER_STATE_KEY: True,
+                }
             if evidence_contract_repair and not reverify_existing:
                 raw_paths = [
                     str(getattr(item, "path", "")).replace("\\", "/")
@@ -2285,7 +2378,9 @@ class ExecutionPipeline:
             "entry in place: add the corrected file under a dedicated Tests/PlayMode path. OneBrief will supersede the "
             "older generated path when both represent the same test contract. "
             "Never echo unchanged previous_artifact files in a repair delta. Keep each new file or replacement under "
-            "20,000 characters and return exactly one changed path per repair turn. Trailing whitespace is "
+            "20,000 characters and return exactly one changed path per repair turn, except when trusted Unity "
+            "feedback requires the atomic evidence harness: then return exactly two new files together, one "
+            "Tests/PlayMode .cs source and one sibling test .asmdef. Trailing whitespace is "
             "normalized deterministically, so do not spend a repair change only reformatting it. "
             "Prefer small incremental changes that can be verified and extended in later rounds. Return only the schema."
             " When repair_plan is present, treat it as the complete scope of this revision: repair those failed "
@@ -2313,7 +2408,9 @@ class ExecutionPipeline:
             )
         if prior_failure.is_file():
             maker_instruction += (
-                "\n\nCOMPACT REPAIR CONTRACT: Return exactly one changed path and keep the entire JSON "
+                "\n\nCOMPACT REPAIR CONTRACT: Return exactly one changed path, except that a missing Unity "
+                "evidence harness must return its PlayMode .cs and sibling TestAssemblies .asmdef together as "
+                "two paths. Keep the entire JSON "
                 "response below 8,000 characters. This turn repairs only the first deterministic blocker in "
                 "repair_plan; do not attempt the whole product scope. If the blocker requires a missing Unity "
                 "PlayMode test, add one minimal test source below 6,000 characters that loads and interacts with "
@@ -2377,31 +2474,47 @@ class ExecutionPipeline:
         )
         maker_model = self.stage_models.get("long_form_draft", "gemini-3.5-flash")
         maker_stage = "long_form_draft"
-        if prior_failure.is_file():
+        model_selection_attempt = len(list(output_dir.glob("model_selection_r*.json")))
+        repair_difficulty = development_repair_difficulty(
+            intake,
+            requirements,
+            [
+                str(source.get("repository_path", ""))
+                for source in prepared_sources
+                if source.get("repository_path")
+            ],
+        )
+
+        def select_maker_model(
+            report: VerificationReport | None, _ctx, round_number: int
+        ) -> dict[str, object] | None:
+            nonlocal model_selection_attempt
+            if report is None or report.verdict != Verdict.REVISE:
+                return None
+            failure_text = " | ".join([
+                *report.blocking_issues,
+                *report.revision_instructions,
+            ]).strip()
             selector = getattr(self.gateway, "select_model_after_failure", None)
-            if callable(selector):
-                difficulty = development_repair_difficulty(
-                    intake,
-                    requirements,
-                    [
-                        str(source.get("repository_path", ""))
-                        for source in prepared_sources
-                        if source.get("repository_path")
-                    ],
-                )
-                selection = selector(
-                    "long_form_draft",
-                    failure_text=prior_failure_text,
-                    difficulty=difficulty,
-                    attempt=len(list(output_dir.glob("model_selection_r*.json"))) + 1,
-                )
-                maker_model = selection.selected_model.value
-                maker_stage = selection.call_stage
-                self._write(
-                    output_dir
-                    / f"model_selection_r{len(list(output_dir.glob('model_selection_r*.json'))) + 1}.json",
-                    selection.model_dump_json(indent=2),
-                )
+            if not failure_text or not callable(selector):
+                return None
+            model_selection_attempt += 1
+            selection = selector(
+                "long_form_draft",
+                failure_text=failure_text,
+                difficulty=repair_difficulty,
+                attempt=model_selection_attempt,
+            )
+            self._write(
+                output_dir / f"model_selection_r{model_selection_attempt}.json",
+                selection.model_dump_json(indent=2),
+            )
+            return {
+                "model": selection.selected_model.value,
+                "stage": selection.call_stage,
+                "round_number": round_number,
+                "decision": selection.model_dump(mode="json"),
+            }
         agent = build_text_convergence_agent(
             gateway=self.gateway,
             maker_model=maker_model,
@@ -2440,6 +2553,7 @@ class ExecutionPipeline:
                 else DEVELOPER_OUTPUT_CAP
             ),
             verifier_output_tokens=VERIFIER_OUTPUT_CAP,
+            maker_model_selector=select_maker_model,
             after_maker=after_maker,
             verification_gate=verification_gate,
         )

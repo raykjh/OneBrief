@@ -13,6 +13,7 @@ from typing_extensions import override
 
 from onebrief.adk_convergence import (
     MAKER_STATE_KEY,
+    MAKER_MODEL_BINDING_STATE_KEY,
     REVERIFY_EXISTING_STATE_KEY,
     EXACT_EDIT_ANCHORS_STATE_KEY,
     REPAIR_CONTRACT_STATE_KEY,
@@ -394,4 +395,68 @@ def test_real_adk_llm_agents_exchange_structured_revision_state() -> None:
         "long_form_draft", "independent_verification",
         "long_form_draft", "independent_verification",
     ]
+    assert [event["author"] for event in trace].count("onebrief_maker") == 2
+
+
+def test_same_adk_maker_changes_model_rung_after_verified_failure() -> None:
+    class StubBudgetedGateway(BudgetedGeminiClient):
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+            self.outputs = [
+                DraftArtifact(
+                    title="Initial",
+                    body_markdown="The initial artifact is long enough but needs a repair.",
+                    cited_finding_ids=["F01"],
+                    drafting_decisions=[],
+                ).model_dump(mode="json"),
+                _report(Verdict.REVISE),
+                DraftArtifact(
+                    title="Repaired",
+                    body_markdown="The repaired artifact preserves context and satisfies the verifier.",
+                    cited_finding_ids=["F01"],
+                    drafting_decisions=["Used the verified failure."],
+                ).model_dump(mode="json"),
+                _report(Verdict.PASS),
+            ]
+
+        def generate_adk_response(self, **kwargs: Any) -> types.GenerateContentResponse:
+            self.calls.append((str(kwargs["stage"]), str(kwargs["model"])))
+            payload = self.outputs.pop(0)
+            return types.GenerateContentResponse(candidates=[types.Candidate(
+                content=types.Content(
+                    role="model", parts=[types.Part(text=json.dumps(payload))]
+                ),
+                finish_reason=types.FinishReason.STOP,
+            )])
+
+    def select_model(report, _ctx, round_number):
+        if report is None:
+            return None
+        return {
+            "model": "pro-maker-model",
+            "stage": f"long_form_draft_reasoning_escalation_r{round_number}",
+            "round_number": round_number,
+        }
+
+    gateway = StubBudgetedGateway()
+    agent = build_text_convergence_agent(
+        gateway=gateway,
+        maker_model="flash-maker-model",
+        verifier_model="verifier-model",
+        maker_schema=DraftArtifact,
+        max_revision_rounds=2,
+        maker_instruction="Create the artifact.",
+        verifier_instruction="Verify the artifact.",
+        maker_model_selector=select_model,
+    )
+
+    state, trace = asyncio.run(run_convergence_agent(agent, {"goal": "Finish it."}))
+
+    assert gateway.calls == [
+        ("long_form_draft", "flash-maker-model"),
+        ("independent_verification", "verifier-model"),
+        ("long_form_draft_reasoning_escalation_r1", "pro-maker-model"),
+        ("independent_verification", "verifier-model"),
+    ]
+    assert state[MAKER_MODEL_BINDING_STATE_KEY]["model"] == "pro-maker-model"
     assert [event["author"] for event in trace].count("onebrief_maker") == 2

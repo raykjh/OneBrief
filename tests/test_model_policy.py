@@ -179,6 +179,20 @@ def test_unchanged_unity_locale_escalates_the_same_maker_to_pro() -> None:
     assert decision.call_stage == "long_form_draft_reasoning_escalation_r1"
 
 
+def test_incomplete_atomic_unity_evidence_bundle_escalates_same_maker() -> None:
+    decision = _escalation_policy().select_after_failure(
+        "long_form_draft",
+        failure_text=(
+            "Unity visual test contract: the evidence harness is an atomic bundle and the "
+            "proposal omitted its sibling TestAssemblies asmdef"
+        ),
+        difficulty="complex",
+    )
+
+    assert decision.escalated is True
+    assert decision.selected_model == ApprovedModel.GEMINI_3_1_PRO_PREVIEW
+
+
 @pytest.mark.parametrize("failure", [
     "Invalid JSON: EOF while parsing",
     "stale or missing base hash: web/app/page.tsx",
