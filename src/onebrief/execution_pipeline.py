@@ -1457,6 +1457,11 @@ class ExecutionPipeline:
     ) -> tuple[DraftArtifact, VerificationReport, int]:
         """Run code creation, isolated verification, review, and same-maker repair in ADK."""
 
+        self._write(
+            output_dir / "development_verification_contract.json",
+            json.dumps(contract, ensure_ascii=False, indent=2),
+        )
+
         change_schema, development_pack, developer = self._development_components(intake, output_dir)
         prepared_sources: list[dict[str, object]] = []
         for source in source_payload:

@@ -17,6 +17,7 @@ from onebrief.milestones import (
     build_milestone_plan,
     canonical_sha256,
     execute_milestone_plan,
+    milestone_scope_source,
     prepare_milestone_workspace,
     requirements_for_milestone,
 )
@@ -27,6 +28,7 @@ from onebrief.schemas import (
     EvaluationMode,
     QualityCriterion,
     RequirementsAnalysis,
+    SixSensePlan,
     IntakeRequest,
     ToolPackId,
 )
@@ -134,6 +136,27 @@ def test_scoped_requirements_revalidate_passed_dependencies() -> None:
     }
     assert set(settings.contract.primary_criterion_ids).issubset(selected)
     assert "Q01" in selected
+
+
+def test_scoped_requirements_remove_whole_project_sixsense_and_publish_exact_scope() -> None:
+    plan = _plan()
+    login = plan.milestones[1]
+    requirements = _requirements().model_copy(update={
+        "sixsense": SixSensePlan(
+            standard_profile="Responsive multilingual presentation for the finished product."
+        )
+    })
+
+    scoped = requirements_for_milestone(requirements, login)
+    source = milestone_scope_source(login)
+
+    assert scoped.sixsense is None
+    assert [item.criterion_id for item in scoped.completion_contract.quality_criteria] == [
+        "Q01", "Q91"
+    ]
+    assert '"milestone_id": "M01"' in source.content
+    assert '"authorized_criterion_ids"' in source.content
+    assert "future milestone" in source.content
     assert "unrelated future scope" in scoped.normalized_goal
 
 
@@ -360,7 +383,7 @@ def test_executor_scopes_each_slice_and_finishes_on_clean_baseline(
         source_revision="a" * 40,
         integration_base_revision="b" * 40,
     )
-    calls: list[tuple[Path, str, str | None]] = []
+    calls: list[tuple[Path, str, str | None, list[str]]] = []
     durable_checkpoints: list[str] = []
 
     class FakeLifecycle:
@@ -378,7 +401,12 @@ def test_executor_scopes_each_slice_and_finishes_on_clean_baseline(
             self.registry = registry
 
         def run(self, *, intake, requirements, sources, output_dir):
-            calls.append((self.registry, intake.goal, intake.desired_output))
+            calls.append((
+                self.registry,
+                intake.goal,
+                intake.desired_output,
+                [item.name for item in sources],
+            ))
             development = output_dir / "development"
             (development / "changed_files" / "Assets").mkdir(parents=True, exist_ok=True)
             (development / "change_set.json").write_text(
@@ -420,11 +448,12 @@ def test_executor_scopes_each_slice_and_finishes_on_clean_baseline(
     assert result.status == PipelineStatus.COMPLETE
     assert calls[-1][0] == baseline_registry
     assert calls[-1][1] == "Modernize JULPAE"
-    assert all("Milestone M" in goal for _registry, goal, _output in calls[:-1])
+    assert all("Milestone M" in goal for _registry, goal, _output, _sources in calls[:-1])
     first_slice_output = calls[0][2] or ""
     assert "Milestone outcome:" in first_slice_output
     assert "Responsive visual layout" not in first_slice_output
     assert "localization glyph integrity" not in first_slice_output
+    assert calls[0][3][0] == "onebrief-active-milestone-M01.json"
     assert (tmp_path / "work" / "development" / "change_set.json").is_file()
     store = MilestoneStore(tmp_path / "work" / "milestone_state", plan)
     assert all(store.checkpoint(item.milestone_id) is not None for item in plan.milestones)

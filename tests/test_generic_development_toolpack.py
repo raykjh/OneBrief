@@ -703,14 +703,29 @@ def test_unity_visual_preflight_does_not_leak_future_language_contract_into_logi
         adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
     )])
 
+    contract = json.dumps({
+        "goal": "Milestone M01: modernize the Login surface.",
+        "desired_output": "Login to Lobby evidence only.",
+        "completion_contract": {
+            "target_state": "Login reaches Lobby through the preserved authentication path.",
+            "quality_criteria": [{
+                "description": "Login surface and authentication transition work",
+                "evidence_required": "Unity compile and Login to Lobby PlayMode evidence",
+            }],
+        },
+        "assumptions": [
+            "The finished product will later need responsive mobile/desktop localization and glyph checks."
+        ],
+    })
     issues = pack._unity_visual_contract_issues(
         profile,
         clone,
-        "Milestone M01: modernize the Login surface and verify authentication handoff.",
+        contract,
     )
 
     assert not any("LanguageDropdown" in issue for issue in issues)
     assert not any("glyph" in issue.lower() for issue in issues)
+    assert not any("responsive Unity visual evidence" in issue for issue in issues)
 
 
 def test_unity_visual_preflight_allows_temporary_capture_camera_but_rejects_synthetic_canvas(tmp_path: Path) -> None:

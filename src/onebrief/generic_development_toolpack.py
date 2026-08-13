@@ -1699,6 +1699,43 @@ class ApprovedProjectDevelopmentToolPack:
             re.IGNORECASE,
         ))
 
+    @staticmethod
+    def _unity_verification_intent(goal_text: str) -> str:
+        """Exclude context-only fields from a structured verification contract."""
+
+        try:
+            payload = json.loads(goal_text)
+        except (json.JSONDecodeError, TypeError):
+            return goal_text
+        if not isinstance(payload, dict):
+            return goal_text
+
+        values: list[str] = []
+
+        def add(value: object) -> None:
+            if isinstance(value, str) and value.strip():
+                values.append(value)
+            elif isinstance(value, list):
+                for item in value:
+                    add(item)
+
+        for key in (
+            "goal", "desired_output", "normalized_goal", "deliverables",
+            "acceptance_criteria",
+        ):
+            add(payload.get(key))
+        completion = payload.get("completion_contract")
+        if isinstance(completion, dict):
+            add(completion.get("target_state"))
+            add(completion.get("pass_condition"))
+            criteria = completion.get("quality_criteria")
+            if isinstance(criteria, list):
+                for criterion in criteria:
+                    if isinstance(criterion, dict):
+                        add(criterion.get("description"))
+                        add(criterion.get("evidence_required"))
+        return "\n".join(values) if values else goal_text
+
     def _unity_visual_contract_issues(
         self,
         profile,
@@ -1706,7 +1743,8 @@ class ApprovedProjectDevelopmentToolPack:
         goal_text: str,
         changed_paths: list[str] | None = None,
     ) -> list[str]:
-        if not self._requires_unity_visual_runtime(goal_text):
+        intent_text = self._unity_verification_intent(goal_text)
+        if not self._requires_unity_visual_runtime(intent_text):
             return []
         if not any(
             item.enabled and item.adapter_id == AdapterId.UNITY_PLAYMODE_VISUAL_TESTS
@@ -1728,7 +1766,7 @@ class ApprovedProjectDevelopmentToolPack:
         issues: list[str] = []
         if changed_paths and re.search(
             r"(?:\bui\b|screen|visual|layout|responsive|로그인|로비|설정|화면)",
-            goal_text,
+            intent_text,
             re.IGNORECASE,
         ):
             production_paths = [
@@ -1909,8 +1947,8 @@ class ApprovedProjectDevelopmentToolPack:
                     "active Canvas through ScreenSpaceCamera/worldCamera, render it, then restore its prior state"
                 )
             responsive_requested = (
-                ("mobile" in goal_text.casefold() or "모바일" in goal_text)
-                and ("desktop" in goal_text.casefold() or "데스크톱" in goal_text)
+                ("mobile" in intent_text.casefold() or "모바일" in intent_text)
+                and ("desktop" in intent_text.casefold() or "데스크톱" in intent_text)
             )
             if responsive_requested:
                 measured = _declared_unity_viewports(combined_source)
@@ -1989,7 +2027,7 @@ class ApprovedProjectDevelopmentToolPack:
             }
             language_requested = bool(re.search(
                 r"(?:language|locali[sz]ation|다국어|언어|glyph|글리프)",
-                goal_text,
+                intent_text,
                 re.IGNORECASE,
             ))
             if project_scenes and requested_scenes:
@@ -2037,7 +2075,7 @@ class ApprovedProjectDevelopmentToolPack:
                         + ", ".join(sorted(settings_scenes))
                         + "; alternatively reach it through a real UI action and assert the active scene"
                     )
-            requested_surfaces = requested_ui_surfaces(goal_text)
+            requested_surfaces = requested_ui_surfaces(intent_text)
             if len(requested_surfaces) >= 2 and not any(token in structural for token in (
                 ".onclick.invoke", "executeevents.execute", ".setactive(true)",
                 "pointerclickevent", "submitEvent",
@@ -2088,7 +2126,7 @@ class ApprovedProjectDevelopmentToolPack:
                             "was invoked before that evidence row; do not relabel a direct scene load as a click"
                         )
                         break
-            requested_transition = requested_ui_transition(goal_text)
+            requested_transition = requested_ui_transition(intent_text)
             if requested_transition and literal_scenarios and not _contains_ordered_literals(
                 [state for state, _interaction, _start, _end in literal_scenarios],
                 requested_transition,

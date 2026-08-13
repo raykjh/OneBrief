@@ -32,6 +32,7 @@ from onebrief.schemas import (
     InternalSource,
     QualityCriterion,
     RequirementsAnalysis,
+    SourcePriority,
 )
 from onebrief.toolpack_lifecycle import ProjectToolPackLifecycle
 
@@ -610,8 +611,49 @@ def requirements_for_milestone(
         "deliverables": list(milestone.contract.deliverables),
         "acceptance_criteria": [item.description for item in selected],
         "completion_contract": scoped,
+        # SixSense describes the whole product preference envelope.  A slice
+        # may only use requirements explicitly projected into its contract;
+        # otherwise later presentation/localization work leaks into an early
+        # structural milestone.
+        "sixsense": None,
         "ready_for_estimate": True,
     })
+
+
+def milestone_scope_source(milestone: MilestoneSpec) -> InternalSource:
+    """Return the authoritative execution boundary for one active slice."""
+
+    payload = {
+        "schema_version": "onebrief-active-milestone-scope-v1",
+        "milestone_id": milestone.milestone_id,
+        "title": milestone.title,
+        "target_state": milestone.contract.target_state,
+        "authorized_criterion_ids": [
+            *milestone.contract.criterion_ids,
+            *(item.criterion_id for item in milestone.contract.slice_quality_criteria),
+        ],
+        "deliverables": milestone.contract.deliverables,
+        "evidence_requirements": milestone.contract.evidence_requirements,
+        "future_scope_policy": (
+            "Overall project sources are knowledge only. Do not implement, repair, or demand "
+            "evidence for a future milestone unless it is listed in this scope."
+        ),
+    }
+    content = json.dumps(payload, ensure_ascii=False, indent=2)
+    encoded = content.encode("utf-8")
+    return InternalSource(
+        name=f"onebrief-active-milestone-{milestone.milestone_id}.json",
+        priority=SourcePriority.MANDATORY,
+        requirement_keys=["active_milestone_scope"],
+        summary=(
+            f"Authoritative bounded execution scope for {milestone.milestone_id}; "
+            "overall project materials cannot expand it."
+        ),
+        content=content,
+        media_type="application/json",
+        size_bytes=len(encoded),
+        sha256=hashlib.sha256(encoded).hexdigest(),
+    )
 
 
 class MilestoneWorkspace(BaseModel):
@@ -947,6 +989,7 @@ def execute_milestone_plan(
             publish_final_milestone(work_dir, milestone_dir)
             return checkpoint
         pipeline = pipeline_factory(Path(workspace.integration_registry_root))
+        scope_source = milestone_scope_source(milestone)
         milestone_intake = intake.model_copy(update={
             "goal": scoped.normalized_goal,
             "desired_output": "\n".join([
@@ -956,12 +999,13 @@ def execute_milestone_plan(
                 "Evidence required now:",
                 *(f"- {item}" for item in milestone.contract.evidence_requirements),
             ]),
+            "internal_sources": [scope_source, *intake.internal_sources][:50],
             "max_revision_rounds": milestone.contract.max_revision_rounds,
         })
         checkpoint = pipeline.run(
             intake=milestone_intake,
             requirements=scoped,
-            sources=sources,
+            sources=[scope_source, *sources],
             output_dir=milestone_dir,
         )
         if checkpoint.status != PipelineStatus.COMPLETE or checkpoint.final_verdict != Verdict.PASS:
