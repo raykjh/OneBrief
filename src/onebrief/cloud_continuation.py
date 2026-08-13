@@ -84,16 +84,17 @@ def _targeted_repair_estimate(
             input_tokens * price.input_per_million
             + output_tokens * price.output_per_million
         ) / 1_000_000 + stage.fixed_cost_usd_per_call
+        maximum_calls = 2 if stage.stage == "long_form_draft" else 1
         selected.append(stage.model_copy(update={
             "model": model,
             "input_tokens_per_call": input_tokens,
             "output_tokens_per_call": output_tokens,
             "minimum_calls": 1,
             "recommended_calls": 1,
-            "maximum_calls": 1,
+            "maximum_calls": maximum_calls,
             "minimum_cost_usd": round(per_call, 6),
             "recommended_cost_usd": round(per_call, 6),
-            "maximum_cost_usd": round(per_call, 6),
+            "maximum_cost_usd": round(per_call * maximum_calls, 6),
         }))
     if len(selected) != len(caps):
         raise RuntimeError("targeted repair estimate is missing a required model stage")
@@ -103,6 +104,7 @@ def _targeted_repair_estimate(
         if item.stage == "long_form_draft"
     )
     verification_cost = base - maker_cost
+    maximum_total = base + maker_cost
     owner = classify_failure_owner(
         context="development_verification",
         failure_text=failure_text or "targeted product repair",
@@ -130,8 +132,12 @@ def _targeted_repair_estimate(
             phase=repair_phase,
             minimum_cost_usd=round(maker_cost * 1.10, 6),
             recommended_cost_usd=round(maker_cost * 1.20, 6),
-            maximum_cost_usd=round(maker_cost * 1.25, 6),
-            max_ai_repair_calls=1,
+            maximum_cost_usd=round(maker_cost * 2 * 1.25, 6),
+            # One semantic repair often exposes a narrower, newly evidenced
+            # defect. Permit one bounded learning turn in the same owning
+            # phase; the convergence ledger still blocks identical/no-progress
+            # retries before provider invocation.
+            max_ai_repair_calls=2,
             max_deterministic_attempts=2,
             editable_scope=repair_scope(repair_phase),
         ),
@@ -161,7 +167,7 @@ def _targeted_repair_estimate(
         "stages": selected,
         "minimum_cost_usd": round(base * 1.10, 4),
         "recommended_cost_usd": round(base * 1.20, 4),
-        "maximum_cost_usd": round(base * 1.25, 4),
+        "maximum_cost_usd": round(maximum_total * 1.25, 4),
         "recommended_approval_usd": round(base * 1.20, 4),
         "estimated_minutes_minimum": 17,
         "estimated_minutes_recommended": 17,

@@ -344,7 +344,13 @@ def test_targeted_repair_estimate_charges_only_remaining_work() -> None:
         "long_form_draft", "independent_verification", "final_approval"
     ]
     assert targeted.minimum_cost_usd < 0.25
-    assert all(item.minimum_calls == item.maximum_calls == 1 for item in targeted.stages)
+    calls = {item.stage: (item.minimum_calls, item.maximum_calls) for item in targeted.stages}
+    assert calls == {
+        "long_form_draft": (1, 2),
+        "independent_verification": (1, 1),
+        "final_approval": (1, 1),
+    }
+    assert targeted.maximum_cost_usd > targeted.recommended_cost_usd
     phase_budgets = {item.phase: item for item in targeted.phase_budgets}
     assert {
         ExecutionPhase.PRODUCT_IMPLEMENTATION,
@@ -354,6 +360,8 @@ def test_targeted_repair_estimate_charges_only_remaining_work() -> None:
     assert phase_budgets[ExecutionPhase.EVIDENCE_CONSTRUCTION].minimum_cost_usd == 0
     assert phase_budgets[ExecutionPhase.EVIDENCE_CONSTRUCTION].recommended_cost_usd == 0
     assert phase_budgets[ExecutionPhase.EVIDENCE_CONSTRUCTION].maximum_cost_usd > 0
+    assert phase_budgets[ExecutionPhase.PRODUCT_IMPLEMENTATION].max_ai_repair_calls == 2
+    assert phase_budgets[ExecutionPhase.EVIDENCE_CONSTRUCTION].max_ai_repair_calls == 1
 
     low_cost = _targeted_repair_estimate(estimate, low_cost_models=True)
 
