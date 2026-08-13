@@ -226,9 +226,10 @@ def validate_and_copy_unity_visual_evidence(
     if not manifest_path.is_file():
         raise RuntimeError(
             "Unity visual verification requires onebrief-evidence/runtime-evidence.json to be "
-            "generated during the executed OneBrief.Visual PlayMode test; edit the approved test "
-            "source to create the schema and screenshots at runtime, and do not add a static "
-            "onebrief-evidence file to the repository"
+            "generated during the executed OneBrief.Visual PlayMode test; use the runner-supplied "
+            "OneBriefAtomicScreenshot.CaptureScenario(...) and then "
+            "WriteManifestAtomically(scenarioReceipt). Do not hand-write the schema, call "
+            "ScreenCapture.CaptureScreenshot, and do not add a static onebrief-evidence file to the repository"
         )
     try:
         manifest = UnityVisualEvidence.model_validate_json(
@@ -239,13 +240,13 @@ def validate_and_copy_unity_visual_evidence(
         raise RuntimeError(
             "Unity visual evidence manifest is invalid: "
             + detail
-            + ". Repair the approved executed PlayMode test so it writes "
-            + "schema_version='onebrief-unity-visual-evidence-v1' and a non-empty "
-            + "scenarios array. Every scenario must include scenario_id and "
-            + "screenshot_path; for UI completion evidence also record observed_state, "
-            + "interaction, assertion_count, viewport_width, and viewport_height. "
-            + "Generate the manifest and PNG captures during the test run rather than "
-            + "adding static evidence files to the repository."
+            + ". Replace the manual JSON and asynchronous screenshot code with the runner-supplied "
+            + "OneBriefAtomicScreenshot.CaptureScenario(scenarioId, observedState, interaction, "
+            + "assertionCount, relativePngPath, sceneCamera, width, height, activeCanvases), then call "
+            + "WriteManifestAtomically(scenarioReceipt). The trusted helper creates the schema, "
+            + "scenarios array, scenario_id, observed_state, interaction, assertion_count, measured "
+            + "viewport fields, screenshot_path, and durable PNG binding. Generate the manifest and PNG "
+            + "captures during the test run through that helper."
         ) from exc
 
     observed: set[str] = set()

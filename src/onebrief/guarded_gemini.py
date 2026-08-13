@@ -258,6 +258,12 @@ class BudgetedGeminiClient:
         if status not in {RunStatus.APPROVED, RunStatus.RUNNING}:
             raise BudgetGuardError(f"run cannot start a call while {status.value}")
         generation = config.model_copy(deep=True) if config is not None else types.GenerateContentConfig()
+        response_schema = generation.response_schema
+        if (
+            isinstance(response_schema, type)
+            and issubclass(response_schema, BaseModel)
+        ):
+            generation.response_schema = gemini_compatible_model(response_schema)
         generation.thinking_config = self._thinking_config(model)
         max_output_tokens = int(generation.max_output_tokens or 4096)
         count_generation = types.GenerationConfig(

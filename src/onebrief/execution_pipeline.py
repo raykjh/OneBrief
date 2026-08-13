@@ -847,7 +847,23 @@ class ExecutionPipeline:
             excerpt = content[:remaining]
             remaining -= len(excerpt)
             changed_files.append({"path": relative, "content": excerpt})
+        # The verifier needs the executed result, not duplicate copies of every
+        # provider-authored file.  Keep metadata in the change set and actual
+        # source once in changed_files.
+        compact_change_set = {
+            **change_set,
+            "changes": [
+                {key: value for key, value in item.items() if key != "content"}
+                for item in change_set.get("changes", [])
+                if isinstance(item, dict)
+            ],
+        } if isinstance(change_set, dict) else change_set
+        compact_run = run.model_dump(mode="json")
+        for command in compact_run.get("commands", []):
+            if isinstance(command, dict) and isinstance(command.get("output_tail"), str):
+                command["output_tail"] = command["output_tail"][-2_000:]
         runtime_evidence: list[dict[str, str]] = []
+        runtime_remaining = 20_000
         for relative in run.evidence_paths:
             evidence_root = self._resolve_development_evidence_root(
                 output_dir, development_dir, relative
@@ -855,11 +871,18 @@ class ExecutionPipeline:
             if evidence_root is None:
                 continue
             for path in sorted(evidence_root.rglob("*")):
-                if not path.is_file() or path.suffix.casefold() not in {".json", ".xml"}:
+                if (
+                    not path.is_file()
+                    or path.suffix.casefold() != ".json"
+                    or runtime_remaining <= 0
+                ):
                     continue
+                content = path.read_text(encoding="utf-8", errors="replace")
+                excerpt = content[:runtime_remaining]
+                runtime_remaining -= len(excerpt)
                 runtime_evidence.append({
                     "path": path.relative_to(output_dir).as_posix(),
-                    "content": path.read_text(encoding="utf-8", errors="replace")[:20_000],
+                    "content": excerpt,
                 })
         trusted_observation_receipts: list[dict[str, object]] = []
         observation_dir = output_dir / "independent_observations"
@@ -872,8 +895,8 @@ class ExecutionPipeline:
                 if isinstance(payload, dict):
                     trusted_observation_receipts.append(payload)
         return {
-            "change_set": change_set,
-            "development_run": run.model_dump(mode="json"),
+            "change_set": compact_change_set,
+            "development_run": compact_run,
             "changed_files": changed_files,
             "runtime_evidence": runtime_evidence,
             "trusted_observation_receipts": trusted_observation_receipts,

@@ -1,9 +1,14 @@
 from types import SimpleNamespace
 
 from google.genai import types
+from pydantic import BaseModel, Field
 
 from onebrief.budget_guard import RunStatus
 from onebrief.guarded_gemini import BudgetedGeminiClient
+
+
+class ConstrainedAdkResult(BaseModel):
+    label: str = Field(min_length=3, max_length=20)
 
 
 def test_thinking_policy_is_compatible_with_pro_and_bounded_for_flash() -> None:
@@ -61,3 +66,50 @@ def test_adk_count_tokens_uses_generation_config_not_generate_content_config() -
         captured["config"].generation_config,
         types.GenerationConfig,
     )
+
+
+def test_adk_provider_receives_gemini_compatible_transport_schema() -> None:
+    captured = {}
+
+    class Store:
+        def read(self):
+            return SimpleNamespace(status=RunStatus.APPROVED)
+
+        def reserve_call(self, **_kwargs):
+            return SimpleNamespace(call_id="call-1")
+
+        def settle_call(self, *_args, **_kwargs):
+            return None
+
+    class Models:
+        def count_tokens(self, **_kwargs):
+            return SimpleNamespace(total_tokens=10)
+
+        def generate_content(self, **kwargs):
+            captured["schema"] = kwargs["config"].response_schema
+            return SimpleNamespace(usage_metadata=SimpleNamespace(
+                prompt_token_count=10,
+                candidates_token_count=2,
+                thoughts_token_count=0,
+                total_token_count=12,
+            ))
+
+    client = BudgetedGeminiClient.__new__(BudgetedGeminiClient)
+    client.store = Store()
+    client.client = SimpleNamespace(models=Models())
+
+    client.generate_adk_response(
+        stage="test_adk_schema",
+        model="gemini-3.1-pro-preview",
+        contents=[types.Content(role="user", parts=[types.Part(text="hello")])],
+        config=types.GenerateContentConfig(
+            max_output_tokens=32,
+            response_mime_type="application/json",
+            response_schema=ConstrainedAdkResult,
+        ),
+    )
+
+    schema = captured["schema"].model_json_schema()
+    assert captured["schema"] is not ConstrainedAdkResult
+    assert "minLength" not in str(schema)
+    assert "maxLength" not in str(schema)
