@@ -2585,14 +2585,25 @@ class ExecutionPipeline:
                     self._write(
                         output_dir / "development_verification_failure.txt", feedback
                     )
-                convergence_contract = record_convergence_failure(
-                    context="development_verification",
-                    failure_text=str(exc),
-                    attempt_number=same_failure_count + 1,
-                    affected_paths=[
-                        str(item.path) for item in getattr(delta, "changes", [])
-                    ],
-                    strategy_fingerprint=delta_strategy_fingerprint,
+                # Reverification is an idempotent probe of a preserved
+                # candidate, not another maker strategy. Counting it as a new
+                # experiment blocks the maker before the first post-resume
+                # repair whenever noisy Unity logs slightly change. Keep the
+                # already-issued repair contract and expose the fresh trusted
+                # failure as feedback. A real maker delta below is still
+                # fingerprinted and counted normally.
+                convergence_contract = (
+                    latest_repair_contract
+                    if reverify_existing and latest_repair_contract is not None
+                    else record_convergence_failure(
+                        context="development_verification",
+                        failure_text=str(exc),
+                        attempt_number=same_failure_count + 1,
+                        affected_paths=[
+                            str(item.path) for item in getattr(delta, "changes", [])
+                        ],
+                        strategy_fingerprint=delta_strategy_fingerprint,
+                    )
                 )
                 if not convergence_contract.execution_allowed:
                     raise RuntimeError(
