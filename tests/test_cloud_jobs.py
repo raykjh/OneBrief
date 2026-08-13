@@ -11,7 +11,9 @@ from onebrief.cloud_jobs import (
     RuntimeCapabilityHandoff,
     execute_cloud_run_job,
     parse_gcs_job_uri,
+    run_local_capability_worker,
     run_cloud_worker,
+    verify_runtime_handoff,
 )
 from onebrief.dynamic_role_agents import GovernanceDecision
 from onebrief.execution_schemas import AnalysisPackage, DraftArtifact, VerificationReport
@@ -153,6 +155,11 @@ class LocalCloudRepository:
     def write_runtime_handoff(self, handoff: RuntimeCapabilityHandoff) -> None:
         self.handoffs.append(handoff)
 
+    def read_runtime_handoff(self) -> RuntimeCapabilityHandoff:
+        if not self.handoffs:
+            raise FileNotFoundError("no runtime handoff")
+        return self.handoffs[-1]
+
 
 def test_cloud_worker_round_trip_publishes_remote_result(tmp_path: Path) -> None:
     local_job = _create_job(tmp_path / "source")
@@ -223,6 +230,71 @@ def test_managed_worker_hands_edge_only_runtime_to_approved_local_runner(
     assert repository.handoffs == [handoff]
     assert repository.upload_count == 0
     assert gateway.calls == []
+
+
+def test_runtime_handoff_verification_is_digest_and_scope_bound(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    expected = RuntimeCapabilityHandoff(
+        handoff_id="a" * 64,
+        job_uri="gs://onebrief-test/jobs/example",
+        job_id="job-1",
+        project_id="julpae",
+        source_head_sha="b" * 40,
+        required_adapters=["unity_compile"],
+        input_manifest_sha256="c" * 64,
+        approved_budget_usd_micros=30_000_000,
+        created_at="2026-08-13T00:00:00+00:00",
+    )
+    monkeypatch.setattr("onebrief.cloud_jobs.build_runtime_handoff", lambda *_a, **_k: expected)
+    monkeypatch.setattr(
+        "onebrief.cloud_jobs.approved_edge_runtime_adapters",
+        lambda _job: ["unity_compile"],
+    )
+    verify_runtime_handoff(
+        tmp_path, job_uri=expected.job_uri, handoff=expected.model_copy(
+            update={"created_at": "2026-08-13T00:01:00+00:00"}
+        ),
+    )
+    with pytest.raises(PermissionError, match="immutable approved job"):
+        verify_runtime_handoff(
+            tmp_path,
+            job_uri=expected.job_uri,
+            handoff=expected.model_copy(update={"approved_budget_usd_micros": 31_000_000}),
+        )
+
+
+def test_local_capability_worker_rejects_handoff_before_claim(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    local_job = _create_job(tmp_path / "source")
+    remote_job = tmp_path / "remote" / local_job.name
+    remote_job.parent.mkdir()
+    shutil.copytree(local_job, remote_job)
+    repository = LocalCloudRepository(remote_job)
+    repository.handoffs.append(RuntimeCapabilityHandoff(
+        handoff_id="a" * 64,
+        job_uri="gs://onebrief-test/jobs/example",
+        job_id=JobStore(remote_job).read().job_id,
+        project_id="julpae",
+        source_head_sha="b" * 40,
+        required_adapters=["unity_compile"],
+        input_manifest_sha256="c" * 64,
+        approved_budget_usd_micros=1_000_000,
+        created_at="2026-08-13T00:00:00+00:00",
+    ))
+    monkeypatch.setattr(
+        "onebrief.cloud_jobs.verify_runtime_handoff",
+        lambda *_a, **_k: (_ for _ in ()).throw(PermissionError("tampered")),
+    )
+
+    with pytest.raises(PermissionError, match="tampered"):
+        run_local_capability_worker(
+            "gs://onebrief-test/jobs/example", repository=repository
+        )
+
+    assert not repository.claimed
+    assert repository.failure == "PermissionError: tampered"
 
 
 def test_execute_cloud_run_job_passes_only_the_job_uri_override() -> None:

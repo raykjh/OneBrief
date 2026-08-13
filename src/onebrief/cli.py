@@ -11,6 +11,7 @@ from pathlib import Path
 from onebrief.budget_guard import BudgetStore, micros_to_dollars
 from onebrief.cloud_jobs import (
     GCSJobStore,
+    run_local_capability_worker,
     run_cloud_worker,
     submit_cloud_job,
 )
@@ -173,6 +174,12 @@ def main() -> None:
     )
     cloud_worker.add_argument("--job-uri")
 
+    capability_worker = subparsers.add_parser(
+        "capability-worker",
+        help="verify a managed runtime handoff and execute its approved local adapters",
+    )
+    capability_worker.add_argument("job_uri")
+
     status = subparsers.add_parser("status", help="show approved, used, reserved, and remaining")
     status.add_argument("run_dir", type=Path)
 
@@ -326,6 +333,13 @@ def main() -> None:
         if not job_uri:
             raise ValueError("cloud-worker requires --job-uri or ONEBRIEF_JOB_URI")
         record = run_cloud_worker(job_uri)
+        print(record.model_dump_json(indent=2))
+        if record.status == JobStatus.FAILED:
+            raise SystemExit(1)
+        return
+
+    if args.command == "capability-worker":
+        record = run_local_capability_worker(args.job_uri)
         print(record.model_dump_json(indent=2))
         if record.status == JobStatus.FAILED:
             raise SystemExit(1)

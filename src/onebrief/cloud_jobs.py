@@ -272,6 +272,15 @@ class GCSJobStore:
             if existing.handoff_id != handoff.handoff_id:
                 raise RuntimeError("a different runtime handoff already exists for this job")
 
+    def read_runtime_handoff(self) -> RuntimeCapabilityHandoff:
+        try:
+            payload = self.bucket.blob(
+                self._name("control/runtime_handoff.json")
+            ).download_as_text(encoding="utf-8")
+        except NotFound as exc:
+            raise FileNotFoundError("cloud job has no approved runtime handoff") from exc
+        return RuntimeCapabilityHandoff.model_validate_json(payload)
+
     def read_job(self) -> JobRecord:
         payload = self.bucket.blob(self._name("job.json")).download_as_text(encoding="utf-8")
         return JobRecord.model_validate_json(payload)
@@ -534,6 +543,20 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def approved_edge_runtime_adapters(job_dir: Path) -> list[str]:
+    """Return desktop-runtime adapters bound into the immutable snapshot."""
+
+    path = job_dir / "inputs" / SNAPSHOT_MANIFEST
+    if not path.is_file():
+        return []
+    manifest = ProjectSnapshotManifest.model_validate_json(path.read_text(encoding="utf-8"))
+    return sorted({
+        item.split(":", 1)[0]
+        for item in manifest.approved_adapters
+        if item.split(":", 1)[0].startswith("unity_")
+    })
+
+
 def required_local_runtime_adapters(job_dir: Path) -> list[str]:
     """Return approved adapters unavailable in the current execution image.
 
@@ -542,15 +565,7 @@ def required_local_runtime_adapters(job_dir: Path) -> list[str]:
     approved local runner instead of weakening the evidence contract.
     """
 
-    path = job_dir / "inputs" / SNAPSHOT_MANIFEST
-    if not path.is_file():
-        return []
-    manifest = ProjectSnapshotManifest.model_validate_json(path.read_text(encoding="utf-8"))
-    unity = sorted({
-        item.split(":", 1)[0]
-        for item in manifest.approved_adapters
-        if item.split(":", 1)[0].startswith("unity_")
-    })
+    unity = approved_edge_runtime_adapters(job_dir)
     if not unity:
         return []
     configured = os.environ.get("ONEBRIEF_UNITY_EDITOR")
@@ -587,6 +602,68 @@ def build_runtime_handoff(
         created_at=datetime.now(UTC).isoformat(),
         **payload,
     )
+
+
+def verify_runtime_handoff(
+    job_dir: Path, *, job_uri: str, handoff: RuntimeCapabilityHandoff,
+) -> None:
+    expected = build_runtime_handoff(
+        job_dir,
+        job_uri=job_uri,
+        required_adapters=approved_edge_runtime_adapters(job_dir),
+    )
+    comparable = {
+        key: value
+        for key, value in expected.model_dump(mode="json").items()
+        if key != "created_at"
+    }
+    observed = {
+        key: value
+        for key, value in handoff.model_dump(mode="json").items()
+        if key != "created_at"
+    }
+    if observed != comparable:
+        raise PermissionError("runtime handoff does not match the immutable approved job")
+
+
+def run_local_capability_worker(
+    job_uri: str,
+    *,
+    repository: GCSJobStore | None = None,
+    gateway: object | None = None,
+) -> JobRecord:
+    """Execute an exact managed handoff only where its desktop adapters exist."""
+
+    remote = repository or GCSJobStore(job_uri)
+    local_job: Path | None = None
+    try:
+        with tempfile.TemporaryDirectory(prefix="onebrief_capability_") as temp:
+            local_job = remote.download_job(Path(temp) / "job")
+            handoff = remote.read_runtime_handoff()
+            verify_runtime_handoff(local_job, job_uri=job_uri, handoff=handoff)
+            unavailable = required_local_runtime_adapters(local_job)
+            if unavailable:
+                raise RuntimeError(
+                    "approved local runtime adapters remain unavailable: "
+                    + ", ".join(unavailable)
+                )
+            remote.acquire_claim()
+            record = run_job(
+                local_job,
+                gateway=gateway,
+                progress_callback=lambda job, _milestone: remote.upload_outputs(job),
+            )
+            remote.upload_outputs(local_job)
+            remote.write_completion(record)
+            return record
+    except Exception as exc:
+        if local_job is not None:
+            try:
+                remote.upload_outputs(local_job)
+            except Exception:
+                pass
+        remote.write_failure(f"{type(exc).__name__}: {exc}")
+        raise
 
 
 def run_cloud_worker(
