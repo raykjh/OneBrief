@@ -315,7 +315,11 @@ def development_maker_schema_for(
 
 def is_unity_evidence_contract_feedback(feedback: str) -> bool:
     normalized = " ".join(feedback.split()).casefold()
-    return "unity visual test contract:" in normalized or any(marker in normalized for marker in (
+    executable_evidence_failure = (
+        "unity_playmode_visual_tests" in normalized
+        and "onebrief.visual" in normalized
+    )
+    return executable_evidence_failure or "unity visual test contract:" in normalized or any(marker in normalized for marker in (
         "unity visual evidence requires a distinct rendered scenario",
         "responsive unity visual evidence must define and capture",
         "unity visual evidence reused an identical screenshot",

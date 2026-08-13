@@ -1765,6 +1765,9 @@ def test_trusted_unity_test_compile_reference_failure_unlocks_only_asmdef() -> N
     "onebrief-unity-visual-evidence-v1 and contain a scenarios array",
     "Unity visual test contract: a camera RenderTexture does not capture "
     "ScreenSpaceOverlay UI; temporarily route the real active Canvas",
+    "development verification failed: unity_playmode_visual_tests (exit_code=2) "
+    "UNITY TEST FAILURES OneBrief.Visual.OneBriefVisualTest.TransitionTest: "
+    "LanguageDropdown must exist in the scene. Expected: not null But was: null",
 ])
 def test_all_unity_visual_test_contract_failures_route_to_evidence(feedback: str) -> None:
     assert is_unity_evidence_contract_feedback(feedback) is True
