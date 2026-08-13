@@ -2227,10 +2227,22 @@ class ExecutionPipeline:
                 )
                 if source_binding_anchors:
                     current_exact_edit_anchors = source_binding_anchors
+                probe = self.recovery_policy.decide(
+                    exc,
+                    context="development_candidate_promotion",
+                    attempt_number=1,
+                )
+                same_failure_count = sum(
+                    item.context == probe.context
+                    and item.error_class == probe.error_class
+                    and item.error_summary == probe.error_summary
+                    for item in self.recovery_decisions
+                )
+                failure_attempt = same_failure_count + 1
                 convergence_contract = record_convergence_failure(
                     context="development_candidate_promotion",
                     failure_text=str(exc),
-                    attempt_number=round_number + 1,
+                    attempt_number=failure_attempt,
                     affected_paths=[
                         str(item.get("path", "")) for item in raw_changes
                         if item.get("path")
@@ -2243,7 +2255,7 @@ class ExecutionPipeline:
                 decision = self.recovery_policy.decide(
                     exc,
                     context="development_candidate_promotion",
-                    attempt_number=round_number + 1,
+                    attempt_number=failure_attempt,
                 )
                 self._append_recovery(decision)
                 self._persist_recoveries(output_dir)

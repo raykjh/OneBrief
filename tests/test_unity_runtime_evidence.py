@@ -102,6 +102,20 @@ def test_missing_glyphs_fail_even_when_playmode_test_claims_pass(tmp_path: Path)
         )
 
 
+def test_missing_manifest_instructs_runtime_test_repair_not_static_artifact(
+    tmp_path: Path,
+) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results)
+
+    with pytest.raises(RuntimeError, match="generated during the executed") as failure:
+        validate_and_copy_unity_visual_evidence(
+            tmp_path, results, tmp_path / "packaged", "Login UI"
+        )
+
+    assert "do not add a static onebrief-evidence file" in str(failure.value)
+
+
 def test_every_explicitly_requested_locale_must_be_exercised(tmp_path: Path) -> None:
     results = tmp_path / "results.xml"
     write_results(results)

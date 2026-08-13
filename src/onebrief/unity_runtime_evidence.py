@@ -225,7 +225,10 @@ def validate_and_copy_unity_visual_evidence(
     manifest_path = evidence_root / "runtime-evidence.json"
     if not manifest_path.is_file():
         raise RuntimeError(
-            "Unity visual verification requires onebrief-evidence/runtime-evidence.json"
+            "Unity visual verification requires onebrief-evidence/runtime-evidence.json to be "
+            "generated during the executed OneBrief.Visual PlayMode test; edit the approved test "
+            "source to create the schema and screenshots at runtime, and do not add a static "
+            "onebrief-evidence file to the repository"
         )
     try:
         manifest = UnityVisualEvidence.model_validate_json(

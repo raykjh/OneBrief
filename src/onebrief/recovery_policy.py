@@ -84,6 +84,7 @@ class RecoveryPolicy:
             "validation errors for projectcodechangeset",
             "prohibited host-runtime capability",
             "absent from approved_repository_files",
+            "no approved change paths after phase/path filtering",
         )
         verification_setup_markers = (
             "command not found", "eslint: not found",
