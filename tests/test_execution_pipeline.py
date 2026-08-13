@@ -25,8 +25,10 @@ from onebrief.execution_pipeline import (
     visual_repair_has_uncommitted_product_candidate,
     visual_repair_production_target_allowed,
     is_unity_evidence_contract_feedback,
+    is_development_product_target_failure,
     missing_unity_evidence_bundle_paths,
     normalize_atomic_unity_evidence_bundle,
+    rollback_detached_development_changes,
     should_preserve_unity_evidence_checkpoint,
     is_unity_localization_product_failure,
     unity_evidence_contract_target_allowed,
@@ -1822,6 +1824,57 @@ def test_atomic_schema_returns_to_bounded_repair_after_pair_exists() -> None:
     assert development_maker_schema_for(
         detailed_report, with_pair.model_dump(mode="json")
     ) is UnityEvidenceSourceRepair
+
+    mixed_product_report = ExecutionPipeline._development_failure_report(
+        "Unity visual test contract: changed Unity UI MonoBehaviour "
+        "JulpaeLobbySettingsPopupLocalizationBinder is not reachable from any committed "
+        ".unity/.prefab script GUID, runtime initialization entrypoint, or other production "
+        "source reference; repair or attach the active component instead | "
+        "Unity visual test contract: the OneBrief.Visual test must select a real "
+        "LanguageDropdown value and dispatch its change"
+    )
+    assert development_maker_schema_for(
+        mixed_product_report, with_pair.model_dump(mode="json")
+    ) is ExactRepairProjectCodeChangeSet
+
+
+def test_detached_product_edit_is_rolled_back_without_losing_evidence() -> None:
+    candidate = ProjectCodeChangeSet(
+        summary="Detached product edit plus executable evidence.",
+        changes=[
+            {
+                "path": "Assets/JULPAE/Scripts/Localization/JulpaeLobbySettingsPopupLocalizationBinder.cs",
+                "base_sha256": "a" * 64,
+                "content": "public class JulpaeLobbySettingsPopupLocalizationBinder {}",
+                "reason": "Attempted settings localization.",
+            },
+            {
+                "path": "Assets/JULPAE/Tests/PlayMode/OneBrief.Visual.SettingsTest.cs",
+                "base_sha256": None,
+                "content": "namespace OneBrief.Visual { class SettingsTest {} }",
+                "reason": "Execute the active UI.",
+            },
+            {
+                "path": "Assets/JULPAE/Tests/PlayMode/OneBrief.Visual.Tests.asmdef",
+                "base_sha256": None,
+                "content": '{"optionalUnityReferences":["TestAssemblies"]}',
+                "reason": "Discover the PlayMode test.",
+            },
+        ],
+    )
+    feedback = (
+        "changed Unity UI MonoBehaviour JulpaeLobbySettingsPopupLocalizationBinder "
+        "is not reachable from any committed .unity/.prefab script GUID; "
+        "repair or attach the active component instead"
+    )
+
+    assert is_development_product_target_failure(feedback) is True
+    rolled_back = rollback_detached_development_changes(candidate, feedback)
+
+    assert [item.path for item in rolled_back.changes] == [
+        "Assets/JULPAE/Tests/PlayMode/OneBrief.Visual.SettingsTest.cs",
+        "Assets/JULPAE/Tests/PlayMode/OneBrief.Visual.Tests.asmdef",
+    ]
 
 
 def test_duplicate_unity_screenshot_feedback_requires_capture_at_each_real_state() -> None:

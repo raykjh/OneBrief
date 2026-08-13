@@ -6,6 +6,7 @@ import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import TypeVar
@@ -276,6 +277,8 @@ def development_maker_schema_for(
         and missing_unity_evidence_bundle_paths(feedback, current_candidate)
     ):
         return AtomicUnityEvidenceBundle
+    if is_development_product_target_failure(feedback):
+        return ExactRepairProjectCodeChangeSet
     requested_pair = (
         "Unity visual test contract: add a discoverable Unity PlayMode test | "
         "Unity visual test contract: add a Unity test .asmdef"
@@ -311,6 +314,52 @@ def is_unity_localization_product_failure(feedback: str) -> bool:
         "unity visual scenario" in normalized
         and "did not visibly change any text" in normalized
     )
+
+
+def is_development_product_target_failure(feedback: str) -> bool:
+    """Return true when trusted evidence rejects the edited production target.
+
+    Evidence and product defects can be reported together. A proven detached
+    or semantically ineffective production edit must take precedence over
+    further proof-harness refinement; otherwise the same maker is trapped on
+    evidence code that can never make the product criterion pass.
+    """
+
+    normalized = " ".join(feedback.split()).casefold()
+    return is_unity_localization_product_failure(feedback) or (
+        "changed unity ui monobehaviour" in normalized
+        and "is not reachable" in normalized
+        and "active component" in normalized
+    )
+
+
+def rollback_detached_development_changes(
+    candidate: ProjectCodeChangeSet, feedback: str,
+) -> ProjectCodeChangeSet:
+    """Drop only edits that trusted verification identified as unreachable.
+
+    This is a rollback of a rejected candidate slice, not a new model-authored
+    edit. Executable evidence and every unrelated production change remain in
+    the checkpoint for the next bounded maker turn.
+    """
+
+    class_names = {
+        match.casefold()
+        for match in re.findall(
+            r"changed\s+unity\s+ui\s+monobehaviour\s+([A-Za-z_][A-Za-z0-9_]*)\s+is\s+not\s+reachable",
+            feedback,
+            flags=re.IGNORECASE,
+        )
+    }
+    if not class_names:
+        return candidate
+    kept = [
+        change for change in candidate.changes
+        if Path(change.path).stem.casefold() not in class_names
+    ]
+    if len(kept) == len(candidate.changes):
+        return candidate
+    return candidate.model_copy(update={"changes": kept})
 
 
 def development_toolpack_focus_text(
@@ -1805,9 +1854,11 @@ class ExecutionPipeline:
                 *(active_report.blocking_issues if active_report else []),
                 *(active_report.revision_instructions if active_report else []),
             ])
-            evidence_contract_repair = is_unity_evidence_contract_feedback(
-                active_feedback
-            ) or is_missing_unity_evidence_harness(active_feedback)
+            product_target_repair = is_development_product_target_failure(active_feedback)
+            evidence_contract_repair = (
+                is_unity_evidence_contract_feedback(active_feedback)
+                or is_missing_unity_evidence_harness(active_feedback)
+            ) and not product_target_repair
             missing_atomic_members = missing_unity_evidence_bundle_paths(
                 active_feedback, previous_change_set, raw
             )
@@ -1897,7 +1948,11 @@ class ExecutionPipeline:
                         EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
                         SKIP_VERIFIER_STATE_KEY: True,
                     }
-            if semantic_visual_repair and not evidence_contract_repair and not reverify_existing:
+            if (
+                (semantic_visual_repair or product_target_repair)
+                and not evidence_contract_repair
+                and not reverify_existing
+            ):
                 raw_paths = [
                     str(getattr(item, "path", "")).replace("\\", "/")
                     for item in getattr(raw, "changes", [])
@@ -2284,6 +2339,20 @@ class ExecutionPipeline:
                     rejected_change_history = discover_rejected_change_history(output_dir)
                     write_rejected_change_history(output_dir, rejected_change_history)
                 quality = development_failure_quality(feedback)
+                rolled_back_candidate = rollback_detached_development_changes(
+                    candidate, feedback
+                )
+                if rolled_back_candidate is not candidate:
+                    candidate = rolled_back_candidate
+                    previous_change_set = rolled_back_candidate
+                    self._write(
+                        output_dir / "development_detached_target_rollback.json",
+                        rolled_back_candidate.model_dump_json(indent=2),
+                    )
+                    self._write(
+                        output_dir / "code_change_set.json",
+                        rolled_back_candidate.model_dump_json(indent=2),
+                    )
                 if (
                     best_failure_quality is None
                     or quality >= best_failure_quality
