@@ -235,6 +235,12 @@ def phase_stage(phase: ExecutionPhase, stage: str) -> str:
 
 def is_ai_repair_stage(stage: str) -> bool:
     normalized = stage.casefold()
+    # A compact retry repairs the structured transport of the *same* agent
+    # attempt.  It must still pass the phase and total-dollar wallets, but it
+    # is not a new semantic repair round.  Counting it here can strand the
+    # independent verifier even when no product/evidence repair is allowed.
+    if normalized.endswith("_compact_retry"):
+        return False
     return (
         "repair" in normalized
         or "retry" in normalized

@@ -269,6 +269,22 @@ def test_phase_repair_limit_blocks_before_provider_call(tmp_path: Path) -> None:
         )
 
 
+def test_compact_transport_retry_does_not_consume_semantic_repair_limit(
+    tmp_path: Path,
+) -> None:
+    store = BudgetStore(tmp_path)
+    store.approve(_estimate(repair_limit=0), 0.1)
+
+    reservation = store.reserve_call(
+        stage="final_verification::independent_verification_compact_retry",
+        model="gemini-3.1-pro-preview",
+        input_token_cap=100,
+        output_token_cap=100,
+    )
+
+    assert reservation.status.value == "reserved"
+
+
 def test_approved_reasoning_escalation_can_borrow_unused_reserve(tmp_path: Path) -> None:
     store = BudgetStore(tmp_path)
     estimate = _estimate(repair_limit=3).model_copy(update={
