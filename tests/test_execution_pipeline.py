@@ -30,6 +30,7 @@ from onebrief.execution_pipeline import (
     visual_repair_production_candidate,
     visual_repair_has_uncommitted_product_candidate,
     visual_repair_production_target_allowed,
+    relevant_product_repair_sources,
     is_unity_evidence_contract_feedback,
     is_development_product_target_failure,
     missing_unity_evidence_bundle_paths,
@@ -2183,6 +2184,47 @@ def test_detached_product_edit_is_rolled_back_without_losing_evidence() -> None:
         "Assets/JULPAE/Tests/PlayMode/OneBrief.Visual.SettingsTest.cs",
         "Assets/JULPAE/Tests/PlayMode/OneBrief.Visual.Tests.asmdef",
     ]
+
+
+def test_runtime_product_failure_uses_one_bounded_exact_repair() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "development verification failed: unity_playmode_visual_tests | "
+        "UNITY TEST FAILURES OneBrief.Visual.LoginJourney: Must transition to a "
+        "Lobby scene after clicking Start Game. Expected True But was False"
+    )
+
+    assert is_development_product_target_failure(
+        " | ".join([*report.blocking_issues, *report.revision_instructions])
+    ) is True
+    assert development_maker_schema_for(report, None) is ExactRepairProjectCodeChangeSet
+
+
+def test_runtime_product_source_discovery_is_bounded_and_phase_safe() -> None:
+    sources = [{
+        "repository_path": "Assets/Game/Scripts/Common/SceneRouter.cs",
+        "content": "void OpenLobby() { LoadScene(\"Lobby\"); }",
+    }, {
+        "repository_path": "Assets/Game/Scripts/Login/LoginController.cs",
+        "content": "void StartGame() { router.OpenLobby(); }",
+    }, {
+        "repository_path": "Assets/Game/Scripts/Shop/Catalog.cs",
+        "content": "void OpenShop() {}",
+    }, {
+        "repository_path": "Assets/Game/Tests/PlayMode/LoginJourney.cs",
+        "content": "Assert.That(activeScene, Is.EqualTo(\"Lobby\"));",
+    }]
+
+    selected = relevant_product_repair_sources(
+        sources,
+        "LoginJourney failed to transition to Lobby after clicking Start Game",
+        limit=2,
+    )
+
+    assert [item["repository_path"] for item in selected] == [
+        "Assets/Game/Scripts/Login/LoginController.cs",
+        "Assets/Game/Scripts/Common/SceneRouter.cs",
+    ]
+    assert all("/Tests/" not in str(item["repository_path"]) for item in selected)
 
 
 def test_duplicate_unity_screenshot_feedback_requires_capture_at_each_real_state() -> None:

@@ -78,11 +78,11 @@ class BudgetedAdkLlm(BaseLlm):
             return False, ""
 
         invalid, failure_detail = structured_failure(response)
-        for compact_attempt in range(1, 3):
+        for compact_attempt in range(1, 2):
             if not invalid:
                 break
             # A truncated structured response is not useful evidence and cannot be
-            # parsed by ADK. Retry twice at most as a deliberately small incremental edit.
+            # parsed by ADK. Retry once as a deliberately small incremental edit.
             # Later convergence rounds can add the next increment after deterministic
             # verification, avoiding a fragile whole-project JSON blob.
             compact_contents = list(llm_request.contents) + [types.Content(

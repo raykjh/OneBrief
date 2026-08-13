@@ -278,7 +278,7 @@ def test_adk_llm_retries_valid_json_that_fails_active_pydantic_schema() -> None:
     )
 
 
-def test_adk_llm_allows_two_bounded_schema_repairs_before_returning() -> None:
+def test_adk_llm_allows_one_bounded_schema_repair_before_returning() -> None:
     from onebrief.generic_development_toolpack import (
         CompactProposedProjectCodeChangeSet,
     )
@@ -293,7 +293,7 @@ def test_adk_llm_allows_two_bounded_schema_repairs_before_returning() -> None:
                 "path": "Assets/UI/Lobby.cs",
                 "reason": "Repair the product surface.",
             }
-            if len(self.calls) == 3:
+            if len(self.calls) == 2:
                 change.update({"search": "old", "replace": "new"})
             payload = {"summary": "Bounded repair.", "changes": [change]}
             return types.GenerateContentResponse(candidates=[types.Candidate(
@@ -326,7 +326,6 @@ def test_adk_llm_allows_two_bounded_schema_repairs_before_returning() -> None:
 
     assert [call[0] for call in gateway.calls] == [
         "product_implementation::repair::long_form_draft",
-        "product_implementation::repair::long_form_draft_compact_retry",
         "product_implementation::repair::long_form_draft_compact_retry",
     ]
     retry_text = gateway.calls[-1][1][-1].parts[0].text

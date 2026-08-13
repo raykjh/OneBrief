@@ -269,6 +269,58 @@ def visual_repair_production_target_allowed(path: str) -> bool:
     return True
 
 
+_PRODUCT_REPAIR_SOURCE_STOP_WORDS = {
+    "after", "before", "could", "expected", "failed", "failure", "false",
+    "from", "must", "onebrief", "should", "tests", "test", "true", "unity",
+    "visual", "with", "without",
+}
+
+
+def relevant_product_repair_sources(
+    sources: list[dict[str, object]],
+    failure_text: str,
+    *,
+    limit: int = 6,
+) -> list[dict[str, object]]:
+    """Select a bounded product-source working set for a proven runtime defect.
+
+    A runtime assertion normally names behavior (for example login, lobby, or a
+    clicked control) rather than the file that owns it.  Reusing only paths from
+    the previous candidate hides the actual production surface and encourages a
+    maker to edit the test or emit a whole-project blob.  This deterministic
+    selector ranks already-approved repository context by failure terms and
+    exposes only a small, phase-safe set.  It grants no new path authority.
+    """
+
+    if limit <= 0:
+        return []
+    expanded = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", failure_text)
+    terms = {
+        term.casefold()
+        for term in re.findall(r"[A-Za-z가-힣][A-Za-z0-9_가-힣]{3,}", expanded)
+        if term.casefold() not in _PRODUCT_REPAIR_SOURCE_STOP_WORDS
+    }
+    if not terms:
+        return []
+
+    ranked: list[tuple[int, int, str, dict[str, object]]] = []
+    for source in sources:
+        path = str(source.get("repository_path", "")).replace("\\", "/")
+        content = str(source.get("content", ""))
+        if not path or not content or not visual_repair_production_target_allowed(path):
+            continue
+        path_folded = path.casefold()
+        content_folded = content.casefold()
+        path_hits = sum(1 for term in terms if term in path_folded)
+        content_hits = sum(min(3, content_folded.count(term)) for term in terms)
+        score = path_hits * 12 + content_hits
+        if score <= 0:
+            continue
+        ranked.append((score, path_hits, path_folded, dict(source)))
+    ranked.sort(key=lambda item: (-item[0], -item[1], item[2]))
+    return [item[3] for item in ranked[:limit]]
+
+
 def unity_evidence_contract_target_allowed(path: str) -> bool:
     """Allow evidence-topology repairs only in the executed PlayMode harness."""
 
@@ -458,10 +510,28 @@ def is_development_product_target_failure(feedback: str) -> bool:
     """
 
     normalized = " ".join(feedback.split()).casefold()
-    return is_unity_localization_product_failure(feedback) or (
+    explicit_product_failure = is_unity_localization_product_failure(feedback) or (
         "changed unity ui monobehaviour" in normalized
         and "is not reachable" in normalized
         and "active component" in normalized
+    )
+    if explicit_product_failure:
+        return True
+    # Reuse the authoritative phase classifier for executable runtime failures.
+    # Unknown prose is deliberately excluded: only a typed runtime/semantic
+    # failure already owned by product may switch the maker to a bounded product
+    # repair schema.
+    decision = decide_repair_phase(
+        context="development_acceptance_verification",
+        failure_text=feedback,
+        round_number=0,
+    )
+    return (
+        decision.next_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+        and decision.failure_code.value in {
+            "runtime_failed",
+            "semantic_product_defect",
+        }
     )
 
 
@@ -2121,6 +2191,9 @@ class ExecutionPipeline:
         localization_product_repair = is_unity_localization_product_failure(
             prior_failure_text
         )
+        product_target_repair = is_development_product_target_failure(
+            prior_failure_text
+        )
         semantic_visual_repair = (
             "independent unity semantic visual observation failed"
             in prior_failure_text.casefold()
@@ -2157,16 +2230,15 @@ class ExecutionPipeline:
             # for exact-edit promotion and base-hash enforcement.
             maker_sources = []
             visible_repair_paths = set(changed_paths)
-            if localization_product_repair:
+            if product_target_repair:
                 # The observer proved a product localization defect but cannot
-                # safely name its source file.  Let contract-focused ToolPack
-                # discovery supply the bounded production candidates; proof
-                # files remain excluded below.
+                # safely name its source file. Runtime assertions have the same
+                # property. Let deterministic failure-term discovery supply a
+                # bounded production working set; proof files remain excluded.
                 visible_repair_paths.update(
                     str(source.get("repository_path", ""))
-                    for source in prepared_sources
-                    if visual_repair_production_target_allowed(
-                        str(source.get("repository_path", ""))
+                    for source in relevant_product_repair_sources(
+                        prepared_sources, prior_failure_text
                     )
                 )
             elif latest_repair_contract is not None:
