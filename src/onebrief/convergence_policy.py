@@ -119,6 +119,7 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
         "responsive unity visual evidence must define and capture",
         "unity visual evidence reused an identical screenshot",
         "unity visual evidence did not exercise requested locale",
+        "unity visual evidence manifest is invalid",
         "locale changed_visible_text_count must compare before/after visible text snapshots",
         "identical duplicate local ui-control declaration",
     )):
@@ -205,6 +206,7 @@ def extract_symptom_keys(
         ("runtime_evidence_json", ("must write onebrief-evidence/runtime-evidence.json",)),
         ("png_capture", ("must capture png runtime evidence",)),
         ("scenario_schema", ("must use schema_version onebrief-unity-visual-evidence-v1",)),
+        ("invalid_evidence_manifest", ("unity visual evidence manifest is invalid",)),
         ("scenario_fields", ("each general ui evidence scenario must contain",)),
         ("overlay_capture", ("rendertexture does not capture screenspaceoverlay ui",)),
         ("real_transition", ("must perform a real ui interaction",)),

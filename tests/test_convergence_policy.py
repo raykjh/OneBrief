@@ -122,6 +122,20 @@ def test_locale_observer_measurement_order_is_evidence_topology() -> None:
     assert observation.symptom_keys == ["artifact:evidence_topology"]
 
 
+def test_invalid_unity_evidence_manifest_is_evidence_topology() -> None:
+    observation = ConvergencePolicy().observe(
+        context="development_verification",
+        failure_text=(
+            "Unity visual evidence manifest is invalid: scenarios Field required"
+        ),
+        attempt_number=1,
+        affected_paths=["Assets/Tests/PlayMode/LoginVisualTest.cs"],
+    )
+
+    assert observation.layer == FailureLayer.EVIDENCE_TOPOLOGY
+    assert observation.symptom_keys == ["artifact:invalid_evidence_manifest"]
+
+
 def test_evidence_topology_can_advance_when_static_blockers_change() -> None:
     policy = ConvergencePolicy()
     ledger = ConvergenceLedger()
