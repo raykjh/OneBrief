@@ -2324,6 +2324,34 @@ def test_safe_unity_test_asmdef_normalization_adds_test_assembly_marker() -> Non
     assert payload["optionalUnityReferences"] == ["TestAssemblies"]
 
 
+def test_safe_unity_playmode_asmdef_normalization_removes_zero_test_traps() -> None:
+    content = json.dumps({
+        "name": "OneBrief.Visual.Tests",
+        "references": ["GUID:productionassembly"],
+        "optionalUnityReferences": ["TestAssemblies"],
+        "includePlatforms": ["Editor"],
+        "excludePlatforms": ["Android"],
+        "overrideReferences": True,
+        "precompiledReferences": ["nunit.framework.dll"],
+        "defineConstraints": ["UNITY_INCLUDE_TESTS"],
+        "autoReferenced": False,
+    })
+
+    normalized = ApprovedProjectDevelopmentToolPack._normalize_safe_generated_text(
+        "Assets/Tests/PlayMode/OneBrief.Visual.Tests.asmdef", content
+    )
+
+    payload = json.loads(normalized)
+    assert payload["references"] == ["GUID:productionassembly"]
+    assert payload["optionalUnityReferences"] == ["TestAssemblies"]
+    assert payload["includePlatforms"] == []
+    assert payload["excludePlatforms"] == []
+    assert payload["overrideReferences"] is False
+    assert payload["precompiledReferences"] == []
+    assert payload["defineConstraints"] == []
+    assert payload["autoReferenced"] is False
+
+
 def test_asmdef_normalization_does_not_touch_production_or_invalid_json() -> None:
     production = '{"name":"JULPAE.Localization"}\n'
     invalid = '{"name":'

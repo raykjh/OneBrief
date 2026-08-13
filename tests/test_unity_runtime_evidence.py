@@ -138,6 +138,19 @@ def test_legacy_or_zero_coverage_test_cannot_masquerade_as_visual_proof(tmp_path
         )
 
 
+def test_zero_executed_playmode_tests_are_not_a_behavior_pass(tmp_path: Path) -> None:
+    results = tmp_path / "results.xml"
+    results.write_text(
+        '<test-run testcasecount="0" passed="0" failed="0" result="Passed" />',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="at least one executed OneBrief.Visual"):
+        validate_and_copy_unity_visual_evidence(
+            tmp_path, results, tmp_path / "packaged", "Login to Lobby UI"
+        )
+
+
 def test_identical_locale_screenshots_cannot_masquerade_as_visual_proof(tmp_path: Path) -> None:
     results = tmp_path / "results.xml"
     write_results(results)

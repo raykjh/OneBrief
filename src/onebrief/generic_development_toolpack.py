@@ -1124,6 +1124,18 @@ class ApprovedProjectDevelopmentToolPack:
                         item for item in references
                         if item not in duplicate_test_runners
                     ]
+                # A PlayMode test assembly must be discoverable in the Player
+                # test domain.  Models commonly copy an EditMode asmdef and
+                # leave it Editor-only, or combine TestAssemblies with manual
+                # NUnit/precompiled-reference overrides.  Unity can then exit
+                # successfully while executing zero tests.  Canonicalize only
+                # generated PlayMode test assemblies; production asmdefs are
+                # never changed by this safety repair.
+                payload["includePlatforms"] = []
+                payload["excludePlatforms"] = []
+                payload["overrideReferences"] = False
+                payload["precompiledReferences"] = []
+                payload["defineConstraints"] = []
                 return json.dumps(payload, ensure_ascii=False, indent=4) + "\n"
             return content
         if suffix != ".cs":
@@ -2544,9 +2556,12 @@ class ApprovedProjectDevelopmentToolPack:
                         summary=f"{result.command_id} completed with exit code {result.exit_code}.",
                         command_id=result.command_id,
                     ))
-                if any(marker in normalized_id for marker in (
+                if (
+                    result.command_id != AdapterId.UNITY_PLAYMODE_VISUAL_TESTS.value
+                    and any(marker in normalized_id for marker in (
                     "playmode", "interaction", "e2e", "http", "runtime",
-                )):
+                    ))
+                ):
                     command_bindings.append(create_evidence_binding(
                         criterion_id=None,
                         kind=EvidenceKind.BEHAVIOR,
@@ -2640,7 +2655,7 @@ class ApprovedProjectDevelopmentToolPack:
                 for item in results
             ):
                 evidence_dir = output_dir / "unity_visual_evidence"
-                validate_and_copy_unity_visual_evidence(
+                visual_summary = validate_and_copy_unity_visual_evidence(
                     clone,
                     clone / "onebrief-playmode-visual-results.xml",
                     evidence_dir,
@@ -2655,6 +2670,18 @@ class ApprovedProjectDevelopmentToolPack:
                 command_receipt = command_receipt.model_copy(update={
                     "evidence_bindings": [
                         *command_receipt.evidence_bindings,
+                        create_evidence_binding(
+                            criterion_id=None,
+                            kind=EvidenceKind.BEHAVIOR,
+                            status=EvidenceStatus.PASSED,
+                            summary=(
+                                "Unity executed "
+                                f"{visual_summary.test_count} discoverable OneBrief.Visual "
+                                "PlayMode test(s) and validated their runtime scenarios."
+                            ),
+                            artifact=manifest_artifact,
+                            command_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS.value,
+                        ),
                         create_evidence_binding(
                             criterion_id=None,
                             kind=EvidenceKind.VISUAL,
