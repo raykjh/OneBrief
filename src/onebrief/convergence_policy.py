@@ -19,6 +19,12 @@ from pydantic import BaseModel, Field
 from onebrief.handoff_protocol import FailureCode, FailureOwner
 
 
+CURRENT_CONVERGENCE_POLICY_REVISION = (
+    "onebrief-convergence-2026-08-14-phase-authority-v2"
+)
+LEGACY_CONVERGENCE_POLICY_REVISION = "onebrief-convergence-legacy-v1"
+
+
 class FailureLayer(StrEnum):
     STRUCTURED_OUTPUT = "structured_output"
     SOURCE_BINDING = "source_binding"
@@ -91,8 +97,13 @@ class RepairContract(BaseModel):
 
 class ConvergenceLedger(BaseModel):
     schema_version: str = "onebrief-convergence-ledger-v1"
+    policy_revision: str = LEGACY_CONVERGENCE_POLICY_REVISION
     observations: list[FailureObservation] = Field(default_factory=list, max_length=64)
     repair_contracts: list[RepairContract] = Field(default_factory=list, max_length=64)
+
+
+def new_convergence_ledger() -> ConvergenceLedger:
+    return ConvergenceLedger(policy_revision=CURRENT_CONVERGENCE_POLICY_REVISION)
 
 
 def repair_contract_blocks_resume(

@@ -1,11 +1,27 @@
 from onebrief.convergence_policy import (
+    CURRENT_CONVERGENCE_POLICY_REVISION,
     ConvergenceLedger,
     ConvergencePolicy,
     FailureLayer,
+    LEGACY_CONVERGENCE_POLICY_REVISION,
     ProgressKind,
+    new_convergence_ledger,
     repair_contract_blocks_resume,
 )
 from onebrief.handoff_protocol import FailureCode, FailureOwner
+
+
+def test_new_convergence_epoch_is_distinct_from_legacy_stored_ledgers() -> None:
+    legacy = ConvergenceLedger.model_validate({
+        "schema_version": "onebrief-convergence-ledger-v1",
+        "observations": [],
+        "repair_contracts": [],
+    })
+    current = new_convergence_ledger()
+
+    assert legacy.policy_revision == LEGACY_CONVERGENCE_POLICY_REVISION
+    assert current.policy_revision == CURRENT_CONVERGENCE_POLICY_REVISION
+    assert legacy.policy_revision != current.policy_revision
 
 
 def test_source_binding_failure_uses_deterministic_probe_without_model_escalation() -> None:

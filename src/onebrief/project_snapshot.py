@@ -32,6 +32,12 @@ BLOCKED_PARTS = {
     ".git", ".ssh", "credentials", "library", "logs", "node_modules",
     "secrets", "service-account", "service_account", "temp", "usersettings",
 }
+BLOCKED_SECRET_SUFFIXES = {
+    ".jks", ".key", ".keystore", ".p12", ".pfx", ".pem", ".pkcs12",
+}
+BLOCKED_SECRET_NAME_MARKERS = {
+    "client_secret", "private_key", "release-key", "service-account-key",
+}
 
 
 def _now() -> str:
@@ -105,6 +111,18 @@ def _safe_relative(value: str) -> PurePosixPath:
     return path
 
 
+def _is_sensitive_snapshot_path(value: str) -> bool:
+    path = PurePosixPath(value.replace("\\", "/"))
+    lowered_parts = {part.casefold() for part in path.parts}
+    filename = path.name.casefold()
+    return bool(
+        lowered_parts & BLOCKED_PARTS
+        or any(part.startswith(".env") for part in lowered_parts)
+        or any(filename.endswith(suffix) for suffix in BLOCKED_SECRET_SUFFIXES)
+        or any(marker in filename for marker in BLOCKED_SECRET_NAME_MARKERS)
+    )
+
+
 class SnapshotFile(BaseModel):
     path: str
     size_bytes: int = Field(ge=0, le=MAX_SNAPSHOT_FILE_BYTES)
@@ -157,6 +175,8 @@ def _selected_files(root: Path, read_prefixes: list[str]) -> list[tuple[str, byt
     committed_blobs = _git_blobs(root, sorted(tracked_set))
     selected: list[tuple[str, bytes]] = []
     for relative in tracked:
+        if _is_sensitive_snapshot_path(relative):
+            continue
         pure = _safe_relative(relative)
         normalized = pure.as_posix()
         source = (root / Path(*pure.parts)).resolve()

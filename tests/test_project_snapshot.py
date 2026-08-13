@@ -126,6 +126,33 @@ def test_snapshot_restores_only_current_approved_tree_and_rebuilds_toolpack(
     ).state().execution_ready
 
 
+def test_snapshot_excludes_committed_secret_key_material(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root, registry = _approved_python_project(tmp_path, monkeypatch)
+    (root / "release-key.jks.keystore").write_bytes(b"private signing key")
+    (root / "client_secret.json").write_text('{"secret":"value"}', encoding="utf-8")
+    (root / "safe-runtime.json").write_text('{"mode":"test"}', encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-m", "Add committed runtime fixture and sensitive keys")
+    lifecycle = ProjectToolPackLifecycle("snapshot-python", registry)
+    state = lifecycle.generate_and_qualify()
+    lifecycle.approve(state.qualification.toolpack_sha256)
+
+    inputs = tmp_path / "secret-filtered-job" / "inputs"
+    manifest = create_project_snapshot("snapshot-python", inputs)
+
+    paths = {item.path for item in manifest.files}
+    assert "safe-runtime.json" in paths
+    assert "release-key.jks.keystore" not in paths
+    assert "client_secret.json" not in paths
+    with zipfile.ZipFile(inputs / SNAPSHOT_ARCHIVE) as archive:
+        names = set(archive.namelist())
+    assert "repository/safe-runtime.json" in names
+    assert "repository/release-key.jks.keystore" not in names
+    assert "repository/client_secret.json" not in names
+
+
 def test_snapshot_includes_the_registration_manifest_without_committing_it(
     tmp_path: Path, monkeypatch
 ) -> None:

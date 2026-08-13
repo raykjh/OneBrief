@@ -108,9 +108,11 @@ from onebrief.handoff_protocol import (
 )
 from onebrief.completion_ledger import refresh_completion_ledger, settle_consistent_verification
 from onebrief.convergence_policy import (
+    CURRENT_CONVERGENCE_POLICY_REVISION,
     ConvergenceLedger,
     ConvergencePolicy,
     RepairContract,
+    new_convergence_ledger,
     repair_contract_blocks_resume,
 )
 from onebrief.execution_profile import (
@@ -1708,7 +1710,42 @@ class ExecutionPipeline:
                 convergence_ledger_path.read_text(encoding="utf-8")
             )
         except (OSError, ValidationError):
-            convergence_ledger = ConvergenceLedger()
+            convergence_ledger = new_convergence_ledger()
+        if (
+            verifier_only_revalidation
+            and convergence_ledger.policy_revision
+            != CURRENT_CONVERGENCE_POLICY_REVISION
+        ):
+            prior_revision = convergence_ledger.policy_revision
+            prior_payload = convergence_ledger.model_dump(mode="json")
+            prior_digest = hashlib.sha256(
+                json.dumps(
+                    prior_payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            self._write(
+                output_dir / "convergence_epochs" / f"{prior_digest}.json",
+                convergence_ledger.model_dump_json(indent=2),
+            )
+            convergence_ledger = new_convergence_ledger()
+            self._write(
+                output_dir / "convergence_epoch_transition.json",
+                json.dumps({
+                    "schema_version": "onebrief-convergence-epoch-transition-v1",
+                    "prior_policy_revision": prior_revision,
+                    "prior_ledger_sha256": prior_digest,
+                    "active_policy_revision": CURRENT_CONVERGENCE_POLICY_REVISION,
+                    "reason": (
+                        "The deterministic verification and phase-authority policy changed. "
+                        "Historical failures remain immutable audit evidence but cannot count "
+                        "as repeated attempts in the new policy epoch until re-observed."
+                    ),
+                    "candidate_reverification_required": True,
+                }, ensure_ascii=False, indent=2),
+            )
         latest_repair_contract: RepairContract | None = (
             convergence_ledger.repair_contracts[-1]
             if convergence_ledger.repair_contracts else None
