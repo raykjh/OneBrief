@@ -270,19 +270,21 @@ def create_budget_preserving_continuation(
         reused_items.append("team_plan.json")
     reused = tuple(dict.fromkeys(reused_items))
     if reverify_existing_candidate:
-        (child_dir / "work" / "reverify_existing_candidate.json").write_text(
-            json.dumps({"enabled": True}, indent=2) + "\n",
-            encoding="utf-8",
+        _write_continuation_marker(
+            child_dir,
+            "reverify_existing_candidate.json",
+            {"enabled": True},
         )
     if research_reentry:
-        (child_dir / "work" / "research_reentry_request.json").write_text(
-            json.dumps({
+        _write_continuation_marker(
+            child_dir,
+            "research_reentry_request.json",
+            {
                 "schema_version": "onebrief-research-reentry-request-v1",
                 "reason": "verification found evidence that only the investigator can replace",
                 "blocking_issues": research_blocking_issues or [],
                 "max_refinement_calls": 2,
-            }, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
+            },
         )
     from onebrief.lineage import ancestor_lineage_payload
 
@@ -318,11 +320,34 @@ def create_budget_preserving_continuation(
             else "child has a new explicit approval; unused parent approval is not transferred"
         ),
     }
-    (child_dir / "work" / "continuation_manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    _write_continuation_marker(
+        child_dir,
+        "continuation_manifest.json",
+        manifest,
     )
     return child_dir, source_actual_usd, child_approved_usd, reused
+
+
+def _write_continuation_marker(
+    child_dir: Path, name: str, payload: dict[str, object]
+) -> None:
+    """Write a resume marker where both legacy and milestone runners see it."""
+
+    work = child_dir / "work"
+    targets = [work]
+    milestone_root = work / "milestones"
+    if milestone_root.is_dir():
+        for milestone_dir in sorted(path for path in milestone_root.iterdir() if path.is_dir()):
+            if any((milestone_dir / candidate).is_file() for candidate in (
+                "code_change_set.json",
+                "development_best_candidate.json",
+                "draft_r0.json",
+            )):
+                targets.append(milestone_dir)
+    encoded = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    for target_dir in targets:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        (target_dir / name).write_text(encoded, encoding="utf-8")
 
 
 def _find_team_plan(job_dir: Path) -> TeamPlan | None:

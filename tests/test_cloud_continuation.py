@@ -41,6 +41,14 @@ class SupplementalReuseSource:
         return ["development_verification_failure.txt"]
 
 
+class MilestoneReuseSource:
+    def download_reusable_artifacts(self, destination: Path) -> list[str]:
+        milestone = destination / "milestones" / "M01"
+        milestone.mkdir(parents=True, exist_ok=True)
+        (milestone / "code_change_set.json").write_text('{"changes":[]}', "utf-8")
+        return ["milestones/M01/code_change_set.json"]
+
+
 def _model(path: Path, model):
     return model.model_validate_json(path.read_text("utf-8"))
 
@@ -176,6 +184,34 @@ def test_continuation_rejects_nonterminal_source(
             jobs_dir=tmp_path / "children",
             reusable_source=ReuseSource(),
         )
+
+
+def test_reverification_marker_reaches_active_milestone_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("onebrief.jobs.create_project_snapshot", lambda *_args: None)
+    source = InternalSource(
+        name="rules", priority=SourcePriority.MANDATORY, content="truth", size_bytes=5
+    )
+    source_dir = create_job(
+        jobs_dir=tmp_path / "source-jobs",
+        intake=_intake(source), requirements=_requirements(), sources=[source],
+        estimate=_estimate(), approved_usd=0.10,
+    )
+    JobStore(source_dir).finish(JobStatus.FAILED, stage="test", message="expected")
+
+    child, *_ = create_budget_preserving_continuation(
+        source_job_dir=source_dir,
+        source_job_uri="gs://bucket/jobs/source",
+        jobs_dir=tmp_path / "children",
+        reusable_source=MilestoneReuseSource(),
+        reverify_existing_candidate=True,
+    )
+
+    for marker in ("reverify_existing_candidate.json", "continuation_manifest.json"):
+        assert (child / "work" / marker).is_file()
+        assert (child / "work" / "milestones" / "M01" / marker).is_file()
 
 
 def test_authorization_gate_can_resume_under_explicit_remaining_approval(
