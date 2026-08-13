@@ -1734,6 +1734,16 @@ def test_unity_evidence_source_repair_rejects_asmdef() -> None:
         })
 
 
+@pytest.mark.parametrize("feedback", [
+    "Unity visual test contract: runtime-evidence.json must use schema_version "
+    "onebrief-unity-visual-evidence-v1 and contain a scenarios array",
+    "Unity visual test contract: a camera RenderTexture does not capture "
+    "ScreenSpaceOverlay UI; temporarily route the real active Canvas",
+])
+def test_all_unity_visual_test_contract_failures_route_to_evidence(feedback: str) -> None:
+    assert is_unity_evidence_contract_feedback(feedback) is True
+
+
 def test_executable_atomic_evidence_is_preserved_when_deeper_checks_fail() -> None:
     candidate = ProjectCodeChangeSet(
         summary="Product and executable evidence candidate.",
@@ -1814,7 +1824,7 @@ def test_atomic_schema_returns_to_bounded_repair_after_pair_exists() -> None:
     ) is AtomicUnityEvidenceBundle
     assert development_maker_schema_for(
         report, with_pair.model_dump(mode="json")
-    ) is CompactProposedProjectCodeChangeSet
+    ) is UnityEvidenceSourceRepair
 
     detailed_report = ExecutionPipeline._development_failure_report(
         "Unity visual test contract: responsive Unity visual evidence must define and capture "
