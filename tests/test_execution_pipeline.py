@@ -24,6 +24,7 @@ from onebrief.execution_pipeline import (
     visual_repair_production_target_allowed,
     is_unity_evidence_contract_feedback,
     missing_unity_evidence_bundle_paths,
+    normalize_atomic_unity_evidence_bundle,
     is_unity_localization_product_failure,
     unity_evidence_contract_target_allowed,
 )
@@ -1576,6 +1577,31 @@ def test_atomic_unity_evidence_schema_requires_sibling_test_and_asmdef() -> None
                 "path": "Assets/Other/Tests/PlayMode/OneBrief.Visual.Tests.asmdef",
             },
         })
+
+
+def test_atomic_unity_evidence_rehydrates_from_adk_state_dictionary() -> None:
+    raw = {
+        "schema_version": "onebrief-atomic-unity-evidence-bundle-v1",
+        "summary": "Executable visual evidence pair.",
+        "playmode_test": {
+            "path": "Assets/Tests/PlayMode/OneBriefVisualFlowTest.cs",
+            "content": "namespace OneBrief.Visual { public class Flow {} }\n",
+            "reason": "Exercise the real UI flow.",
+        },
+        "test_assembly": {
+            "path": "Assets/Tests/PlayMode/OneBrief.Visual.Tests.asmdef",
+            "content": '{"optionalUnityReferences":["TestAssemblies"]}\n',
+            "reason": "Make the PlayMode test discoverable.",
+        },
+    }
+
+    restored = normalize_atomic_unity_evidence_bundle(raw)
+
+    assert isinstance(restored, CompactProposedProjectCodeChangeSet)
+    assert [item.path for item in restored.changes] == [
+        "Assets/Tests/PlayMode/OneBriefVisualFlowTest.cs",
+        "Assets/Tests/PlayMode/OneBrief.Visual.Tests.asmdef",
+    ]
 
 
 def test_duplicate_unity_screenshot_feedback_requires_capture_at_each_real_state() -> None:

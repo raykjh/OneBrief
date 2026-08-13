@@ -224,6 +224,24 @@ def missing_unity_evidence_bundle_paths(
     return missing
 
 
+def normalize_atomic_unity_evidence_bundle(raw: object) -> object:
+    """Restore the typed atomic contract after ADK state serialization.
+
+    ADK validates the provider response with the selected Pydantic schema, then
+    stores its JSON-safe dictionary in session state.  Pipeline hooks therefore
+    must rehydrate the exact schema before applying the indivisible pair.
+    """
+
+    if isinstance(raw, AtomicUnityEvidenceBundle):
+        return raw.as_change_set()
+    if isinstance(raw, dict) and (
+        raw.get("schema_version") == "onebrief-atomic-unity-evidence-bundle-v1"
+        or {"playmode_test", "test_assembly"}.issubset(raw)
+    ):
+        return AtomicUnityEvidenceBundle.model_validate(raw).as_change_set()
+    return raw
+
+
 def is_unity_evidence_contract_feedback(feedback: str) -> bool:
     normalized = " ".join(feedback.split()).casefold()
     return any(marker in normalized for marker in (
@@ -1691,8 +1709,7 @@ class ExecutionPipeline:
                 RepairContract.model_validate(active_contract_payload)
                 if active_contract_payload else None
             )
-            if isinstance(raw, AtomicUnityEvidenceBundle):
-                raw = raw.as_change_set()
+            raw = normalize_atomic_unity_evidence_bundle(raw)
             proposed_paths = [
                 str(getattr(item, "path", "")).replace("\\", "/")
                 for item in getattr(raw, "changes", [])
