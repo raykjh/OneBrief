@@ -191,6 +191,8 @@ class ModelExecutionPolicy(BaseModel):
             "do not relabel a direct scene load as a click",
             "must not remove or replace the product control's onclick listeners",
             "must not install a replacement onclick listener",
+            "must not directly load the destination scene after invoking",
+            "must be committed in one atomic manifest",
             "selected real languagedropdown exists and is visible",
             "stalled after two identical candidates",
             "identical candidate",

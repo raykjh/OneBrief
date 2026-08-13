@@ -1715,6 +1715,74 @@ def test_unity_visual_preflight_rejects_replaced_product_click_listener(
     assert any("must not install a replacement onClick listener" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_rejects_direct_destination_load_after_click(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-direct-load-after-click"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'SceneManager.LoadScene("Login"); Assert.IsNotNull(button); '
+        "button.onClick.Invoke(); "
+        'SceneManager.LoadScene("Lobby"); Assert.AreEqual("Lobby", '
+        "SceneManager.GetActiveScene().name); "
+        'var login = OneBriefAtomicScreenshot.CaptureScenario("login", "Login", "Load", '
+        '1, "login.png", Camera.main, 1920, 1080, Object.FindObjectsOfType<Canvas>()); '
+        'var lobby = OneBriefAtomicScreenshot.CaptureScenario("lobby", "Lobby", "Click", '
+        '1, "lobby.png", Camera.main, 1920, 1080, Object.FindObjectsOfType<Canvas>()); '
+        "OneBriefAtomicScreenshot.WriteManifestAtomically(login, lobby); } }",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile, clone, "Modernize login and lobby UI."
+    )
+
+    assert any("must not directly load the destination scene after invoking" in issue for issue in issues)
+
+
+def test_unity_visual_preflight_requires_one_atomic_manifest_for_all_scenarios(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-overwritten-manifest"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'SceneManager.LoadScene("Login"); Assert.IsNotNull(button); '
+        'var login = OneBriefAtomicScreenshot.CaptureScenario("login", "Login", "Load", '
+        '1, "login.png", Camera.main, 1920, 1080, Object.FindObjectsOfType<Canvas>()); '
+        "OneBriefAtomicScreenshot.WriteManifestAtomically(login); button.onClick.Invoke(); "
+        'var lobby = OneBriefAtomicScreenshot.CaptureScenario("lobby", "Lobby", "Click", '
+        '1, "lobby.png", Camera.main, 1920, 1080, Object.FindObjectsOfType<Canvas>()); '
+        "OneBriefAtomicScreenshot.WriteManifestAtomically(lobby); } }",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile, clone, "Modernize login and lobby UI."
+    )
+
+    assert any("must be committed in one atomic manifest" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_binds_batched_json_rows_to_capture_actions(
     tmp_path: Path,
 ) -> None:

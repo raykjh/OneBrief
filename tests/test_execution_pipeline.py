@@ -19,6 +19,8 @@ from onebrief.generic_development_toolpack import (
 from onebrief.budget_guard import BudgetExceeded, BudgetStore, RunStatus
 from onebrief.execution_pipeline import (
     ExecutionPipeline,
+    development_proposal_changes,
+    filter_development_proposal_for_phase,
     development_toolpack_focus_text,
     development_repair_requires_anchored_range,
     evidence_repair_has_bounded_uncommitted_candidate,
@@ -56,7 +58,46 @@ from onebrief.schemas import (
     RequirementsAnalysis,
     SourcePriority,
     ToolPackId,
+    ExecutionPhase,
 )
+
+
+def test_dict_development_proposal_cannot_bypass_phase_authority() -> None:
+    proposal = {
+        "summary": "mixed repair",
+        "changes": [
+            {"path": "Assets/Scripts/LoginView.cs", "content": "product"},
+            {
+                "path": "Assets/Tests/PlayMode/OneBriefVisualTests.cs",
+                "content": "evidence",
+            },
+        ],
+    }
+
+    assert len(development_proposal_changes(proposal)) == 2
+    filtered, deferred = filter_development_proposal_for_phase(
+        proposal, ExecutionPhase.PRODUCT_IMPLEMENTATION
+    )
+
+    assert isinstance(filtered, dict)
+    assert [item["path"] for item in filtered["changes"]] == [
+        "Assets/Scripts/LoginView.cs"
+    ]
+    assert deferred == ["Assets/Tests/PlayMode/OneBriefVisualTests.cs"]
+
+
+def test_dict_development_proposal_counts_atomic_evidence_members() -> None:
+    feedback = (
+        "add a discoverable Unity PlayMode test and add a Unity test .asmdef"
+    )
+    proposal = {
+        "changes": [
+            {"path": "Assets/Tests/PlayMode/OneBriefVisualTests.cs"},
+            {"path": "Assets/Tests/PlayMode/OneBrief.Visual.Tests.asmdef"},
+        ]
+    }
+
+    assert missing_unity_evidence_bundle_paths(feedback, proposal) == []
 
 
 class FakeGateway:

@@ -154,6 +154,53 @@ from onebrief.temperament import (
 T = TypeVar("T", bound=BaseModel)
 
 
+def development_proposal_changes(raw: object) -> list[object]:
+    """Return proposal changes from either ADK dicts or Pydantic models.
+
+    Structured ADK output is not guaranteed to stay a model instance between
+    callbacks.  Phase authority must therefore inspect the serialized form as
+    strictly as the model form; treating a dict as an empty proposal silently
+    bypasses the product/evidence boundary.
+    """
+
+    if isinstance(raw, dict):
+        changes = raw.get("changes", [])
+    else:
+        changes = getattr(raw, "changes", [])
+    return list(changes) if isinstance(changes, (list, tuple)) else []
+
+
+def development_change_path(change: object) -> str:
+    if isinstance(change, dict):
+        value = change.get("path", "")
+    else:
+        value = getattr(change, "path", "")
+    return str(value or "").replace("\\", "/")
+
+
+def filter_development_proposal_for_phase(
+    raw: object,
+    phase: ExecutionPhase,
+) -> tuple[object, list[str]]:
+    """Retain only changes owned by the active execution phase."""
+
+    changes = development_proposal_changes(raw)
+    allowed = [
+        change for change in changes
+        if path_allowed_for_phase(development_change_path(change), phase)
+    ]
+    deferred = [
+        development_change_path(change)
+        for change in changes if change not in allowed
+    ]
+    if isinstance(raw, dict):
+        return {**raw, "changes": allowed}, deferred
+    model_copy = getattr(raw, "model_copy", None)
+    if not callable(model_copy):
+        raise TypeError("development proposal cannot be phase-filtered")
+    return model_copy(update={"changes": allowed}), deferred
+
+
 def visual_repair_production_target_allowed(path: str) -> bool:
     """Fail closed when a rendered-product defect points at proof instead of product code."""
 
@@ -242,10 +289,10 @@ def missing_unity_evidence_bundle_paths(
         return []
 
     paths = {
-        str(getattr(change, "path", "")).replace("\\", "/").casefold()
+        development_change_path(change).casefold()
         for change_set in change_sets
         if change_set is not None
-        for change in getattr(change_set, "changes", [])
+        for change in development_proposal_changes(change_set)
     }
     playmode_paths = {
         path for path in paths if "/tests/playmode/" in f"/{path}"
@@ -1051,6 +1098,20 @@ class ExecutionPipeline:
                     "existing Button.onClick listeners exactly as shipped, wait for the real transition, then assert "
                     "and capture the observed destination. If the shipped transition cannot run in isolation, report "
                     "the missing product dependency as a product/runtime blocker instead of fabricating success."
+                )
+            if "must not directly load the destination scene after invoking" in lowered:
+                return (
+                    "Delete the direct SceneManager.LoadScene call after the UI action. Invoke the shipped "
+                    "Button or ExecuteEvents action, wait for the product-owned transition, then assert and "
+                    "capture the actual active destination. If it does not transition, return the failure to "
+                    "product implementation instead of making the evidence harness perform the navigation."
+                )
+            if "must be committed in one atomic manifest" in lowered:
+                return (
+                    "Capture Login before the shipped start action, Lobby after that action, and Settings after "
+                    "the shipped settings action. Keep every returned ScenarioReceipt in a local variable, then "
+                    "call WriteManifestAtomically(loginReceipt, lobbyReceipt, settingsReceipt) exactly once at "
+                    "the end. Separate calls overwrite the prior runtime-evidence manifest."
                 )
             if "unity visual test contract" in lowered and "scenarios array" in lowered:
                 return (
@@ -2265,9 +2326,9 @@ class ExecutionPipeline:
             )
             raw = normalize_atomic_unity_evidence_bundle(raw)
             proposed_paths = [
-                str(getattr(item, "path", "")).replace("\\", "/")
-                for item in getattr(raw, "changes", [])
-                if getattr(item, "path", None)
+                development_change_path(item)
+                for item in development_proposal_changes(raw)
+                if development_change_path(item)
             ]
             active_phase = active_execution_phase(_ctx.session.state)
             phase_authority_payload = {
@@ -2288,15 +2349,10 @@ class ExecutionPipeline:
                 ExecutionPhase.PRODUCT_IMPLEMENTATION,
                 ExecutionPhase.EVIDENCE_CONSTRUCTION,
             } and not reverify_existing:
-                changes = list(getattr(raw, "changes", []))
-                allowed_changes = [
-                    item for item in changes
-                    if path_allowed_for_phase(str(getattr(item, "path", "")), active_phase)
-                ]
-                deferred_paths = [
-                    str(getattr(item, "path", "")).replace("\\", "/")
-                    for item in changes if item not in allowed_changes
-                ]
+                raw, deferred_paths = filter_development_proposal_for_phase(
+                    raw, active_phase
+                )
+                allowed_changes = development_proposal_changes(raw)
                 if deferred_paths:
                     self._write(
                         output_dir / f"phase_scope_deferred_r{round_number}.json",
@@ -2358,9 +2414,8 @@ class ExecutionPipeline:
                             EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
                             SKIP_VERIFIER_STATE_KEY: True,
                         }
-                    raw = raw.model_copy(update={"changes": allowed_changes})
                     proposed_paths = [
-                        str(getattr(item, "path", "")).replace("\\", "/")
+                        development_change_path(item)
                         for item in allowed_changes
                     ]
             if active_contract is not None and active_contract.permitted_paths:
@@ -2424,8 +2479,8 @@ class ExecutionPipeline:
                 }
             if evidence_contract_repair and not reverify_existing:
                 raw_paths = [
-                    str(getattr(item, "path", "")).replace("\\", "/")
-                    for item in getattr(raw, "changes", [])
+                    development_change_path(item)
+                    for item in development_proposal_changes(raw)
                 ]
                 forbidden = [
                     path for path in raw_paths
@@ -2482,8 +2537,8 @@ class ExecutionPipeline:
                 and not reverify_existing
             ):
                 raw_paths = [
-                    str(getattr(item, "path", "")).replace("\\", "/")
-                    for item in getattr(raw, "changes", [])
+                    development_change_path(item)
+                    for item in development_proposal_changes(raw)
                 ]
                 forbidden = [
                     path for path in raw_paths

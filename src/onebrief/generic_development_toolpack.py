@@ -2175,6 +2175,28 @@ class ApprovedProjectDevelopmentToolPack:
                     "the OneBrief.Visual test must not install a replacement onClick listener "
                     "that loads the destination scene; invoke the shipped navigation behavior unchanged"
                 )
+            if re.search(
+                r"(?:\.\s*onClick\s*\.\s*Invoke\s*\(\s*\)|"
+                r"ExecuteEvents\s*\.\s*Execute\s*\([^;]+;).{0,900}?"
+                r"SceneManager\s*\.\s*LoadScene(?:Async)?\s*\(",
+                structural,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                issues.append(
+                    "the OneBrief.Visual test must not directly load the destination scene after invoking "
+                    "a UI control; observe the shipped transition and report a product/runtime blocker when "
+                    "the destination is not reached"
+                )
+            manifest_writes = len(re.findall(
+                r"OneBriefAtomicScreenshot\s*\.\s*WriteManifestAtomically\s*\(",
+                combined_source,
+                re.IGNORECASE,
+            ))
+            if len(requested_surfaces) >= 2 and manifest_writes > 1:
+                issues.append(
+                    "all requested ScenarioReceipt values must be committed in one atomic manifest; "
+                    "multiple WriteManifestAtomically calls overwrite earlier scenarios"
+                )
             if len(requested_surfaces) >= 2 and not any(token in structural for token in (
                 ".onclick.invoke", "executeevents.execute", ".setactive(true)",
                 "pointerclickevent", "submitEvent",
