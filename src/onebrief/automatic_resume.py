@@ -189,6 +189,7 @@ def _is_unity_evidence_topology_failure(value: str) -> bool:
         "unity visual evidence requires a distinct rendered scenario",
         "responsive unity visual evidence must define and capture",
         "unity visual evidence reused an identical screenshot",
+        "locale changed_visible_text_count must compare before/after visible text snapshots",
     ))
 
 

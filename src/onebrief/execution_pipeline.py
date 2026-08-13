@@ -186,6 +186,7 @@ def is_unity_evidence_contract_feedback(feedback: str) -> bool:
         "responsive unity visual evidence must define and capture",
         "unity visual evidence reused an identical screenshot",
         "unity visual evidence did not exercise requested locale",
+        "locale changed_visible_text_count must compare before/after visible text snapshots",
     ))
 
 
@@ -800,6 +801,14 @@ class ExecutionPipeline:
                     "LanguageChanged to the active LocalizedText or screen binder, then repair the smallest missing "
                     "product binding so real Settings text changes from a deliberately different reference locale. "
                     "Preserve the existing server protocol and assets; let the unchanged observer remeasure it."
+                )
+            if "locale changed_visible_text_count must compare before/after" in lowered:
+                return (
+                    "Repair only the PlayMode observer's temporal order. Snapshot the real target surface's visible "
+                    "TMP text before operating the real language dropdown, snapshot it again after the language "
+                    "event while that same surface is still active, compute changed_visible_text_count from those "
+                    "two snapshots, and capture the locale PNG there. Move Close/Back/Return navigation after this "
+                    "measurement. Do not assign label text, dropdown option text, or product layout in the test."
                 )
             if "unity visual test contract" in lowered and "each general ui evidence scenario" in lowered:
                 return (

@@ -73,6 +73,20 @@ def test_unchanged_requested_unity_locale_is_a_semantic_product_failure() -> Non
     assert observation.symptom_keys == ["artifact:wrong_language"]
 
 
+def test_locale_observer_measurement_order_is_evidence_topology() -> None:
+    observation = ConvergencePolicy().observe(
+        context="development_verification",
+        failure_text=(
+            "Unity visual test contract: locale changed_visible_text_count must compare "
+            "before/after visible text snapshots while the localized target surface remains active"
+        ),
+        attempt_number=1,
+    )
+
+    assert observation.layer == FailureLayer.EVIDENCE_TOPOLOGY
+    assert observation.symptom_keys == ["artifact:evidence_topology"]
+
+
 def test_evidence_topology_can_advance_when_static_blockers_change() -> None:
     policy = ConvergencePolicy()
     ledger = ConvergenceLedger()

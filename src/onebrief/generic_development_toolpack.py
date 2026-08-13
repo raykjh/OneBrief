@@ -1580,6 +1580,34 @@ class ApprovedProjectDevelopmentToolPack:
                 issues.append(
                     "changed_visible_text_count must compare visible text before and after the language interaction"
                 )
+            locale_change_marker = structural.find("changedvisibletextcount")
+            locale_interactions = list(re.finditer(
+                r"(?:\b[a-z_][a-z0-9_]*dropdown\b|\blangdropdown\b)\s*\.\s*"
+                r"onvaluechanged\s*\.\s*invoke\s*\(",
+                structural,
+            ))
+            if language_requested and locale_change_marker >= 0 and locale_interactions:
+                interaction_end = locale_interactions[-1].end()
+                measurement_window = structural[interaction_end:locale_change_marker]
+                left_surface_early = bool(re.search(
+                    r"\b[a-z0-9_]*(?:close|back|return)[a-z0-9_]*\s*\.\s*"
+                    r"onclick\s*\.\s*invoke\s*\(",
+                    measurement_window,
+                ))
+                has_before_snapshot = bool(re.search(
+                    r"(?:before[a-z0-9_]*(?:text|snapshot)|(?:text|snapshot)[a-z0-9_]*before)",
+                    structural,
+                ))
+                has_after_snapshot = bool(re.search(
+                    r"(?:after[a-z0-9_]*(?:text|snapshot)|(?:text|snapshot)[a-z0-9_]*after)",
+                    structural,
+                ))
+                if left_surface_early or not (has_before_snapshot and has_after_snapshot):
+                    issues.append(
+                        "locale changed_visible_text_count must compare before/after visible text snapshots while "
+                        "the localized target surface remains active; measure and capture the locale scenario before "
+                        "invoking any Close, Back, or Return navigation, and never rewrite product labels in the test"
+                    )
             if (
                 "textinfo.characterinfo" not in structural
                 and ".hascharacter" not in structural

@@ -1400,6 +1400,41 @@ def test_unity_visual_preflight_rejects_test_side_product_ui_repairs(tmp_path: P
     assert any("must observe the shipped responsive layout" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_requires_locale_measurement_before_navigation(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-locale-measurement-order"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'SceneManager.LoadScene("Lobby"); var langDropdown = GameObject.Find("LanguageDropdown")'
+        ".GetComponent<TMPro.TMP_Dropdown>(); Assert.IsNotNull(langDropdown); "
+        "langDropdown.value = 4; langDropdown.onValueChanged.Invoke(langDropdown.value); "
+        "closeSettingsBtn.onClick.Invoke(); int changedVisibleTextCount = 0; "
+        "var glyph = TMPro.TMP_Settings.defaultFontAsset.HasCharacter('A'); "
+        'var schema="runtime-evidence.json onebrief-unity-visual-evidence-v1 scenarios '
+        'scenario_id expected_locale observed_locale changed_visible_text_count missing_glyph_count '
+        'screenshot_path locale_es.png"; } }',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile, clone, "Verify the Settings language localization UI."
+    )
+
+    assert any("before/after visible text snapshots" in issue for issue in issues)
+    assert any("before invoking any Close, Back, or Return" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_rejects_inert_new_ui_monobehaviour(tmp_path: Path) -> None:
     root, registry = _approved_node_project(tmp_path)
     pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
