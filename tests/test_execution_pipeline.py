@@ -2707,6 +2707,36 @@ def test_unity_png_failure_explains_direct_test_evidence_contract() -> None:
     assert "WriteManifestAtomically" in instruction
 
 
+def test_fake_unity_evidence_helper_failure_requires_the_supplied_exact_api() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "development verification failed: the PlayMode test must not declare, duplicate, or replace "
+        "OneBriefAtomicScreenshot | OneBriefAtomicScreenshot.Capture requires exactly the evidence-relative "
+        ".png path | OneBriefAtomicScreenshot.WriteManifestAtomically requires a complete schema; a "
+        "zero-argument log-only call cannot publish durable evidence"
+    )
+
+    instructions = "\n".join(report.revision_instructions)
+    assert "Delete the test-side OneBriefAtomicScreenshot class completely" in instructions
+    assert "five-argument Capture" in instructions
+    assert "Do not create a fallback or wrapper" in instructions
+    assert "CaptureReceipt" in instructions
+
+
+def test_atomic_unity_harness_instruction_publishes_exact_helper_contract() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "development verification failed: Unity visual test contract: add a discoverable "
+        "Unity PlayMode test whose namespace/full name begins with OneBrief.Visual | "
+        "Unity visual test contract: add a Unity test .asmdef with "
+        "optionalUnityReferences containing TestAssemblies"
+    )
+
+    instructions = "\n".join(report.revision_instructions)
+    assert "atomic two-file repair" in instructions
+    assert "runner supplies immutable OneBriefAtomicScreenshot" in instructions
+    assert "Capture(relativePngPath, sceneCamera, width, height, activeCanvases)" in instructions
+    assert "WriteManifestAtomically(completeSchemaJson, captureReceipts)" in instructions
+
+
 def test_related_unity_contract_failures_remain_one_coherent_repair_scope() -> None:
     report = ExecutionPipeline._development_failure_report(
         "development verification failed: "

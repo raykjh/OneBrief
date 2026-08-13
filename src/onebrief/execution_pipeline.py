@@ -979,6 +979,21 @@ class ExecutionPipeline:
                     "real requested screen transition before discovering its controls, and change production UI "
                     "wiring when the requested control truly does not exist; never weaken or merely restate the test."
                 )
+            if "must not declare, duplicate, or replace onebriefatomicscreenshot" in lowered:
+                return (
+                    "Delete the test-side OneBriefAtomicScreenshot class completely. The isolated runner installs "
+                    "the trusted helper beside the test. Call its five-argument Capture(relativePngPath, "
+                    "sceneCamera, width, height, activeCanvases), preserve each returned CaptureReceipt, build the "
+                    "scenario JSON from that receipt, and pass the JSON plus all receipts to "
+                    "WriteManifestAtomically. Do not create a fallback or wrapper with the same name."
+                )
+            if "capture requires exactly" in lowered or "zero-argument log-only call" in lowered:
+                return (
+                    "Use the trusted helper's exact API: Capture(relativePngPath, sceneCamera, width, height, "
+                    "activeCanvases) returns a CaptureReceipt. Use its screenshot_path, viewport_width, and "
+                    "viewport_height in the scenario, then call WriteManifestAtomically(completeSchemaJson, "
+                    "captureReceipts). Do not redefine the helper or call either method with fewer arguments."
+                )
             if "unity visual test contract" in lowered and "synthetic ui" in lowered:
                 return (
                     "Delete the generated fallback GameObject/AddComponent UI block. Open or activate the real "
@@ -1169,7 +1184,11 @@ class ExecutionPipeline:
                 [
                     "Create the missing Unity evidence harness as one atomic two-file repair: exactly one "
                     "discoverable OneBrief.Visual PlayMode .cs source and one sibling .asmdef whose "
-                    "optionalUnityReferences contains TestAssemblies. Do not submit or retain only one half."
+                    "optionalUnityReferences contains TestAssemblies. Do not submit or retain only one half. "
+                    "The runner supplies immutable OneBriefAtomicScreenshot; never declare a fallback with that "
+                    "name. Call Capture(relativePngPath, sceneCamera, width, height, activeCanvases), serialize "
+                    "the returned screenshot_path, viewport_width, and viewport_height into each scenario, then "
+                    "call WriteManifestAtomically(completeSchemaJson, captureReceipts)."
                 ]
                 if requires_atomic_unity_evidence_pair(detail)
                 else []

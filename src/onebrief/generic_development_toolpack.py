@@ -1884,6 +1884,32 @@ class ApprovedProjectDevelopmentToolPack:
             combined_source = "\n".join(test_sources)
             combined = combined_source.casefold()
             structural = _csharp_code_only(combined_source).casefold()
+            if re.search(
+                r"\b(?:class|struct)\s+onebriefatomicscreenshot\b",
+                structural,
+            ):
+                issues.append(
+                    "the PlayMode test must not declare, duplicate, or replace OneBriefAtomicScreenshot; it is "
+                    "trusted runner code installed beside the test. Call Capture(relativePngPath, sceneCamera, "
+                    "width, height, canvases) and WriteManifestAtomically(json, captures) on that supplied type"
+                )
+            if re.search(
+                r"onebriefatomicscreenshot\.capture\s*\(\s*[^,()]+\s*\)",
+                structural,
+            ):
+                issues.append(
+                    "OneBriefAtomicScreenshot.Capture requires exactly the evidence-relative .png path, real scene "
+                    "Camera, measured width, measured height, and active Canvas collection; a name-only Capture "
+                    "call is not the trusted API"
+                )
+            if re.search(
+                r"onebriefatomicscreenshot\.writemanifestatomically\s*\(\s*\)",
+                structural,
+            ):
+                issues.append(
+                    "OneBriefAtomicScreenshot.WriteManifestAtomically requires the complete schema JSON and every "
+                    "CaptureReceipt; a zero-argument log-only call cannot publish durable evidence"
+                )
             if '${"' in combined or "${'" in combined:
                 issues.append("use valid C# interpolation ($\"...\"), never JavaScript-style ${...}")
             if "runtime-evidence.json" not in combined:
