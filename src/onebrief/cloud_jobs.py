@@ -44,6 +44,15 @@ REUSABLE_WORK_ARTIFACTS = (
     "repair_contract.json",
 )
 
+# These files are valid only for the exact TeamPlan/project identity that
+# created them.  A continuation gets a new project id and a freshly rebound
+# TeamPlan, so replaying the parent's graph would fail its digest check (or,
+# worse, skip work under stale ownership).  Durable milestone evidence remains
+# reusable; executor runtime state does not.
+NON_REUSABLE_MILESTONE_ARTIFACTS = {
+    "execution_graph_state.json",
+}
+
 
 @dataclass(frozen=True)
 class GCSJobUri:
@@ -352,6 +361,8 @@ class GCSJobStore:
                     or ".tmp" in relative.name
                 ):
                     raise ValueError("unsafe reusable milestone artifact")
+                if relative.name in NON_REUSABLE_MILESTONE_ARTIFACTS:
+                    continue
                 target = (destination_work / Path(*relative.parts)).resolve()
                 if not target.is_relative_to(destination_work):
                     raise ValueError("unsafe reusable milestone artifact destination")

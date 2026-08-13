@@ -447,6 +447,47 @@ def test_budget_amendment_restores_only_latest_narrative_candidate_as_round_zero
     }]
 
 
+def test_continuation_reuses_milestone_evidence_but_not_parent_execution_graph(
+    tmp_path: Path,
+) -> None:
+    objects = {
+        "jobs/prior/work/milestones/M01/completion_ledger.json": b'{"complete":false}',
+        "jobs/prior/work/milestones/M01/execution_graph_state.json": b'{"team_plan":"parent"}',
+    }
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+        def download_to_filename(self, filename):
+            if self.name not in objects:
+                raise NotFound("missing")
+            Path(filename).write_bytes(objects[self.name])
+
+    class Bucket:
+        def blob(self, name):
+            return Blob(name)
+
+    class Client:
+        def bucket(self, _name):
+            return Bucket()
+
+        def list_blobs(self, _bucket, *, prefix):
+            return [
+                Blob(name) for name in objects
+                if name.startswith(prefix)
+            ]
+
+    work = tmp_path / "work"
+    copied = GCSJobStore(
+        "gs://onebrief-test/jobs/prior", client=Client()
+    ).download_reusable_artifacts(work)
+
+    assert "milestones/M01/completion_ledger.json" in copied
+    assert (work / "milestones/M01/completion_ledger.json").is_file()
+    assert not (work / "milestones/M01/execution_graph_state.json").exists()
+
+
 def test_missing_newer_code_candidate_does_not_delete_base_candidate(tmp_path: Path) -> None:
     objects = {
         "jobs/prior/work/code_change_set.json": b'{"summary":"base"}',
