@@ -1578,6 +1578,88 @@ def test_project_developer_anchored_range_tolerates_formatting_only_reflow() -> 
     assert "old();" not in result.changes[0].content
 
 
+def test_project_developer_consumes_an_already_applied_anchored_repair() -> None:
+    current = (
+        "private void Apply()\n"
+        "{\n"
+        "    var dropdown = FindDropdown();\n"
+        "    bool isEs = dropdown.value == 4;\n"
+        "    foreach (var text in texts)\n"
+        "    {\n"
+        "        text.text = isEs ? \"Ajustes\" : \"Settings\";\n"
+        "    }\n"
+        "}\n"
+    )
+    previous = ProjectCodeChangeSet(
+        summary="Already promoted candidate.",
+        changes=[{
+            "path": "Assets/UI/SettingsBinder.cs",
+            "base_sha256": "a" * 64,
+            "content": current,
+            "reason": "Prior candidate.",
+        }],
+    )
+    stale = AnchoredRangeRepairProjectCodeChangeSet(
+        summary="Previously paid bounded repair.",
+        changes=[{
+            "path": "Assets/UI/SettingsBinder.cs",
+            "base_sha256": "a" * 64,
+            "start_anchor": "    {\n        text.text = \"Settings\";",
+            "end_anchor": "        Save();\n    }",
+            "replace": (
+                "    var dropdown = FindDropdown();\n"
+                "    bool isEs = dropdown.value == 4;\n"
+                "    {\n"
+                "        text.text = isEs ? \"Ajustes\" : \"Settings\";\n"
+                "    }"
+            ),
+            "reason": "Bind the requested locale.",
+        }],
+    )
+    developer = DeveloperAgent(
+        object(), change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/", path_approver=lambda path: path,
+    )
+
+    result = developer.promote_candidate(stale, [], previous, [])
+
+    assert result.changes[0].content == current
+
+
+def test_project_developer_does_not_consume_partially_applied_repair() -> None:
+    previous = ProjectCodeChangeSet(
+        summary="Partially changed candidate.",
+        changes=[{
+            "path": "Assets/UI/SettingsBinder.cs",
+            "base_sha256": "a" * 64,
+            "content": "var dropdown = FindDropdown();\nbool isEs = false;\n",
+            "reason": "Prior candidate.",
+        }],
+    )
+    stale = AnchoredRangeRepairProjectCodeChangeSet(
+        summary="Unproven repair.",
+        changes=[{
+            "path": "Assets/UI/SettingsBinder.cs",
+            "base_sha256": "a" * 64,
+            "start_anchor": "old start",
+            "end_anchor": "old end",
+            "replace": (
+                "var dropdown = FindDropdown();\n"
+                "bool isEs = dropdown.value == 4;\n"
+                "text.text = isEs ? \"Ajustes\" : \"Settings\";"
+            ),
+            "reason": "Bind the requested locale.",
+        }],
+    )
+    developer = DeveloperAgent(
+        object(), change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/", path_approver=lambda path: path,
+    )
+
+    with pytest.raises(ValueError, match="edit anchors could not rediscover"):
+        developer.promote_candidate(stale, [], previous, [])
+
+
 def test_playmode_anchor_normalizes_javascript_style_csharp_interpolation() -> None:
     previous = ProjectCodeChangeSet(
         summary="Existing generated evidence source.",

@@ -376,6 +376,49 @@ class DeveloperAgent:
                                 baseline = candidate
                                 match = spans[0]
                                 break
+                    if match is None and previous_baseline:
+                        # A paid proposal can be durably copied into the next
+                        # lineage after it has already been promoted into the
+                        # candidate.  Its old anchors are then intentionally
+                        # absent.  Treat the proposal as an idempotent no-op
+                        # only when every meaningful replacement line is
+                        # already present exactly once in that exact candidate.
+                        # This consumes a stale receipt without guessing at a
+                        # new range or changing any product bytes.
+                        replacement_lines = [
+                            " ".join(line.split())
+                            for line in str(change.get("replace") or "").splitlines()
+                            if " ".join(line.split()) not in {"", "{", "}", "};"}
+                        ]
+                        candidate_lines = [
+                            " ".join(line.split())
+                            for line in previous_baseline.splitlines()
+                        ]
+                        if (
+                            len(replacement_lines) >= 3
+                            and all(
+                                candidate_lines.count(line) == 1
+                                for line in replacement_lines
+                            )
+                        ):
+                            change["content"] = previous_baseline
+                            if (
+                                change.get("base_sha256") is None
+                                and path in source_map
+                            ):
+                                change["base_sha256"] = source_map[path].get("sha256")
+                            if (
+                                pending is not None
+                                and pending.get("base_sha256") is not None
+                            ):
+                                change["base_sha256"] = pending["base_sha256"]
+                            change.pop("search", None)
+                            change.pop("replace", None)
+                            change.pop("start_anchor", None)
+                            change.pop("end_anchor", None)
+                            change.pop("anchor_id", None)
+                            changes_by_path[path.casefold()] = change
+                            continue
                     if match is None:
                         raise ValueError(
                             f"edit anchors could not rediscover one approved source range: {path}"
