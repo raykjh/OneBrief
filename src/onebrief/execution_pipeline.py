@@ -2270,7 +2270,7 @@ class ExecutionPipeline:
             multi_state_evidence_repair=multi_state_evidence_repair,
             unity_evidence_topology_repair=unity_evidence_topology_repair,
             semantic_visual_repair=semantic_visual_repair,
-        )
+        ) and not product_target_repair
         raw_exact_repair_required = not missing_unity_evidence_harness and (
             "namespace/full name begins" in prior_failure_text.casefold()
             or "the onebrief.visual test must" in prior_failure_text.casefold()
@@ -3659,11 +3659,11 @@ class ExecutionPipeline:
             maker_schema=(
                 (
                     (
-                        AnchoredRangeRepairProjectCodeChangeSet
-                        if anchored_range_repair
-                        else (
                         CatalogAnchoredProductRepair
-                            if product_target_repair and exact_edit_anchors
+                        if product_target_repair and exact_edit_anchors
+                        else (
+                            AnchoredRangeRepairProjectCodeChangeSet
+                            if anchored_range_repair
                             else ExactRepairProjectCodeChangeSet
                             if exact_repair_required
                             else CompactProposedProjectCodeChangeSet
@@ -3681,8 +3681,8 @@ class ExecutionPipeline:
             maker_output_tokens=(
                 min(
                     DEVELOPER_OUTPUT_CAP,
-                    8_000 if anchored_range_repair else (
-                        4_000 if product_target_repair and exact_edit_anchors else (
+                    4_000 if product_target_repair and exact_edit_anchors else (
+                        8_000 if anchored_range_repair else (
                             8_000 if exact_repair_required else 10_000
                         )
                     ),
