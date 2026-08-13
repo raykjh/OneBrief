@@ -704,6 +704,38 @@ class ExactRepairProjectCodeChangeSet(BaseModel):
     changes: list[ExactRepairProjectFileChange] = Field(min_length=1, max_length=1)
 
 
+class CatalogAnchoredProductFileChange(BaseModel):
+    """One product repair bound to a trusted source-window catalog entry."""
+
+    path: str
+    base_sha256: str | None = None
+    anchor_id: str = Field(pattern=r"^A[0-9a-f]{12}$")
+    replace: str = Field(min_length=1, max_length=6000)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        path = generic_safe_relative(value).as_posix()
+        normalized = f"/{path.casefold()}"
+        if any(marker in normalized for marker in (
+            "/tests/", "/test/", "/evidence/", "/screenshots/", "/reports/",
+        )):
+            raise ValueError("catalog-anchored product repair cannot target proof artifacts")
+        return path
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def bound_explanatory_reason(cls, value: object) -> str:
+        return str(value)[:500]
+
+
+class CatalogAnchoredProductRepair(BaseModel):
+    schema_version: str = "onebrief-project-code-change-set-v1"
+    summary: str = Field(min_length=3, max_length=500)
+    changes: list[CatalogAnchoredProductFileChange] = Field(min_length=1, max_length=1)
+
+
 class AnchoredRangeRepairProjectFileChange(BaseModel):
     """One unambiguous range replacement for a larger coherent repair slice."""
 

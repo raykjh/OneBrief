@@ -10,6 +10,7 @@ from onebrief.generic_development_toolpack import (
     AtomicUnityEvidenceBundle,
     AnchoredRangeRepairProjectCodeChangeSet,
     CompactProposedProjectCodeChangeSet, ExactRepairProjectCodeChangeSet,
+    CatalogAnchoredProductRepair,
     ProjectCodeChangeSet, ProposedProjectCodeChangeSet,
     UnityEvidenceSourceRepair,
     UnityEvidenceAnchoredSourceRepair,
@@ -31,6 +32,7 @@ from onebrief.execution_pipeline import (
     visual_repair_has_uncommitted_product_candidate,
     visual_repair_production_target_allowed,
     relevant_product_repair_sources,
+    product_failure_edit_anchors,
     is_unity_evidence_contract_feedback,
     is_development_product_target_failure,
     missing_unity_evidence_bundle_paths,
@@ -2225,6 +2227,21 @@ def test_runtime_product_source_discovery_is_bounded_and_phase_safe() -> None:
         "Assets/Game/Scripts/Common/SceneRouter.cs",
     ]
     assert all("/Tests/" not in str(item["repository_path"]) for item in selected)
+
+    anchors = product_failure_edit_anchors(
+        sources,
+        "LoginJourney failed to transition to Lobby after clicking Start Game",
+        source_limit=2,
+        anchors_per_source=2,
+    )
+    assert [item["path"] for item in anchors] == [
+        "Assets/Game/Scripts/Login/LoginController.cs",
+        "Assets/Game/Scripts/Common/SceneRouter.cs",
+    ]
+    assert all(
+        anchor["anchor_id"].startswith("A") and anchor["text"]
+        for group in anchors for anchor in group["anchors"]
+    )
 
 
 def test_duplicate_unity_screenshot_feedback_requires_capture_at_each_real_state() -> None:

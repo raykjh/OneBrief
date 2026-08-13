@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from onebrief.generic_development_toolpack import (
     ApprovedProjectDevelopmentToolPack,
     CompactProposedProjectCodeChangeSet,
+    CatalogAnchoredProductRepair,
     ExactRepairProjectCodeChangeSet,
     ProjectCodeChangeSet,
     ProjectFileChange,
@@ -46,6 +47,30 @@ def test_proposed_exact_edit_accepts_bounded_component_replacement() -> None:
         }],
     })
     assert len(proposal.changes[0].replace or "") == 12_000
+
+
+def test_catalog_anchored_product_repair_structurally_excludes_full_files_and_tests() -> None:
+    repair = CatalogAnchoredProductRepair.model_validate({
+        "summary": "Repair one product runtime window.",
+        "changes": [{
+            "path": "Assets/Game/Scripts/LoginController.cs",
+            "base_sha256": "a" * 64,
+            "anchor_id": "A123456789abc",
+            "replace": "void StartGame() { router.OpenLobby(); }",
+            "reason": "Restore the verified login-to-lobby transition.",
+        }],
+    })
+    assert repair.changes[0].anchor_id == "A123456789abc"
+    with pytest.raises(ValidationError, match="cannot target proof artifacts"):
+        CatalogAnchoredProductRepair.model_validate({
+            "summary": "Do not weaken proof.",
+            "changes": [{
+                "path": "Assets/Game/Tests/PlayMode/LoginJourney.cs",
+                "anchor_id": "A123456789abc",
+                "replace": "Assert.Pass();",
+                "reason": "Invalid evidence edit.",
+            }],
+        })
 
 
 def test_unity_scene_catalog_exposes_real_scene_and_object_anchors_without_edit_authority() -> None:

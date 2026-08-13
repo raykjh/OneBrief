@@ -67,6 +67,7 @@ from onebrief.development_change_tracking import (
 from onebrief.generic_development_toolpack import (
     AtomicUnityEvidenceBundle,
     AnchoredRangeRepairProjectCodeChangeSet,
+    CatalogAnchoredProductRepair,
     ApprovedProjectDevelopmentToolPack,
     CompactProposedProjectCodeChangeSet,
     ExactRepairProjectCodeChangeSet,
@@ -319,6 +320,67 @@ def relevant_product_repair_sources(
         ranked.append((score, path_hits, path_folded, dict(source)))
     ranked.sort(key=lambda item: (-item[0], -item[1], item[2]))
     return [item[3] for item in ranked[:limit]]
+
+
+def product_failure_edit_anchors(
+    sources: list[dict[str, object]],
+    failure_text: str,
+    *,
+    source_limit: int = 4,
+    anchors_per_source: int = 4,
+) -> list[dict[str, object]]:
+    """Create digest-bound source windows for one runtime product repair."""
+
+    selected_sources = relevant_product_repair_sources(
+        sources, failure_text, limit=source_limit
+    )
+    expanded = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", failure_text)
+    terms = {
+        term.casefold()
+        for term in re.findall(r"[A-Za-z가-힣][A-Za-z0-9_가-힣]{3,}", expanded)
+        if term.casefold() not in _PRODUCT_REPAIR_SOURCE_STOP_WORDS
+    }
+    groups: list[dict[str, object]] = []
+    for source in selected_sources:
+        path = str(source.get("repository_path", "")).replace("\\", "/")
+        content = str(source.get("content", ""))
+        lines = content.splitlines()
+        scored: list[tuple[int, int]] = []
+        for index, line in enumerate(lines):
+            folded = line.casefold()
+            hits = sum(1 for term in terms if term in folded)
+            if not hits:
+                continue
+            declaration_bonus = 6 if re.search(
+                r"\b(class|struct|interface|void|public|private|protected|async|function|def)\b",
+                line,
+            ) else 0
+            scored.append((hits * 4 + declaration_bonus, index))
+        anchors: list[dict[str, object]] = []
+        used: set[tuple[int, int]] = set()
+        for _score, index in sorted(scored, key=lambda item: (-item[0], item[1])):
+            start = max(0, index - 4)
+            end = min(len(lines), index + 5)
+            span = (start, end)
+            if span in used:
+                continue
+            used.add(span)
+            window = "\n".join(lines[start:end])
+            if not window or content.count(window) != 1:
+                continue
+            anchors.append({
+                "anchor_id": "A" + hashlib.sha256(
+                    (path + "\0" + window).encode("utf-8")
+                ).hexdigest()[:12],
+                "start_line": start + 1,
+                "end_line": end,
+                "text": window,
+            })
+            if len(anchors) >= anchors_per_source:
+                break
+        if anchors:
+            groups.append({"path": path, "anchors": anchors})
+    return groups
 
 
 def unity_evidence_contract_target_allowed(path: str) -> bool:
@@ -2307,6 +2369,19 @@ class ExecutionPipeline:
         exact_edit_anchors = developer.exact_edit_anchors(
             previous_change_set, repair_feedback
         )
+        if product_target_repair:
+            exact_edit_anchors = product_failure_edit_anchors(
+                prepared_sources, prior_failure_text
+            )
+            anchor_paths = {
+                str(group.get("path", "")) for group in exact_edit_anchors
+            }
+            for source in maker_sources:
+                if str(source.get("repository_path", "")) in anchor_paths:
+                    source["content"] = (
+                        "Full source is retained by the trusted promotion boundary. "
+                        "Choose one exact_edit_anchors window and return only anchor_id plus replace."
+                    )
         if semantic_visual_repair:
             exact_edit_anchors = [
                 anchor
@@ -3333,11 +3408,16 @@ class ExecutionPipeline:
                 *report.blocking_issues,
                 *report.revision_instructions,
             ])[:12_000]
-            ctx.session.state[EXACT_EDIT_ANCHORS_STATE_KEY] = (
-                [] if exact_repair_required else developer.exact_edit_anchors(
-                    previous_change_set, feedback
+            if is_development_product_target_failure(feedback):
+                ctx.session.state[EXACT_EDIT_ANCHORS_STATE_KEY] = (
+                    product_failure_edit_anchors(prepared_sources, feedback)
                 )
-            )
+            else:
+                ctx.session.state[EXACT_EDIT_ANCHORS_STATE_KEY] = (
+                    [] if exact_repair_required else developer.exact_edit_anchors(
+                        previous_change_set, feedback
+                    )
+                )
             self._write(
                 output_dir / f"verification_r{round_number}.json",
                 report.model_dump_json(indent=2),
@@ -3448,6 +3528,14 @@ class ExecutionPipeline:
                 "Fix the highest-priority observed defect in shipped UI code; do not edit tests, screenshots, "
                 "evidence metadata, or assertions. Preserve server protocol and existing behavior."
             )
+        elif product_target_repair and exact_edit_anchors:
+            maker_instruction += (
+                "\nCATALOG-ANCHORED RUNTIME PRODUCT REPAIR: Trusted executable evidence proved a shipped "
+                "runtime defect. Choose exactly one displayed anchor_id from one approved production path and "
+                "replace only that complete source window. Do not return full content, search selectors, range "
+                "selectors, tests, assertions, screenshots, or evidence metadata. Preserve server protocol and "
+                "every previously passing behavior."
+            )
         elif exact_repair_required:
             maker_instruction += (
                 "\nEXACT-EDIT ONLY: Use one exact search/replace copied verbatim from previous_artifact. "
@@ -3538,9 +3626,23 @@ class ExecutionPipeline:
         def select_maker_schema(
             report: VerificationReport | None, _ctx, _round_number: int
         ) -> type | None:
-            return development_maker_schema_for(
+            selected = development_maker_schema_for(
                 report, _ctx.session.state.get(MAKER_STATE_KEY)
             )
+            feedback = " ".join([
+                *(report.blocking_issues if report else []),
+                *(report.revision_instructions if report else []),
+            ]).casefold()
+            if (
+                selected is ExactRepairProjectCodeChangeSet
+                and _ctx.session.state.get(EXACT_EDIT_ANCHORS_STATE_KEY)
+                and (
+                    "unity_playmode_visual_tests" in feedback
+                    or "unity test failures" in feedback
+                )
+            ):
+                return CatalogAnchoredProductRepair
+            return selected
         agent = build_text_convergence_agent(
             gateway=self.gateway,
             maker_model=maker_model,
@@ -3560,7 +3662,9 @@ class ExecutionPipeline:
                         AnchoredRangeRepairProjectCodeChangeSet
                         if anchored_range_repair
                         else (
-                            ExactRepairProjectCodeChangeSet
+                        CatalogAnchoredProductRepair
+                            if product_target_repair and exact_edit_anchors
+                            else ExactRepairProjectCodeChangeSet
                             if exact_repair_required
                             else CompactProposedProjectCodeChangeSet
                         )
@@ -3578,7 +3682,9 @@ class ExecutionPipeline:
                 min(
                     DEVELOPER_OUTPUT_CAP,
                     8_000 if anchored_range_repair else (
-                        8_000 if exact_repair_required else 10_000
+                        4_000 if product_target_repair and exact_edit_anchors else (
+                            8_000 if exact_repair_required else 10_000
+                        )
                     ),
                 )
                 if prior_failure.is_file()
