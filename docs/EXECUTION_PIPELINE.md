@@ -66,6 +66,14 @@ Budget approval remains project-wide but is milestone-aware: all expected slice 
 integration calls are reserved in the estimate before approval, while the hard cost
 ledger still stops actual spend at the exact owner-approved cap.
 
+Managed execution never weakens a ToolPack because its container lacks an approved
+desktop runtime. When an immutable snapshot requires Unity Compile, PlayMode, or layout
+adapters unavailable in Cloud Run, the managed worker publishes a digest-bound runtime
+handoff without claiming or spending the job. An already approved local Capability
+Runner then claims that same GCS job and executes the exact contract. Every milestone
+PASS immediately synchronizes its checkpoint, evidence, and cost ledger back to GCS;
+the transient integration repository itself is never uploaded.
+
 Software execution now has two modification phases. The initial maker owns product
 implementation. After trusted verification, `phase_decision_rN.json` classifies the
 failure and routes the same persistent maker to either a product-repair or

@@ -830,6 +830,7 @@ def execute_milestone_plan(
     workspace: MilestoneWorkspace,
     pipeline_factory: Callable[[Path], object],
     intake: IntakeRequest, sources: list[InternalSource],
+    checkpoint_callback: Callable[[str], None] | None = None,
 ) -> ExecutionCheckpoint:
     """Run vertical slices and a final clean-baseline full-contract proof."""
     store = MilestoneStore(work_dir / "milestone_state", plan)
@@ -855,6 +856,8 @@ def execute_milestone_plan(
             candidate_sha256=canonical_sha256({"baseline": workspace.source_revision}),
             evidence_paths=[baseline_evidence],
         )
+        if checkpoint_callback is not None:
+            checkpoint_callback(baseline.milestone_id)
 
     replayed_root = work_dir / "milestone_workspace" / "replayed"
     replayed_root.mkdir(parents=True, exist_ok=True)
@@ -931,6 +934,8 @@ def execute_milestone_plan(
                 candidate_sha256=canonical_sha256(candidate),
                 evidence_paths=milestone_evidence_paths(milestone_dir),
             )
+            if checkpoint_callback is not None:
+                checkpoint_callback(milestone.milestone_id)
             publish_final_milestone(work_dir, milestone_dir)
             return checkpoint
         pipeline = pipeline_factory(Path(workspace.integration_registry_root))
@@ -961,4 +966,6 @@ def execute_milestone_plan(
             candidate_sha256=candidate_sha,
             evidence_paths=milestone_evidence_paths(milestone_dir),
         )
+        if checkpoint_callback is not None:
+            checkpoint_callback(milestone.milestone_id)
     raise RuntimeError("milestone plan exhausted without a final integration result")

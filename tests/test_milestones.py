@@ -289,6 +289,7 @@ def test_executor_scopes_each_slice_and_finishes_on_clean_baseline(
         integration_base_revision="b" * 40,
     )
     calls: list[tuple[Path, str]] = []
+    durable_checkpoints: list[str] = []
 
     class FakeLifecycle:
         def __init__(self, _project_id, _registry_root):
@@ -341,6 +342,7 @@ def test_executor_scopes_each_slice_and_finishes_on_clean_baseline(
         pipeline_factory=FakePipeline,
         intake=IntakeRequest(goal="Modernize JULPAE"),
         sources=[],
+        checkpoint_callback=durable_checkpoints.append,
     )
 
     assert result.status == PipelineStatus.COMPLETE
@@ -350,3 +352,4 @@ def test_executor_scopes_each_slice_and_finishes_on_clean_baseline(
     assert (tmp_path / "work" / "development" / "change_set.json").is_file()
     store = MilestoneStore(tmp_path / "work" / "milestone_state", plan)
     assert all(store.checkpoint(item.milestone_id) is not None for item in plan.milestones)
+    assert durable_checkpoints == [item.milestone_id for item in plan.milestones]

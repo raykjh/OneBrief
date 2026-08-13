@@ -11,7 +11,7 @@ import sys
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from filelock import FileLock
@@ -385,7 +385,12 @@ def _persist_governance_projections(
     except Exception:
         return
 
-def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
+def run_job(
+    job_dir: Path,
+    *,
+    gateway: object | None = None,
+    progress_callback: Callable[[Path, str], None] | None = None,
+) -> JobRecord:
     """Claim and execute one job. The persisted checkpoint makes model work resumable."""
     job_dir = job_dir.resolve()
     store = JobStore(job_dir)
@@ -523,6 +528,11 @@ def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
                 pipeline_factory=pipeline_for,
                 intake=active_intake,
                 sources=sources,
+                checkpoint_callback=(
+                    (lambda milestone_id: progress_callback(job_dir, milestone_id))
+                    if progress_callback is not None
+                    else None
+                ),
             )
         else:
             checkpoint = pipeline_for(project_registry_root).run(

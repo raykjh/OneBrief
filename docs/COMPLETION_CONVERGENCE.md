@@ -133,6 +133,12 @@ The approval quote expands model-call counts, phase wallets, repair-call limits,
 time ranges for every planned vertical slice plus the final clean-baseline integration
 pass. A legacy one-pass estimate therefore cannot silently starve a later milestone.
 
+Checkpoint durability crosses execution locations. Cloud-capable work remains on the
+managed worker. A desktop-only approved adapter such as Unity is handed to the local
+Capability Runner through the same immutable job digest and approval, and each PASS is
+uploaded before the next dependent milestone starts. A worker interruption can lose at
+most the active, unverified slice—not an earlier verified checkpoint.
+
 The user still approves one hard minimum-to-maximum project envelope. Milestone weights
 are internal planning allocations, not independent approvals; the global circuit breaker
 remains authoritative and the reserve is available only inside that envelope.

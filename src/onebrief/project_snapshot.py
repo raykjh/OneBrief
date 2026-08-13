@@ -325,7 +325,16 @@ def restore_project_snapshot(job_dir: Path, project_id: str) -> Path | None:
     state = lifecycle.generate_and_qualify()
     generated = state.generated
     if state.qualification is None or state.qualification.status != "passed" or generated is None:
-        raise RuntimeError("restored project ToolPack qualification failed")
+        failed_checks = [
+            f"{item.check_id}: {item.message}"
+            for item in (state.qualification.checks if state.qualification else [])
+            if not item.passed
+        ]
+        detail = "; ".join(failed_checks) or "; ".join(state.execution_blockers)
+        raise RuntimeError(
+            "restored project ToolPack qualification failed"
+            + (f": {detail}" if detail else "")
+        )
     adapters = sorted(
         f"{item.adapter_id.value}:{item.parameter or ''}"
         for item in generated.adapters if item.enabled

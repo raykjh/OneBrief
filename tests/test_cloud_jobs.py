@@ -8,6 +8,7 @@ from google.api_core.exceptions import NotFound
 
 from onebrief.cloud_jobs import (
     GCSJobStore,
+    RuntimeCapabilityHandoff,
     execute_cloud_run_job,
     parse_gcs_job_uri,
     run_cloud_worker,
@@ -121,6 +122,8 @@ class LocalCloudRepository:
         self.claimed = False
         self.completed: JobRecord | None = None
         self.failure: str | None = None
+        self.handoffs: list[RuntimeCapabilityHandoff] = []
+        self.upload_count = 0
 
     def acquire_claim(self) -> None:
         if self.claimed:
@@ -132,6 +135,7 @@ class LocalCloudRepository:
         return destination
 
     def upload_outputs(self, job_dir: Path) -> None:
+        self.upload_count += 1
         for name in ("job.json", "run", "work", "packages"):
             source = job_dir / name
             target = self.remote_job / name
@@ -145,6 +149,9 @@ class LocalCloudRepository:
 
     def write_failure(self, message: str) -> None:
         self.failure = message
+
+    def write_runtime_handoff(self, handoff: RuntimeCapabilityHandoff) -> None:
+        self.handoffs.append(handoff)
 
 
 def test_cloud_worker_round_trip_publishes_remote_result(tmp_path: Path) -> None:
@@ -174,6 +181,48 @@ def test_cloud_worker_round_trip_publishes_remote_result(tmp_path: Path) -> None
         "independent_verification_r0",
         "final_approval",
     ]
+
+
+def test_managed_worker_hands_edge_only_runtime_to_approved_local_runner(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    local_job = _create_job(tmp_path / "source")
+    remote_job = tmp_path / "remote" / local_job.name
+    remote_job.parent.mkdir()
+    shutil.copytree(local_job, remote_job)
+    repository = LocalCloudRepository(remote_job)
+    gateway = FakeGateway()
+    handoff = RuntimeCapabilityHandoff(
+        handoff_id="a" * 64,
+        job_uri="gs://onebrief-test/jobs/example",
+        job_id=JobStore(remote_job).read().job_id,
+        project_id="julpae",
+        source_head_sha="b" * 40,
+        required_adapters=["unity_compile", "unity_playmode_visual_tests"],
+        input_manifest_sha256="c" * 64,
+        approved_budget_usd_micros=1_000_000,
+        created_at="2026-08-13T00:00:00+00:00",
+    )
+    monkeypatch.setenv("CLOUD_RUN_EXECUTION", "managed-execution")
+    monkeypatch.setattr(
+        "onebrief.cloud_jobs.required_local_runtime_adapters",
+        lambda _job: ["unity_compile", "unity_playmode_visual_tests"],
+    )
+    monkeypatch.setattr(
+        "onebrief.cloud_jobs.build_runtime_handoff", lambda *_args, **_kwargs: handoff
+    )
+
+    record = run_cloud_worker(
+        "gs://onebrief-test/jobs/example",
+        repository=repository,
+        gateway=gateway,
+    )
+
+    assert record.status == JobStatus.QUEUED
+    assert not repository.claimed
+    assert repository.handoffs == [handoff]
+    assert repository.upload_count == 0
+    assert gateway.calls == []
 
 
 def test_execute_cloud_run_job_passes_only_the_job_uri_override() -> None:

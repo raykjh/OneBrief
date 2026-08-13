@@ -8,6 +8,7 @@ import os
 import shutil
 import tempfile
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
@@ -18,6 +19,7 @@ from pydantic import BaseModel
 from onebrief.jobs import JobRecord, JobStatus, JobStore, run_job, verify_input_snapshot
 from onebrief.development_progress import development_failure_quality
 from onebrief.development_change_tracking import HISTORY_NAME, REGISTER_NAME
+from onebrief.project_snapshot import ProjectSnapshotManifest, SNAPSHOT_MANIFEST
 
 
 REUSABLE_WORK_ARTIFACTS = (
@@ -60,6 +62,22 @@ class CloudExecutionReceipt(BaseModel):
     asynchronous: bool = True
 
 
+class RuntimeCapabilityHandoff(BaseModel):
+    """Digest-bound request for an already approved edge-only executor."""
+
+    schema_version: str = "onebrief-runtime-capability-handoff-v1"
+    handoff_id: str
+    job_uri: str
+    job_id: str
+    project_id: str
+    source_head_sha: str
+    required_adapters: list[str]
+    input_manifest_sha256: str
+    approved_budget_usd_micros: int
+    target_executor: str = "approved_local_capability_runner"
+    created_at: str
+
+
 class CloudJobRepository(Protocol):
     def acquire_claim(self) -> None: ...
 
@@ -70,6 +88,8 @@ class CloudJobRepository(Protocol):
     def write_completion(self, record: JobRecord) -> None: ...
 
     def write_failure(self, message: str) -> None: ...
+
+    def write_runtime_handoff(self, handoff: RuntimeCapabilityHandoff) -> None: ...
 
 
 def parse_gcs_job_uri(uri: str) -> GCSJobUri:
@@ -228,6 +248,22 @@ class GCSJobStore:
             )
         except PreconditionFailed:
             pass
+
+    def write_runtime_handoff(self, handoff: RuntimeCapabilityHandoff) -> None:
+        blob = self.bucket.blob(self._name("control/runtime_handoff.json"))
+        payload = handoff.model_dump_json(indent=2)
+        try:
+            blob.upload_from_string(
+                payload,
+                content_type="application/json",
+                if_generation_match=0,
+            )
+        except PreconditionFailed:
+            existing = RuntimeCapabilityHandoff.model_validate_json(
+                blob.download_as_text(encoding="utf-8")
+            )
+            if existing.handoff_id != handoff.handoff_id:
+                raise RuntimeError("a different runtime handoff already exists for this job")
 
     def read_job(self) -> JobRecord:
         payload = self.bucket.blob(self._name("job.json")).download_as_text(encoding="utf-8")
@@ -483,6 +519,69 @@ def submit_cloud_job(
     )
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def required_local_runtime_adapters(job_dir: Path) -> list[str]:
+    """Return approved adapters unavailable in the current execution image.
+
+    Unity is an installed desktop capability, not model reasoning.  A managed
+    Linux worker must hand the exact immutable job to the user's already
+    approved local runner instead of weakening the evidence contract.
+    """
+
+    path = job_dir / "inputs" / SNAPSHOT_MANIFEST
+    if not path.is_file():
+        return []
+    manifest = ProjectSnapshotManifest.model_validate_json(path.read_text(encoding="utf-8"))
+    unity = sorted({
+        item.split(":", 1)[0]
+        for item in manifest.approved_adapters
+        if item.split(":", 1)[0].startswith("unity_")
+    })
+    if not unity:
+        return []
+    configured = os.environ.get("ONEBRIEF_UNITY_EDITOR")
+    editor_available = bool(configured and Path(configured).is_file())
+    if os.name == "nt" and not editor_available:
+        editor_available = any(
+            Path(r"C:\Program Files\Unity\Hub\Editor").glob("*/Editor/Unity.exe")
+        )
+    return [] if editor_available else unity
+
+
+def build_runtime_handoff(
+    job_dir: Path, *, job_uri: str, required_adapters: list[str],
+) -> RuntimeCapabilityHandoff:
+    record = JobStore(job_dir).read()
+    snapshot = ProjectSnapshotManifest.model_validate_json(
+        (job_dir / "inputs" / SNAPSHOT_MANIFEST).read_text(encoding="utf-8")
+    )
+    input_manifest = job_dir / "inputs" / "input_manifest.json"
+    payload = {
+        "job_uri": job_uri,
+        "job_id": record.job_id,
+        "project_id": snapshot.project_id,
+        "source_head_sha": snapshot.source_head_sha,
+        "required_adapters": sorted(required_adapters),
+        "input_manifest_sha256": _sha256_file(input_manifest),
+        "approved_budget_usd_micros": json.loads(
+            (job_dir / "run" / "approval.json").read_text(encoding="utf-8")
+        )["approved_usd_micros"],
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return RuntimeCapabilityHandoff(
+        handoff_id=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        created_at=datetime.now(UTC).isoformat(),
+        **payload,
+    )
+
+
 def run_cloud_worker(
     job_uri: str,
     *,
@@ -491,15 +590,34 @@ def run_cloud_worker(
 ) -> JobRecord:
     """Download, execute, and publish one claimed cloud job using ephemeral disk."""
     remote = repository or GCSJobStore(job_uri)
-    remote.acquire_claim()
+    local_job: Path | None = None
     try:
         with tempfile.TemporaryDirectory(prefix="onebrief_cloud_") as temp:
             local_job = remote.download_job(Path(temp) / "job")
-            record = run_job(local_job, gateway=gateway)
+            required_adapters = required_local_runtime_adapters(local_job)
+            if required_adapters and os.environ.get("CLOUD_RUN_EXECUTION"):
+                handoff = build_runtime_handoff(
+                    local_job,
+                    job_uri=job_uri,
+                    required_adapters=required_adapters,
+                )
+                remote.write_runtime_handoff(handoff)
+                return JobStore(local_job).read()
+            remote.acquire_claim()
+            record = run_job(
+                local_job,
+                gateway=gateway,
+                progress_callback=lambda job, _milestone: remote.upload_outputs(job),
+            )
             remote.upload_outputs(local_job)
             remote.write_completion(record)
             return record
     except Exception as exc:
+        if local_job is not None:
+            try:
+                remote.upload_outputs(local_job)
+            except Exception:
+                pass
         remote.write_failure(f"{type(exc).__name__}: {exc}")
         raise
 
