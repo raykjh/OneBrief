@@ -210,6 +210,73 @@ def test_adk_llm_retries_invalid_structured_json_even_when_model_reports_stop() 
     assert "truncated or invalid JSON" in gateway.calls[1][1][-1].parts[0].text
 
 
+def test_adk_llm_retries_valid_json_that_fails_active_pydantic_schema() -> None:
+    from onebrief.generic_development_toolpack import (
+        CompactProposedProjectCodeChangeSet,
+    )
+
+    class Gateway:
+        def __init__(self):
+            self.calls = []
+
+        def generate_adk_response(self, *, stage, contents, **_kwargs):
+            self.calls.append((stage, contents))
+            payload = (
+                {
+                    "summary": "Malformed selector.",
+                    "changes": [{
+                        "path": "Assets/UI/Lobby.cs",
+                        "reason": "Repair the product surface.",
+                    }],
+                }
+                if len(self.calls) == 1
+                else {
+                    "summary": "Bounded new product helper.",
+                    "changes": [{
+                        "path": "Assets/UI/LobbyLanguageBinder.cs",
+                        "content": "public sealed class LobbyLanguageBinder {}",
+                        "reason": "Repair the product surface.",
+                    }],
+                }
+            )
+            return types.GenerateContentResponse(candidates=[types.Candidate(
+                finish_reason=types.FinishReason.STOP,
+                content=types.Content(
+                    role="model", parts=[types.Part(text=json.dumps(payload))]
+                ),
+            )])
+
+    async def collect():
+        gateway = Gateway()
+        model = BudgetedAdkLlm(
+            model="gemini-3.5-flash",
+            gateway=gateway,
+            stage="product_implementation::repair::long_form_draft",
+            response_model=CompactProposedProjectCodeChangeSet,
+        )
+        request = LlmRequest(
+            model="gemini-3.5-flash",
+            contents=[types.Content(role="user", parts=[types.Part(text="repair")])],
+            config=types.GenerateContentConfig(
+                max_output_tokens=10_000,
+                response_mime_type="application/json",
+            ),
+        )
+        responses = [item async for item in model.generate_content_async(request)]
+        return gateway, responses
+
+    gateway, responses = asyncio.run(collect())
+
+    assert len(responses) == 1
+    assert [call[0] for call in gateway.calls] == [
+        "product_implementation::repair::long_form_draft",
+        "product_implementation::repair::long_form_draft_compact_retry",
+    ]
+    CompactProposedProjectCodeChangeSet.model_validate_json(
+        responses[0].content.parts[0].text
+    )
+
+
 def test_adk_llm_compact_retry_receives_a_larger_structured_output_envelope() -> None:
     class Gateway:
         def __init__(self):

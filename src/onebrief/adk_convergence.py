@@ -16,7 +16,7 @@ from google.adk.models.llm_response import LlmResponse
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
-from pydantic import ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from typing_extensions import override
 
 from onebrief.execution_schemas import VerificationReport, Verdict
@@ -39,6 +39,7 @@ class BudgetedAdkLlm(BaseLlm):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     gateway: Any
     stage: str
+    response_model: Any = None
 
     @override
     async def generate_content_async(
@@ -57,12 +58,24 @@ class BudgetedAdkLlm(BaseLlm):
         candidates = list(getattr(response, "candidates", None) or [])
         finish_reason = getattr(candidates[0], "finish_reason", None) if candidates else None
         invalid_structured_json = False
+        invalid_structured_schema = False
         if getattr(llm_request.config, "response_mime_type", None) == "application/json":
             try:
-                json.loads(getattr(response, "text", "") or "")
+                parsed = json.loads(getattr(response, "text", "") or "")
+                if (
+                    isinstance(self.response_model, type)
+                    and issubclass(self.response_model, BaseModel)
+                ):
+                    self.response_model.model_validate(parsed)
             except (TypeError, json.JSONDecodeError):
                 invalid_structured_json = True
-        if "MAX_TOKENS" in str(finish_reason).upper() or invalid_structured_json:
+            except ValidationError:
+                invalid_structured_schema = True
+        if (
+            "MAX_TOKENS" in str(finish_reason).upper()
+            or invalid_structured_json
+            or invalid_structured_schema
+        ):
             # A truncated structured response is not useful evidence and cannot be
             # parsed by ADK. Retry once as a deliberately small incremental edit.
             # Later convergence rounds can add the next increment after deterministic
@@ -70,7 +83,8 @@ class BudgetedAdkLlm(BaseLlm):
             compact_contents = list(llm_request.contents) + [types.Content(
                 role="user",
                 parts=[types.Part(text=(
-                    "The previous structured response was truncated or invalid JSON and was discarded. "
+                    "The previous structured response was truncated or invalid JSON, or it was invalid "
+                    "under the active Pydantic schema, and was discarded. "
                     "Return a valid, much smaller response in the required schema. If the schema is a "
                     "code change set, return exactly one changed path unless the current verification "
                     "contract explicitly requires the atomic Unity evidence pair (one PlayMode .cs and "
@@ -177,6 +191,9 @@ class AdkConvergenceAgent(BaseAgent):
                         if not issubclass(selected_schema, __import__("pydantic").BaseModel):
                             raise TypeError("dynamic maker schema must be a Pydantic model")
                         self.maker.output_schema = selected_schema
+                        budgeted_model = getattr(self.maker, "model", None)
+                        if isinstance(budgeted_model, BudgetedAdkLlm):
+                            budgeted_model.response_model = selected_schema
                         yield Event(
                             author=self.name,
                             invocation_id=ctx.invocation_id,
@@ -344,7 +361,8 @@ def build_text_convergence_agent(
         name="onebrief_maker",
         description="Accountable maker that creates and revises its own artifact.",
         model=BudgetedAdkLlm(
-            model=maker_model, gateway=gateway, stage=maker_stage
+            model=maker_model, gateway=gateway, stage=maker_stage,
+            response_model=maker_schema,
         ),
         instruction=contextual_maker_instruction,
         output_schema=maker_schema,
@@ -359,7 +377,8 @@ def build_text_convergence_agent(
         name="onebrief_independent_verifier",
         description="Independent verifier that cannot modify or approve its own work.",
         model=BudgetedAdkLlm(
-            model=verifier_model, gateway=gateway, stage=verifier_stage
+            model=verifier_model, gateway=gateway, stage=verifier_stage,
+            response_model=VerificationReport,
         ),
         instruction=contextual_verifier_instruction,
         output_schema=VerificationReport,
