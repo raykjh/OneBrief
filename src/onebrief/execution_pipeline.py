@@ -131,6 +131,7 @@ from onebrief.public_research import PublicResearchResult
 from onebrief.phase_execution import (
     PHASE_DECISION_STATE_KEY,
     PHASE_STATE_KEY,
+    active_execution_phase,
     build_evidence_specification,
     decide_repair_phase,
     is_evidence_path,
@@ -2222,10 +2223,20 @@ class ExecutionPipeline:
                 for item in getattr(raw, "changes", [])
                 if getattr(item, "path", None)
             ]
-            active_phase = ExecutionPhase(
-                str(_ctx.session.state.get(
-                    PHASE_STATE_KEY, ExecutionPhase.PRODUCT_IMPLEMENTATION.value
-                ))
+            active_phase = active_execution_phase(_ctx.session.state)
+            phase_authority_payload = {
+                "schema_version": "onebrief-phase-authority-receipt-v1",
+                "round_number": round_number,
+                "active_phase": active_phase.value,
+                "phase_decision": _ctx.session.state.get(PHASE_DECISION_STATE_KEY),
+                "model_binding": _ctx.session.state.get(
+                    "onebrief_maker_model_binding"
+                ),
+                "proposed_paths": proposed_paths,
+            }
+            self._write(
+                output_dir / f"phase_authority_r{round_number}.json",
+                json.dumps(phase_authority_payload, ensure_ascii=False, indent=2),
             )
             if active_phase in {
                 ExecutionPhase.PRODUCT_IMPLEMENTATION,

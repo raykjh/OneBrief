@@ -6,6 +6,7 @@ import pytest
 from onebrief.budget_guard import BudgetExceeded, BudgetStore, IntegrityError
 from onebrief.phase_execution import (
     FailureOwner,
+    active_execution_phase,
     allocate_phase_policy,
     decide_repair_phase,
     is_evidence_path,
@@ -87,6 +88,32 @@ def _estimate(*, repair_limit: int = 2, deterministic_limit: int = 2) -> BudgetE
             ),
         ],
     )
+
+
+def test_active_execution_phase_prefers_typed_decision_over_stale_keys() -> None:
+    state = {
+        "onebrief:execution_phase": "evidence_construction",
+        "onebrief_maker_model_binding": {
+            "execution_phase": "evidence_construction",
+        },
+        "onebrief:phase_decision": {
+            "next_phase": "product_implementation",
+            "failure_owner": "product",
+        },
+    }
+
+    assert active_execution_phase(state) == ExecutionPhase.PRODUCT_IMPLEMENTATION
+
+
+def test_active_execution_phase_uses_bound_phase_before_direct_fallback() -> None:
+    state = {
+        "onebrief:execution_phase": "evidence_construction",
+        "onebrief_maker_model_binding": {
+            "execution_phase": "product_implementation",
+        },
+    }
+
+    assert active_execution_phase(state) == ExecutionPhase.PRODUCT_IMPLEMENTATION
 
 
 def test_phase_routing_and_path_authority_are_disjoint() -> None:

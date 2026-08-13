@@ -645,6 +645,7 @@ def test_same_adk_maker_changes_model_rung_after_verified_failure() -> None:
 
 def test_dynamic_maker_binding_persists_execution_phase_before_repair() -> None:
     observed_phases: list[str | None] = []
+    observed_after_maker_phases: list[str | None] = []
 
     class PhaseAwareMaker(FakeMaker):
         model: Any
@@ -678,11 +679,18 @@ def test_dynamic_maker_binding_persists_execution_phase_before_repair() -> None:
             "phase_decision": {"failure_owner": "product"},
         }
 
+    def observe_after_maker(_raw, ctx, _round_number):
+        observed_after_maker_phases.append(
+            ctx.session.state.get("onebrief:execution_phase")
+        )
+        return None
+
     agent = AdkConvergenceAgent(
         name="convergence",
         sub_agents=[maker, verifier],
         max_revision_rounds=2,
         maker_model_selector=select_model,
+        after_maker=observe_after_maker,
     )
 
     state, _trace = asyncio.run(run_convergence_agent(
@@ -692,6 +700,10 @@ def test_dynamic_maker_binding_persists_execution_phase_before_repair() -> None:
     ))
 
     assert observed_phases == ["evidence_construction", "product_implementation"]
+    assert observed_after_maker_phases == [
+        "evidence_construction",
+        "product_implementation",
+    ]
     assert state["onebrief:execution_phase"] == "product_implementation"
     assert state["onebrief:phase_decision"] == {"failure_owner": "product"}
 

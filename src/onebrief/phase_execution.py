@@ -12,6 +12,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
+from typing import Mapping
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -26,6 +27,7 @@ from onebrief.schemas import ExecutionPhase, PhaseBudgetEstimate
 
 PHASE_STATE_KEY = "onebrief:execution_phase"
 PHASE_DECISION_STATE_KEY = "onebrief:phase_decision"
+MAKER_PHASE_BINDING_STATE_KEY = "onebrief_maker_model_binding"
 
 
 class PhaseBudgetAllocation(BaseModel):
@@ -90,6 +92,35 @@ class PhaseAttemptLedger(BaseModel):
 
 PRODUCT_SCOPE = ["product source; excludes tests, evidence, screenshots, and reports"]
 EVIDENCE_SCOPE = ["tests and executable evidence harness; excludes product behavior"]
+
+
+def active_execution_phase(
+    state: Mapping[str, object],
+    *,
+    default: ExecutionPhase = ExecutionPhase.PRODUCT_IMPLEMENTATION,
+) -> ExecutionPhase:
+    """Resolve the exact repair authority from durable session state.
+
+    The deterministic verifier's typed phase decision is authoritative.  The
+    ADK model binding is a digest-like acknowledgement of the same decision and
+    is used as the second source when an event boundary has not yet materialized
+    the direct phase key.  This keeps an LLM proposal from choosing its own
+    product-versus-evidence authority merely by editing a path on the other
+    surface.
+    """
+
+    decision = state.get(PHASE_DECISION_STATE_KEY)
+    if isinstance(decision, Mapping):
+        next_phase = str(decision.get("next_phase", "")).strip()
+        if next_phase:
+            return ExecutionPhase(next_phase)
+    binding = state.get(MAKER_PHASE_BINDING_STATE_KEY)
+    if isinstance(binding, Mapping):
+        bound_phase = str(binding.get("execution_phase", "")).strip()
+        if bound_phase:
+            return ExecutionPhase(bound_phase)
+    direct_phase = str(state.get(PHASE_STATE_KEY, default.value)).strip()
+    return ExecutionPhase(direct_phase or default.value)
 
 
 def canonical_sha256(payload: object) -> str:
