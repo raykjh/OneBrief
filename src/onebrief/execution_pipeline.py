@@ -1341,12 +1341,29 @@ class ExecutionPipeline:
         prior_failure_text = (
             prior_failure.read_text("utf-8") if prior_failure.is_file() else ""
         )
-        if prior_failure_text and not convergence_ledger.observations:
-            latest_repair_contract = record_convergence_failure(
+        if prior_failure_text:
+            # A durable lineage can outlive its failure classifier.  Rebind the
+            # primary trusted failure when a newer runtime now recognizes a
+            # more precise causal layer, but never duplicate an already issued
+            # contract for the same evidence and classification.
+            primary_observation = convergence_policy.observe(
                 context="development_verification",
                 failure_text=prior_failure_text,
                 attempt_number=1,
             )
+            matching_contracts = [
+                contract
+                for contract in convergence_ledger.repair_contracts
+                if contract.observation_id == primary_observation.observation_id
+            ]
+            if matching_contracts:
+                latest_repair_contract = matching_contracts[-1]
+            else:
+                latest_repair_contract = record_convergence_failure(
+                    context="development_verification",
+                    failure_text=prior_failure_text,
+                    attempt_number=1,
+                )
         if latest_repair_contract is not None:
             initial_state[REPAIR_CONTRACT_STATE_KEY] = (
                 latest_repair_contract.model_dump(mode="json")
@@ -1402,7 +1419,19 @@ class ExecutionPipeline:
             # for exact-edit promotion and base-hash enforcement.
             maker_sources = []
             visible_repair_paths = set(changed_paths)
-            if latest_repair_contract is not None:
+            if localization_product_repair:
+                # The observer proved a product localization defect but cannot
+                # safely name its source file.  Let contract-focused ToolPack
+                # discovery supply the bounded production candidates; proof
+                # files remain excluded below.
+                visible_repair_paths.update(
+                    str(source.get("repository_path", ""))
+                    for source in prepared_sources
+                    if visual_repair_production_target_allowed(
+                        str(source.get("repository_path", ""))
+                    )
+                )
+            elif latest_repair_contract is not None:
                 visible_repair_paths.update(latest_repair_contract.permitted_paths)
             for source in prepared_sources:
                 compact = dict(source)
