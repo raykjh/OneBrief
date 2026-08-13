@@ -54,6 +54,22 @@ def test_project_change_contract_violation_returns_to_the_same_maker_once() -> N
     assert second.action == RecoveryAction.STOP
 
 
+def test_promoted_project_safety_violation_returns_to_same_maker() -> None:
+    error = ValueError(
+        "1 validation error for ProjectCodeChangeSet changes.0 "
+        "Value error, change content requests a prohibited host-runtime capability"
+    )
+
+    decision = RecoveryPolicy().decide(
+        error, context="development_candidate_promotion", attempt_number=1
+    )
+
+    assert decision.error_class == ErrorClass.ARTIFACT_VALIDATION
+    assert decision.action == RecoveryAction.RETURN_TO_AGENT
+    assert decision.responsible_party == "maker"
+    assert decision.retry_allowed is True
+
+
 def test_failed_artifact_verification_returns_to_maker_once() -> None:
     decision = RecoveryPolicy().decide(
         RuntimeError("development verification failed: web_tests\nmissing marker"),

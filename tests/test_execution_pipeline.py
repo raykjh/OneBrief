@@ -948,6 +948,100 @@ def test_adk_software_continuation_returns_bad_edit_anchor_to_same_maker(
     )
 
 
+def test_initial_unsafe_promotion_returns_to_same_maker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bad = ProposedProjectCodeChangeSet.model_validate({
+        "summary": "Unsafe initial proposal.",
+        "changes": [{
+            "path": "web/app/page.tsx",
+            "base_sha256": "a" * 64,
+            "search": "'old'",
+            "replace": "process.env.SECRET",
+            "reason": "This unsafe capability must be rejected.",
+        }],
+    })
+    corrected = CompactProposedProjectCodeChangeSet.model_validate({
+        "summary": "Safe bounded repair.",
+        "changes": [{
+            "path": "web/app/page.tsx",
+            "base_sha256": "a" * 64,
+            "search": "'old'",
+            "replace": "'ready'",
+            "reason": "Use a normal in-app value.",
+        }],
+    })
+
+    class SafetyRetryGateway:
+        def __init__(self) -> None:
+            self.outputs = [
+                bad.model_dump(mode="json"),
+                corrected.model_dump(mode="json"),
+                _verification("PASS").model_dump(mode="json"),
+            ]
+
+        def generate_adk_response(self, **_kwargs: object) -> types.GenerateContentResponse:
+            payload = self.outputs.pop(0)
+            return types.GenerateContentResponse(candidates=[types.Candidate(
+                content=types.Content(
+                    role="model", parts=[types.Part(text=json.dumps(payload))]
+                ),
+                finish_reason=types.FinishReason.STOP,
+            )])
+
+    def fake_apply(
+        _self: ExecutionPipeline, _intake: IntakeRequest, _pack: object,
+        supplied: ProjectCodeChangeSet, _development_dir: Path,
+        _contract: dict[str, object],
+    ) -> DevelopmentRun:
+        assert supplied.changes[0].content == "export const label = 'ready';\n"
+        return DevelopmentRun(
+            status="verified", repository_name="project", base_head_sha="a" * 40,
+            summary=supplied.summary, changed_paths=["web/app/page.tsx"],
+            commands=[], patch_path="development/changes.patch",
+            safety_boundary=["isolated clone only"],
+        )
+
+    monkeypatch.setattr(ExecutionPipeline, "_apply_development_change_set", fake_apply)
+    monkeypatch.setattr(
+        ExecutionPipeline, "_bind_project_change_set",
+        lambda _self, _intake, _pack, change_set, _output: change_set,
+    )
+    intake = IntakeRequest(
+        goal="Finish the existing project.", output_target=OutputTarget.EXISTING_PROJECT,
+        toolpack_ids=[ToolPackId.PROJECT_DEVELOPMENT], existing_project_id="project",
+    )
+    output_dir = tmp_path / "unsafe-initial"
+    output_dir.mkdir()
+    pipeline = ExecutionPipeline(tmp_path / "run", gateway=SafetyRetryGateway())
+    monkeypatch.setattr(
+        pipeline, "_development_components",
+        lambda _intake, _output=None: (
+            ProjectCodeChangeSet,
+            object(),
+            DeveloperAgent(
+                pipeline.gateway, change_set_schema=ProjectCodeChangeSet,
+                source_prefix="project-source/", path_approver=lambda path: path,
+            ),
+        ),
+    )
+    _, report, _ = pipeline._run_adk_development_convergence(
+        intake=intake, requirements=_requirements(), sources=[_source()],
+        source_payload=[{
+            "name": "project-source/web/app/page.tsx",
+            "repository_path": "web/app/page.tsx",
+            "priority": "mandatory", "requirement_keys": ["repair"],
+            "content": "export const label = 'old';\n", "sha256": "a" * 64,
+        }],
+        contract={"goal": intake.goal, "acceptance_criteria": ["Tests pass."]},
+        analysis=_analysis(), output_dir=output_dir,
+    )
+
+    assert report.verdict == Verdict.PASS
+    assert (output_dir / "development_candidate_promotion_failure_r0.txt").is_file()
+    assert not (output_dir / "development_pending_promotion.json").exists()
+
+
 def test_continuation_repromotes_paid_pending_proposal_before_model_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -174,15 +174,22 @@ class RecoveryPolicy:
                 "The proposed delta did not bind to the preserved candidate; the same maker may retry "
                 "with verbatim bounded anchors without changing the accepted artifact."
             )
-        elif context == "developer_structured_output" and any(
+        elif context in {
+            "developer_structured_output", "development_candidate_promotion"
+        } and any(
             marker in message for marker in structured_markers
         ):
             error_class = ErrorClass.ARTIFACT_VALIDATION
-            action = RecoveryAction.AUTO_RETRY
+            action = (
+                RecoveryAction.RETURN_TO_AGENT
+                if context == "development_candidate_promotion"
+                else RecoveryAction.AUTO_RETRY
+            )
             responsible = "maker"
-            limit = 1
+            limit = 2 if context == "development_candidate_promotion" else 1
             rationale = (
-                "The maker may correct one bounded schema or repository-contract error without changing scope."
+                "The maker may correct a bounded schema, safety, or repository-contract error "
+                "without changing scope or bypassing the deterministic policy gate."
             )
         elif "stale or missing base hash" in message:
             error_class = ErrorClass.SOURCE_DRIFT

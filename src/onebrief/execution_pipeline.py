@@ -1939,8 +1939,6 @@ class ExecutionPipeline:
                     )
                 )
             except (ValidationError, ValueError) as exc:
-                if previous_change_set is None:
-                    raise
                 raw_dump = getattr(raw, "model_dump_json", None)
                 raw_text: str | None = None
                 if callable(raw_dump):
@@ -1953,10 +1951,11 @@ class ExecutionPipeline:
                         / f"development_candidate_promotion_raw_r{round_number}.json",
                         raw_text,
                     )
-                    self._write(
-                        output_dir / "development_pending_promotion.json",
-                        raw_text,
-                    )
+                    if previous_change_set is not None:
+                        self._write(
+                            output_dir / "development_pending_promotion.json",
+                            raw_text,
+                        )
                 raw_payload = (
                     raw.model_dump(mode="json")
                     if isinstance(raw, BaseModel)
@@ -2017,7 +2016,10 @@ class ExecutionPipeline:
                 )
                 repair_plan = prepare_repair(report, round_number)
                 return {
-                    MAKER_STATE_KEY: previous_change_set.model_dump(mode="json"),
+                    MAKER_STATE_KEY: (
+                        previous_change_set.model_dump(mode="json")
+                        if previous_change_set is not None else raw_payload
+                    ),
                     VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
                     **({
                         REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
