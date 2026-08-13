@@ -25,7 +25,7 @@ from onebrief.generic_development_toolpack import (
 from onebrief.jobs import JobStatus, JobStore, create_job
 from onebrief.schemas import BudgetEnvelope, IntakeRequest, InternalSource, RequirementsAnalysis
 
-TRUSTED_REVALIDATION_VERSION = "web-observer-v8"
+TRUSTED_REVALIDATION_VERSION = "web-observer-v9"
 
 class AutomaticResumePlan(BaseModel):
     source_job_id: str
