@@ -71,6 +71,7 @@ from onebrief.generic_development_toolpack import (
     ProposedProjectCodeChangeSet,
     UnityEvidenceAssemblyRepair,
     UnityEvidenceSourceRepair,
+    UnityEvidenceAnchoredSourceRepair,
 )
 from onebrief.greenfield_web_toolpack import GreenfieldWebDevelopmentToolPack
 from onebrief.dynamic_role_agents import DynamicRoleAgent, GovernanceAgent, GovernanceDecision, RoleHandoff
@@ -316,7 +317,7 @@ def development_maker_schema_for(
         and current_candidate is not None
         and not missing_unity_evidence_bundle_paths(requested_pair, current_candidate)
     ):
-        return UnityEvidenceSourceRepair
+        return UnityEvidenceAnchoredSourceRepair
     # Dynamic schemas persist on the same LlmAgent. Explicitly restore the
     # normal bounded repair contract after the atomic pair has been created.
     return CompactProposedProjectCodeChangeSet

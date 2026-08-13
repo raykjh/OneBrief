@@ -12,6 +12,7 @@ from onebrief.generic_development_toolpack import (
     CompactProposedProjectCodeChangeSet, ExactRepairProjectCodeChangeSet,
     ProjectCodeChangeSet, ProposedProjectCodeChangeSet,
     UnityEvidenceSourceRepair,
+    UnityEvidenceAnchoredSourceRepair,
     UnityEvidenceAssemblyRepair,
 )
 from onebrief.budget_guard import BudgetExceeded, BudgetStore, RunStatus
@@ -1964,7 +1965,7 @@ def test_atomic_schema_returns_to_bounded_repair_after_pair_exists() -> None:
     ) is AtomicUnityEvidenceBundle
     assert development_maker_schema_for(
         report, with_pair.model_dump(mode="json")
-    ) is UnityEvidenceSourceRepair
+    ) is UnityEvidenceAnchoredSourceRepair
 
     detailed_report = ExecutionPipeline._development_failure_report(
         "Unity visual test contract: responsive Unity visual evidence must define and capture "
@@ -1973,7 +1974,33 @@ def test_atomic_schema_returns_to_bounded_repair_after_pair_exists() -> None:
     )
     assert development_maker_schema_for(
         detailed_report, with_pair.model_dump(mode="json")
-    ) is UnityEvidenceSourceRepair
+    ) is UnityEvidenceAnchoredSourceRepair
+
+    bounded = UnityEvidenceAnchoredSourceRepair.model_validate({
+        "summary": "Replace only the batch-safe capture helper.",
+        "changes": [{
+            "path": "Assets/Tests/PlayMode/Flow.cs",
+            "base_sha256": None,
+            "start_anchor": "private CapturedImage CaptureScreenshot(",
+            "end_anchor": "return image;\n        }",
+            "replace": "x" * 10_000,
+            "reason": "Repair the established evidence source without echoing the full file.",
+        }],
+    })
+    assert len(bounded.changes[0].replace) == 10_000
+
+    with pytest.raises(ValidationError, match="below Tests/PlayMode"):
+        UnityEvidenceAnchoredSourceRepair.model_validate({
+            "summary": "Do not cross the evidence boundary.",
+            "changes": [{
+                "path": "Assets/JULPAE/Scripts/Lobby/LobbyResponsiveLayout.cs",
+                "base_sha256": "a" * 64,
+                "start_anchor": "class LobbyResponsiveLayout",
+                "end_anchor": "}",
+                "replace": "class LobbyResponsiveLayout {}",
+                "reason": "Invalid product-source target.",
+            }],
+        })
 
     mixed_product_report = ExecutionPipeline._development_failure_report(
         "Unity visual test contract: changed Unity UI MonoBehaviour "

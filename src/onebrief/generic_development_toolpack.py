@@ -729,6 +729,22 @@ class AnchoredRangeRepairProjectCodeChangeSet(BaseModel):
     changes: list[AnchoredRangeRepairProjectFileChange] = Field(min_length=1, max_length=1)
 
 
+class UnityEvidenceAnchoredSourceRepair(AnchoredRangeRepairProjectCodeChangeSet):
+    """One bounded range in an established PlayMode C# evidence source."""
+
+    @model_validator(mode="after")
+    def validate_playmode_source(self) -> "UnityEvidenceAnchoredSourceRepair":
+        path = self.changes[0].path.replace("\\", "/")
+        if (
+            "/tests/playmode/" not in f"/{path.casefold()}"
+            or PurePosixPath(path).suffix.casefold() != ".cs"
+        ):
+            raise ValueError(
+                "Unity evidence source repair must target one C# file below Tests/PlayMode"
+            )
+        return self
+
+
 class ApprovedProjectDevelopmentToolPack:
     """Runs only an approved generated profile against an isolated local clone."""
 
