@@ -1781,6 +1781,7 @@ def test_unity_visual_preflight_requires_one_atomic_manifest_for_all_scenarios(
     )
 
     assert any("must be committed in one atomic manifest" in issue for issue in issues)
+    assert any("exactly one WriteManifestAtomically call site" in issue for issue in issues)
 
 
 def test_unity_visual_preflight_binds_batched_json_rows_to_capture_actions(

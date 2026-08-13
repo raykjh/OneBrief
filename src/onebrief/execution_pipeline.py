@@ -1109,9 +1109,11 @@ class ExecutionPipeline:
             if "must be committed in one atomic manifest" in lowered:
                 return (
                     "Capture Login before the shipped start action, Lobby after that action, and Settings after "
-                    "the shipped settings action. Keep every returned ScenarioReceipt in a local variable, then "
-                    "call WriteManifestAtomically(loginReceipt, lobbyReceipt, settingsReceipt) exactly once at "
-                    "the end. Separate calls overwrite the prior runtime-evidence manifest."
+                    "the shipped settings action. Create one System.Collections.Generic.List<"
+                    "OneBriefAtomicScreenshot.ScenarioReceipt>, add each successfully captured receipt to it, "
+                    "leave every if/else branch, and place exactly one syntactic call site at the end: "
+                    "OneBriefAtomicScreenshot.WriteManifestAtomically(receipts.ToArray()). Do not place the call "
+                    "inside both branches; multiple source call sites overwrite the prior manifest."
                 )
             if "unity visual test contract" in lowered and "scenarios array" in lowered:
                 return (

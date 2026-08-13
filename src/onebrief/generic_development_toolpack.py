@@ -2195,7 +2195,8 @@ class ApprovedProjectDevelopmentToolPack:
             if len(requested_surfaces) >= 2 and manifest_writes > 1:
                 issues.append(
                     "all requested ScenarioReceipt values must be committed in one atomic manifest; "
-                    "multiple WriteManifestAtomically calls overwrite earlier scenarios"
+                    "the source must contain exactly one WriteManifestAtomically call site outside every "
+                    "if/else branch because branch-specific calls overwrite earlier scenarios"
                 )
             if len(requested_surfaces) >= 2 and not any(token in structural for token in (
                 ".onclick.invoke", "executeevents.execute", ".setactive(true)",
