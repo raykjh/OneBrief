@@ -198,6 +198,36 @@ class AdkConvergenceAgent(BaseAgent):
                     if isinstance(binding, Awaitable):
                         binding = await binding
                     if binding:
+                        previous_binding = ctx.session.state.get(
+                            MAKER_MODEL_BINDING_STATE_KEY
+                        )
+                        previous_decision = (
+                            previous_binding.get("decision", {})
+                            if isinstance(previous_binding, dict) else {}
+                        )
+                        next_decision = (
+                            binding.get("decision", {})
+                            if isinstance(binding, dict) else {}
+                        )
+                        if (
+                            isinstance(previous_binding, dict)
+                            and bool(previous_decision.get("escalated"))
+                            and not bool(next_decision.get("escalated"))
+                        ):
+                            # Escalation belongs to this persistent maker and
+                            # unresolved failure boundary. Do not silently
+                            # demote when the latest normalized message no
+                            # longer repeats the classifier's original phrase.
+                            binding = {
+                                **dict(binding),
+                                "model": previous_binding.get("model"),
+                                "stage": (
+                                    str(previous_binding.get("stage", "long_form_draft"))
+                                    + f"_continued_r{round_number}"
+                                ),
+                                "sticky_escalation": True,
+                                "prior_binding": dict(previous_binding),
+                            }
                         model = str(binding.get("model", "")).strip()
                         stage = str(binding.get("stage", "")).strip()
                         if not model or not stage:

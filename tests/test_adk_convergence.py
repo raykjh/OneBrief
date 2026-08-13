@@ -463,6 +463,58 @@ def test_same_adk_maker_changes_model_rung_after_verified_failure() -> None:
     assert [event["author"] for event in trace].count("onebrief_maker") == 2
 
 
+def test_same_adk_maker_keeps_escalated_rung_until_boundary_passes() -> None:
+    class StubBudgetedGateway(BudgetedGeminiClient):
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+            self.outputs = [
+                DraftArtifact(title="Initial", body_markdown="Initial artifact requiring repair and preserving enough verified context for review.", cited_finding_ids=["F01"], drafting_decisions=[]).model_dump(mode="json"),
+                _report(Verdict.REVISE),
+                DraftArtifact(title="Pro repair", body_markdown="First reasoned repair preserving the verified context while addressing the active boundary.", cited_finding_ids=["F01"], drafting_decisions=[]).model_dump(mode="json"),
+                _report(Verdict.REVISE),
+                DraftArtifact(title="Continued", body_markdown="Second reasoned repair remains on the escalated rung until independent verification passes.", cited_finding_ids=["F01"], drafting_decisions=[]).model_dump(mode="json"),
+                _report(Verdict.PASS),
+            ]
+
+        def generate_adk_response(self, **kwargs: Any) -> types.GenerateContentResponse:
+            self.calls.append((str(kwargs["stage"]), str(kwargs["model"])))
+            payload = self.outputs.pop(0)
+            return types.GenerateContentResponse(candidates=[types.Candidate(
+                content=types.Content(
+                    role="model", parts=[types.Part(text=json.dumps(payload))]
+                ),
+                finish_reason=types.FinishReason.STOP,
+            )])
+
+    def select_model(report, _ctx, round_number):
+        if report is None:
+            return None
+        escalated = round_number == 1
+        return {
+            "model": "pro-maker-model" if escalated else "flash-maker-model",
+            "stage": f"long_form_draft_r{round_number}",
+            "round_number": round_number,
+            "decision": {"escalated": escalated},
+        }
+
+    gateway = StubBudgetedGateway()
+    agent = build_text_convergence_agent(
+        gateway=gateway,
+        maker_model="flash-maker-model",
+        verifier_model="verifier-model",
+        maker_schema=DraftArtifact,
+        max_revision_rounds=3,
+        maker_instruction="Create the artifact.",
+        verifier_instruction="Verify the artifact.",
+        maker_model_selector=select_model,
+    )
+
+    state, _trace = asyncio.run(run_convergence_agent(agent, {"goal": "Finish it."}))
+
+    assert gateway.calls[4][1] == "pro-maker-model"
+    assert state[MAKER_MODEL_BINDING_STATE_KEY]["sticky_escalation"] is True
+
+
 def test_same_adk_maker_switches_to_an_atomic_output_schema_after_failure() -> None:
     from onebrief.generic_development_toolpack import (
         AtomicUnityEvidenceBundle,
