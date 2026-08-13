@@ -6,6 +6,7 @@ import pytest
 
 from onebrief.automatic_resume import (
     AutomaticResumePlan,
+    TRUSTED_REVALIDATION_VERSION,
     _continuation_budget_estimate,
     can_attempt_automatic_resume,
     can_attempt_bounded_repair_resume,
@@ -510,11 +511,11 @@ def test_static_unity_topology_resume_skips_duplicate_revalidation_and_stale_gat
     assert can_attempt_bounded_repair_resume(source) is True
     child, _plan = create_bounded_repair_resume(source, tmp_path / "jobs")
 
-    receipt = json.loads(
-        (child / "work" / "trusted_reused_verification.json").read_text("utf-8")
+    marker = json.loads(
+        (child / "work" / "reverify_existing_candidate.json").read_text("utf-8")
     )
-    assert receipt["schema_version"] == "onebrief-trusted-static-topology-failure-reuse-v1"
-    assert not (child / "work" / "reverify_existing_candidate.json").exists()
+    assert marker["validator_version"] == TRUSTED_REVALIDATION_VERSION
+    assert not (child / "work" / "trusted_reused_verification.json").exists()
     assert not (child / "work" / "convergence_ledger.json").exists()
     assert not (child / "work" / "repair_contract.json").exists()
 

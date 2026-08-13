@@ -197,36 +197,40 @@ def _is_unity_evidence_topology_failure(value: str) -> bool:
 def _trusted_static_topology_failure_receipt(
     source_work: Path, candidate: Path, failure: Path
 ) -> dict[str, object] | None:
-    """Bind a deterministic static evidence-topology failure to one candidate."""
+    """Reuse only a receipt minted by the exact current static validator.
+
+    A raw failure file has no validator-version binding.  Minting a new receipt
+    for it during continuation would relabel stale evidence as current and skip
+    newly added deterministic checks.  Static revalidation is cheap, so an
+    absent or old receipt deliberately falls back to reverify_existing.
+    """
 
     if not candidate.is_file() or not failure.is_file():
         return None
     failure_text = failure.read_text(encoding="utf-8", errors="replace")
     if not _is_unity_evidence_topology_failure(failure_text):
         return None
-    provenance = source_work / "project_snapshot" / "restore_evidence.json"
-    if not provenance.is_file():
+    inherited = source_work / "trusted_reused_verification.json"
+    if not inherited.is_file():
         return None
     try:
-        payload = json.loads(provenance.read_text(encoding="utf-8"))
+        payload = json.loads(inherited.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, AttributeError):
         return None
     if (
-        payload.get("status") != "verified_and_approved"
-        or not payload.get("source_head_sha")
-        or not payload.get("source_toolpack_sha256")
+        payload.get("schema_version")
+        != "onebrief-trusted-static-topology-failure-reuse-v1"
+        or payload.get("validator_version") != TRUSTED_REVALIDATION_VERSION
+        or payload.get("candidate_sha256") != _sha256(candidate)
+        or payload.get("failure_sha256") != _sha256(failure)
+        or not payload.get("base_head_sha")
     ):
         return None
     return {
-        "schema_version": "onebrief-trusted-static-topology-failure-reuse-v1",
-        "validator_version": TRUSTED_REVALIDATION_VERSION,
-        "candidate_sha256": _sha256(candidate),
-        "failure_sha256": _sha256(failure),
-        "provenance_sha256": _sha256(provenance),
-        "base_head_sha": str(payload["source_head_sha"]),
-        "toolpack_sha256": str(payload["source_toolpack_sha256"]),
+        **payload,
+        "inherited_receipt_sha256": _sha256(inherited),
         "guarantee": (
-            "The unchanged candidate skips only the already-proven static topology failure; "
+            "The unchanged candidate and failure match the current-validator receipt; "
             "every new evidence delta still requires complete ToolPack verification."
         ),
     }
