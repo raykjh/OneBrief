@@ -21,6 +21,7 @@ from onebrief.execution_pipeline import (
     ExecutionPipeline,
     development_proposal_changes,
     filter_development_proposal_for_phase,
+    phase_owned_handoff_paths,
     development_toolpack_focus_text,
     development_repair_requires_anchored_range,
     evidence_repair_has_bounded_uncommitted_candidate,
@@ -98,6 +99,33 @@ def test_dict_development_proposal_counts_atomic_evidence_members() -> None:
     }
 
     assert missing_unity_evidence_bundle_paths(feedback, proposal) == []
+
+
+def test_product_handoff_never_inherits_failing_test_path() -> None:
+    paths = phase_owned_handoff_paths(
+        phase=ExecutionPhase.PRODUCT_IMPLEMENTATION,
+        proposed_paths=["Assets/Tests/PlayMode/OneBriefVisualTests.cs"],
+        previous_change_set=None,
+    )
+
+    assert paths == []
+
+
+def test_evidence_handoff_falls_back_only_to_prior_evidence_paths() -> None:
+    previous = {
+        "changes": [
+            {"path": "Assets/Scripts/LoginView.cs"},
+            {"path": "Assets/Tests/PlayMode/OneBriefVisualTests.cs"},
+        ]
+    }
+
+    paths = phase_owned_handoff_paths(
+        phase=ExecutionPhase.EVIDENCE_CONSTRUCTION,
+        proposed_paths=["Assets/Scripts/LoginView.cs"],
+        previous_change_set=previous,
+    )
+
+    assert paths == ["Assets/Tests/PlayMode/OneBriefVisualTests.cs"]
 
 
 class FakeGateway:

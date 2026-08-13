@@ -201,6 +201,33 @@ def filter_development_proposal_for_phase(
     return model_copy(update={"changes": allowed}), deferred
 
 
+def phase_owned_handoff_paths(
+    *,
+    phase: ExecutionPhase,
+    proposed_paths: list[str],
+    previous_change_set: object | None,
+) -> list[str]:
+    """Never bind a recipient to a path forbidden by its execution phase.
+
+    A verifier observes the failing proof path, but a product owner must not
+    inherit that path as edit authority. An empty product path list means the
+    maker may select the smallest production path inside the already approved
+    ToolPack scope; it never means tests are permitted.
+    """
+
+    owned = [
+        path.replace("\\", "/") for path in proposed_paths
+        if path_allowed_for_phase(path, phase)
+    ]
+    if owned or phase != ExecutionPhase.EVIDENCE_CONSTRUCTION:
+        return list(dict.fromkeys(owned))
+    return list(dict.fromkeys(
+        development_change_path(change)
+        for change in development_proposal_changes(previous_change_set)
+        if is_evidence_path(development_change_path(change))
+    ))
+
+
 def visual_repair_production_target_allowed(path: str) -> bool:
     """Fail closed when a rendered-product defect points at proof instead of product code."""
 
@@ -1906,15 +1933,18 @@ class ExecutionPipeline:
                 if observation.code.value == "unity_screenshot_not_materialized"
                 else EvidenceKind.OTHER
             )
-            permitted_paths = list(contract.permitted_paths) or list(
-                observation.affected_paths
+            permitted_paths = phase_owned_handoff_paths(
+                phase=(
+                    ExecutionPhase.EVIDENCE_CONSTRUCTION
+                    if owner.value == "evidence"
+                    else ExecutionPhase.PRODUCT_IMPLEMENTATION
+                ),
+                proposed_paths=(
+                    list(contract.permitted_paths)
+                    or list(observation.affected_paths)
+                ),
+                previous_change_set=previous_change_set,
             )
-            if owner.value == "evidence" and not permitted_paths:
-                permitted_paths = [
-                    str(item.path)
-                    for item in getattr(previous_change_set, "changes", [])
-                    if is_evidence_path(str(item.path))
-                ]
             handoff = create_work_handoff(
                 project_id=(
                     self.execution_graph.project_id
@@ -2384,7 +2414,10 @@ class ExecutionPipeline:
                             failure_text=feedback,
                             attempt_number=round_number + 1,
                             execution_round=round_number,
-                            affected_paths=deferred_paths,
+                            # These paths belong to the rejected phase. They
+                            # are evidence of the scope mismatch, never edit
+                            # authority for the next recipient.
+                            affected_paths=[],
                             strategy_fingerprint=development_change_strategy_fingerprint(raw),
                         )
                         if not convergence_contract.execution_allowed:

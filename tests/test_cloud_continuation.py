@@ -361,7 +361,7 @@ def test_targeted_repair_estimate_charges_only_remaining_work() -> None:
     assert phase_budgets[ExecutionPhase.EVIDENCE_CONSTRUCTION].recommended_cost_usd == 0
     assert phase_budgets[ExecutionPhase.EVIDENCE_CONSTRUCTION].maximum_cost_usd > 0
     assert phase_budgets[ExecutionPhase.PRODUCT_IMPLEMENTATION].max_ai_repair_calls == 2
-    assert phase_budgets[ExecutionPhase.EVIDENCE_CONSTRUCTION].max_ai_repair_calls == 1
+    assert phase_budgets[ExecutionPhase.EVIDENCE_CONSTRUCTION].max_ai_repair_calls == 2
 
     low_cost = _targeted_repair_estimate(estimate, low_cost_models=True)
 

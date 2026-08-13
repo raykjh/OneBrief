@@ -20,7 +20,7 @@ from onebrief.handoff_protocol import FailureCode, FailureOwner
 
 
 CURRENT_CONVERGENCE_POLICY_REVISION = (
-    "onebrief-convergence-2026-08-14-single-site-manifest-v5"
+    "onebrief-convergence-2026-08-14-phase-owned-handoff-v6"
 )
 LEGACY_CONVERGENCE_POLICY_REVISION = "onebrief-convergence-legacy-v1"
 
