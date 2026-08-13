@@ -53,7 +53,9 @@ def _git(root: Path, *args: str) -> str:
     )
     if completed.returncode:
         detail = "\n".join(part.strip() for part in (completed.stdout, completed.stderr) if part.strip())
-        raise RuntimeError(detail[:4000] or f"git {' '.join(args)} failed")
+        # Git can emit hundreds of CRLF notices before the actionable fatal
+        # line. Preserve the tail so a durable failure record names the cause.
+        raise RuntimeError(detail[-4000:] or f"git {' '.join(args)} failed")
     return completed.stdout
 
 
@@ -318,6 +320,8 @@ def restore_project_snapshot(job_dir: Path, project_id: str) -> Path | None:
     _git(repository, "init")
     _git(repository, "config", "user.name", "OneBrief Cloud Snapshot")
     _git(repository, "config", "user.email", "onebrief-snapshot@example.invalid")
+    _git(repository, "config", "core.longpaths", "true")
+    _git(repository, "config", "core.autocrlf", "false")
     _git(repository, "add", "-A")
     _git(repository, "commit", "-m", f"Restore approved snapshot from {manifest.source_head_sha}")
     ExternalProjectImporter(registry).import_bytes(resident.read_bytes())

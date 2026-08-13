@@ -112,6 +112,8 @@ def test_snapshot_restores_only_current_approved_tree_and_rebuilds_toolpack(
 
     assert restored is not None
     assert os.environ["ONEBRIEF_PROJECTS_ROOT"] == original_registry
+    assert _git(restored, "config", "--get", "core.longpaths") == "true"
+    assert _git(restored, "config", "--get", "core.autocrlf") == "false"
     assert (restored / "src" / "sample" / "__init__.py").read_text(encoding="utf-8") == "VALUE = 1\n"
     evidence = json.loads(
         (tmp_path / "job" / "work" / "project_snapshot" / "restore_evidence.json").read_text(
