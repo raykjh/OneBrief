@@ -16,6 +16,7 @@ from onebrief.team_planning import TeamPlan
 from onebrief.schemas import (
     BudgetEnvelope,
     BudgetStatus,
+    ExecutionPhase,
     IntakeRequest,
     InternalSource,
     RequirementsAnalysis,
@@ -344,6 +345,15 @@ def test_targeted_repair_estimate_charges_only_remaining_work() -> None:
     ]
     assert targeted.minimum_cost_usd < 0.25
     assert all(item.minimum_calls == item.maximum_calls == 1 for item in targeted.stages)
+    phase_budgets = {item.phase: item for item in targeted.phase_budgets}
+    assert {
+        ExecutionPhase.PRODUCT_IMPLEMENTATION,
+        ExecutionPhase.EVIDENCE_CONSTRUCTION,
+        ExecutionPhase.FINAL_VERIFICATION,
+    } == set(phase_budgets)
+    assert phase_budgets[ExecutionPhase.EVIDENCE_CONSTRUCTION].minimum_cost_usd == 0
+    assert phase_budgets[ExecutionPhase.EVIDENCE_CONSTRUCTION].recommended_cost_usd == 0
+    assert phase_budgets[ExecutionPhase.EVIDENCE_CONSTRUCTION].maximum_cost_usd > 0
 
     low_cost = _targeted_repair_estimate(estimate, low_cost_models=True)
 

@@ -112,6 +112,19 @@ def _targeted_repair_estimate(
         if owner == FailureOwner.EVIDENCE
         else ExecutionPhase.PRODUCT_IMPLEMENTATION
     )
+    alternate_repair_phase = (
+        ExecutionPhase.PRODUCT_IMPLEMENTATION
+        if repair_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
+        else ExecutionPhase.EVIDENCE_CONSTRUCTION
+    )
+
+    def repair_scope(phase: ExecutionPhase) -> list[str]:
+        return (
+            ["tests and executable evidence harness; excludes product behavior"]
+            if phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
+            else ["product source; excludes tests, evidence, screenshots, and reports"]
+        )
+
     phase_budgets = [
         PhaseBudgetEstimate(
             phase=repair_phase,
@@ -120,11 +133,21 @@ def _targeted_repair_estimate(
             maximum_cost_usd=round(maker_cost * 1.25, 6),
             max_ai_repair_calls=1,
             max_deterministic_attempts=2,
-            editable_scope=(
-                ["tests and executable evidence harness; excludes product behavior"]
-                if repair_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
-                else ["product source; excludes tests, evidence, screenshots, and reports"]
-            ),
+            editable_scope=repair_scope(repair_phase),
+        ),
+        PhaseBudgetEstimate(
+            # A deterministic probe can reclassify the same accepted defect
+            # from evidence to product (or vice versa).  Keep the opposite
+            # authority dormant at minimum/recommended tiers, but give it one
+            # bounded maximum turn. The verifier still selects exactly one
+            # phase and path guards prevent cross-phase edits.
+            phase=alternate_repair_phase,
+            minimum_cost_usd=0.0,
+            recommended_cost_usd=0.0,
+            maximum_cost_usd=round(maker_cost * 1.25, 6),
+            max_ai_repair_calls=1,
+            max_deterministic_attempts=2,
+            editable_scope=repair_scope(alternate_repair_phase),
         ),
         PhaseBudgetEstimate(
             phase=ExecutionPhase.FINAL_VERIFICATION,
