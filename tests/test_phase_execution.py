@@ -133,6 +133,26 @@ def test_trusted_failure_selects_product_or_evidence_owner() -> None:
     assert not environment.model_repair_allowed
 
 
+def test_batchmode_framebuffer_failure_cannot_open_product_edit_authority() -> None:
+    decision = decide_repair_phase(
+        context="development_verification",
+        failure_text=(
+            "UNITY TEST FAILURES OneBrief.Visual.Flow: ReadPixels was called to read "
+            "pixels from system frame buffer, while not inside drawing frame."
+        ),
+        round_number=1,
+    )
+
+    assert decision.failure_owner == FailureOwner.EVIDENCE
+    assert decision.next_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
+    assert path_allowed_for_phase(
+        "Assets/Tests/PlayMode/OneBriefVisualTest.cs", decision.next_phase
+    )
+    assert not path_allowed_for_phase(
+        "Assets/JULPAE/Scripts/Lobby/LobbyResponsiveLayout.cs", decision.next_phase
+    )
+
+
 def test_unity_visual_contract_remains_evidence_owned_with_mixed_candidate() -> None:
     decision = decide_repair_phase(
         context="development_acceptance_verification",

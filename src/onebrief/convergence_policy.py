@@ -113,6 +113,8 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
     if any(marker in text for marker in (
         "unity visual test contract: add",
         "unity visual test contract:",
+        "readpixels was called to read pixels from system frame buffer",
+        "readpixels was called to read pixels from system framebuffer",
         "unity visual evidence requires a distinct rendered scenario",
         "responsive unity visual evidence must define and capture",
         "unity visual evidence reused an identical screenshot",

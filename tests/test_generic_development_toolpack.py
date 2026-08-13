@@ -1110,6 +1110,145 @@ def test_unity_visual_preflight_rejects_batchmode_capture_that_reuses_screen_siz
     assert any("pass each requested viewport width and height" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_rejects_system_framebuffer_readpixels(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    tests = tmp_path / "unity-system-framebuffer" / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'UnityEngine.SceneManagement.SceneManager.LoadScene("Lobby"); '
+        "var button = UnityEngine.GameObject.Find(\"SettingsButton\")"
+        ".GetComponent<UnityEngine.UI.Button>(); button.onClick.Invoke(); "
+        "var texture = new UnityEngine.Texture2D(1920, 1080); "
+        "texture.ReadPixels(new UnityEngine.Rect(0, 0, 1920, 1080), 0, 0); "
+        "System.IO.File.WriteAllBytes(\"onebrief-evidence/lobby.png\", texture.EncodeToPNG()); "
+        "var glyph = TMPro.TMP_Settings.defaultFontAsset.HasCharacter('A'); "
+        "var schema = \"runtime-evidence.json onebrief-unity-visual-evidence-v1 scenarios "
+        "scenario_id observed_state interaction assertion_count viewport_width viewport_height "
+        "screenshot_path lobby.png\"; } }",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile, tests.parents[2], "Verify the Unity lobby UI."
+    )
+
+    assert any("must not read the system framebuffer" in issue for issue in issues)
+
+
+def test_per_run_unity_workspace_preserves_library_and_resets_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ONEBRIEF_UNITY_WORKSPACE_ROOT", str(tmp_path / "unity-cache"))
+    root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    _approved, head = pack._validate_root()
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True,
+        adapter_id=AdapterId.UNITY_COMPILE,
+        evidence="C:/Unity/Editor.exe",
+        parameter=None,
+    )])
+    output = tmp_path / "run" / "work" / "development"
+    output.mkdir(parents=True)
+
+    with pack._isolated_workspace(
+        profile, head, output, ["src/app.js"]
+    ) as (_workspace, first_clone):
+        (first_clone / "src" / "app.js").write_text(
+            "export const answer = 99;\n", encoding="utf-8"
+        )
+        library = first_clone / "Library"
+        library.mkdir()
+        (library / "import-cache.bin").write_bytes(b"cached")
+
+    with pack._isolated_workspace(
+        profile, head, output, ["src/app.js"]
+    ) as (_workspace, second_clone):
+        assert second_clone == first_clone
+        assert (second_clone / "Library" / "import-cache.bin").read_bytes() == b"cached"
+        committed = subprocess.run(
+            ["git", "show", "HEAD:src/app.js"], cwd=root, check=True,
+            capture_output=True,
+        ).stdout
+        assert (second_clone / "src" / "app.js").read_bytes() == committed
+
+
+def test_unity_workspace_key_change_quarantines_old_library(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ONEBRIEF_UNITY_WORKSPACE_ROOT", str(tmp_path / "unity-cache"))
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    _approved, head = pack._validate_root()
+    output = tmp_path / "run" / "work" / "development"
+    output.mkdir(parents=True)
+    first_profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_COMPILE,
+        evidence="C:/Unity/2022/Editor.exe", parameter=None,
+    )])
+    second_profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_COMPILE,
+        evidence="C:/Unity/6/Editor.exe", parameter=None,
+    )])
+
+    with pack._isolated_workspace(
+        first_profile, head, output, []
+    ) as (_workspace, clone):
+        (clone / "Library").mkdir()
+        (clone / "Library" / "old.bin").write_bytes(b"old")
+
+    with pack._isolated_workspace(
+        second_profile, head, output, []
+    ) as (workspace, clone):
+        assert not (clone / "Library" / "old.bin").exists()
+        assert any(workspace.glob("repository.stale.*"))
+
+
+def test_unity_workspace_follows_durable_continuation_lineage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ONEBRIEF_UNITY_WORKSPACE_ROOT", str(tmp_path / "unity-cache"))
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    _approved, head = pack._validate_root()
+    jobs = tmp_path / "jobs"
+    parent_output = jobs / "parent-job" / "work" / "development"
+    child_output = jobs / "child-job" / "work" / "development"
+    parent_output.mkdir(parents=True)
+    child_output.mkdir(parents=True)
+    (child_output.parent / "continuation_manifest.json").write_text(
+        json.dumps({
+            "schema_version": "onebrief-bounded-repair-continuation-v1",
+            "source_job_id": "parent-job",
+        }),
+        encoding="utf-8",
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_COMPILE,
+        evidence="C:/Unity/Editor.exe", parameter=None,
+    )])
+
+    with pack._isolated_workspace(profile, head, parent_output, []) as (_root, clone):
+        (clone / "Library").mkdir()
+        (clone / "Library" / "lineage.bin").write_bytes(b"lineage")
+
+    with pack._isolated_workspace(profile, head, child_output, []) as (_root, clone):
+        assert (clone / "Library" / "lineage.bin").read_bytes() == b"lineage"
+
+
 def test_unity_visual_preflight_traces_screen_size_through_capture_variables(
     tmp_path: Path,
 ) -> None:

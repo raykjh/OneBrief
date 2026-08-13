@@ -62,6 +62,20 @@ def test_missing_requested_unity_locale_is_evidence_topology() -> None:
     assert observation.symptom_keys == ["artifact:evidence_topology"]
 
 
+def test_batchmode_system_framebuffer_readback_is_evidence_topology() -> None:
+    observation = ConvergencePolicy().observe(
+        context="development_verification",
+        failure_text=(
+            "UNITY TEST FAILURES OneBrief.Visual.Flow: Unhandled log message: "
+            "'[Error] ReadPixels was called to read pixels from system frame buffer, "
+            "while not inside drawing frame.'"
+        ),
+        attempt_number=1,
+    )
+
+    assert observation.layer == FailureLayer.EVIDENCE_TOPOLOGY
+
+
 def test_unchanged_requested_unity_locale_is_a_semantic_product_failure() -> None:
     observation = ConvergencePolicy().observe(
         context="development_verification",

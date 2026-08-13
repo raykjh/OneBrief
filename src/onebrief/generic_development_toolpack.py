@@ -10,8 +10,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
+from typing import Iterator
+from uuid import uuid4
 
+from filelock import FileLock
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from onebrief.development_toolpack import (
@@ -772,6 +776,210 @@ class ApprovedProjectDevelopmentToolPack:
         if head != profile.repository_head_sha:
             raise RuntimeError("repository HEAD changed after ToolPack approval")
         return profile, head
+
+    @staticmethod
+    def _uses_unity_runtime(profile: object) -> bool:
+        return any(
+            item.enabled and item.adapter_id in {
+                AdapterId.UNITY_COMPILE,
+                AdapterId.UNITY_EDITMODE_TESTS,
+                AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+                AdapterId.UNITY_LAYOUT_DIAGNOSTICS,
+            }
+            for item in profile.adapters
+        )
+
+    def _unity_workspace_key(self, profile: object, head: str) -> str:
+        """Bind a reusable Library to the exact source and Unity toolchain."""
+
+        digest = hashlib.sha256()
+        digest.update(str(self.root).casefold().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(head.encode("ascii"))
+        for relative in (
+            "ProjectSettings/ProjectVersion.txt",
+            "Packages/manifest.json",
+            "Packages/packages-lock.json",
+        ):
+            digest.update(relative.encode("utf-8"))
+            digest.update(b"\0")
+            try:
+                digest.update(self._blob(head, relative))
+            except RuntimeError:
+                digest.update(b"<missing>")
+            digest.update(b"\0")
+        adapters = [
+            {
+                "adapter_id": item.adapter_id.value,
+                "evidence": str(item.evidence),
+                "parameter": str(item.parameter),
+            }
+            for item in profile.adapters
+            if item.enabled and item.adapter_id.value.startswith("unity_")
+        ]
+        digest.update(json.dumps(
+            adapters, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8"))
+        return digest.hexdigest()
+
+    @staticmethod
+    def _write_workspace_marker(path: Path, payload: dict[str, object]) -> None:
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+
+    def _restore_unity_workspace_candidate(
+        self,
+        clone: Path,
+        head: str,
+        previous_paths: list[str],
+    ) -> None:
+        """Restore only model-owned paths while preserving Unity's ignored Library."""
+
+        for relative in previous_paths:
+            pure = generic_safe_relative(relative)
+            if self.approved_edit_path(relative) is None:
+                raise PermissionError(
+                    f"cached workspace contains an unapproved prior path: {relative}"
+                )
+            target = (clone / Path(*pure.parts)).resolve()
+            if not target.is_relative_to(clone) or target.is_symlink():
+                raise PermissionError(f"unsafe cached development path: {relative}")
+            try:
+                committed = self._blob(head, relative)
+            except RuntimeError:
+                if target.is_file():
+                    target.unlink()
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(committed)
+
+        for relative in (
+            "onebrief-playmode-visual-results.xml",
+            "onebrief-editmode-test-results.xml",
+            "onebrief-compile.log",
+            "onebrief-editmode.log",
+            "onebrief-playmode-visual.log",
+            "onebrief-layout-diagnostics.log",
+        ):
+            target = clone / relative
+            if target.is_file():
+                target.unlink()
+        evidence = (clone / "onebrief-evidence").resolve()
+        if evidence.is_relative_to(clone) and evidence.is_dir():
+            shutil.rmtree(evidence)
+
+    def _unity_workspace_scope(self, output_dir: Path) -> str:
+        """Return the oldest durable continuation ID for this isolated run."""
+
+        job_dir = output_dir.parent.parent.resolve()
+        jobs_root = job_dir.parent.resolve()
+        current = job_dir
+        seen: set[str] = set()
+        while current.parent == jobs_root and current.name not in seen:
+            seen.add(current.name)
+            manifest_path = current / "work" / "continuation_manifest.json"
+            if not manifest_path.is_file():
+                break
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                break
+            source_id = str(manifest.get("source_job_id") or "")
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", source_id):
+                break
+            source = (jobs_root / source_id).resolve()
+            if source.parent != jobs_root or not source.is_dir():
+                break
+            current = source
+        return hashlib.sha256(
+            (str(jobs_root).casefold() + "\0" + current.name + "\0" + self.project_id)
+            .encode("utf-8")
+        ).hexdigest()[:20]
+
+    @contextmanager
+    def _isolated_workspace(
+        self,
+        profile: object,
+        head: str,
+        output_dir: Path,
+        candidate_paths: list[str],
+    ) -> Iterator[tuple[Path, Path]]:
+        """Use an ephemeral clone normally and a per-job persistent Unity clone.
+
+        The persistent clone is never shared across jobs. Only ignored Unity
+        imports survive between revisions; every provider-owned path is reset
+        to the immutable approved HEAD before the next candidate is applied.
+        """
+
+        if not self._uses_unity_runtime(profile):
+            with tempfile.TemporaryDirectory(prefix="onebrief_project_dev_") as temporary:
+                parent = Path(temporary)
+                clone = parent / "repository"
+                self._git(
+                    "clone", "--local", "--no-hardlinks", str(self.root), str(clone),
+                    cwd=parent,
+                )
+                yield parent, clone
+            return
+
+        configured_root = os.environ.get("ONEBRIEF_UNITY_WORKSPACE_ROOT")
+        cache_root = Path(
+            configured_root
+            or (
+                Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir())
+                / "OneBrief" / "unity-workspaces"
+            )
+        ).resolve()
+        scope_id = self._unity_workspace_scope(output_dir)
+        workspace = (cache_root / scope_id).resolve()
+        if not workspace.is_relative_to(cache_root):
+            raise PermissionError("Unity workspace escaped the dedicated cache root")
+        workspace.mkdir(parents=True, exist_ok=True)
+        clone = workspace / "repository"
+        marker_path = workspace / "workspace.json"
+        expected_key = self._unity_workspace_key(profile, head)
+        lock = FileLock(str(workspace / ".workspace.lock"), timeout=30)
+        with lock:
+            marker: dict[str, object] = {}
+            if marker_path.is_file():
+                try:
+                    loaded = json.loads(marker_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        marker = loaded
+                except json.JSONDecodeError:
+                    marker = {}
+            reusable = (
+                clone.is_dir()
+                and marker.get("workspace_key") == expected_key
+                and marker.get("source_head") == head
+            )
+            if not reusable:
+                if clone.exists():
+                    quarantine = workspace / f"repository.stale.{uuid4().hex}"
+                    clone.replace(quarantine)
+                self._git(
+                    "clone", "--local", "--no-hardlinks", str(self.root), str(clone),
+                    cwd=workspace,
+                )
+                marker = {
+                    "schema_version": "onebrief-unity-workspace-v1",
+                    "workspace_key": expected_key,
+                    "source_head": head,
+                    "changed_paths": [],
+                }
+            previous_paths = marker.get("changed_paths", [])
+            if not isinstance(previous_paths, list) or not all(
+                isinstance(item, str) for item in previous_paths
+            ):
+                raise RuntimeError("cached Unity workspace marker is invalid")
+            self._restore_unity_workspace_candidate(clone, head, previous_paths)
+            marker["changed_paths"] = list(candidate_paths)
+            self._write_workspace_marker(marker_path, marker)
+            yield workspace, clone
 
     def approved_edit_path(self, value: str) -> str | None:
         try:
@@ -1584,6 +1792,21 @@ class ApprovedProjectDevelopmentToolPack:
                     "render the real scene UI to a RenderTexture, read pixels, EncodeToPNG, and "
                     "File.WriteAllBytes synchronously"
                 )
+            if "readpixels" in structural and not (
+                (
+                    "new unityengine.rendertexture" in structural
+                    or "new rendertexture" in structural
+                    or "rendertexture.gettemporary" in structural
+                )
+                and "rendertexture.active" in structural
+                and ".targettexture" in structural
+                and ".render()" in structural
+            ):
+                issues.append(
+                    "Texture2D.ReadPixels must not read the system framebuffer in Unity batchmode; "
+                    "render the real scene UI through a camera target RenderTexture, set RenderTexture.active, "
+                    "then ReadPixels, EncodeToPNG, and File.WriteAllBytes synchronously"
+                )
             if "waitforendofframe" in structural:
                 issues.append(
                     "Unity batchmode does not evoke WaitForEndOfFrame; use a batch-safe yield or "
@@ -2035,9 +2258,10 @@ class ApprovedProjectDevelopmentToolPack:
                 raise PermissionError(f"path is outside the approved project source area: {change.path}")
         output_dir = output_dir.resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix="onebrief_project_dev_") as temporary:
-            clone = Path(temporary) / "repository"
-            self._git("clone", "--local", "--no-hardlinks", str(self.root), str(clone), cwd=Path(temporary))
+        candidate_paths = [item.path for item in change_set.changes]
+        with self._isolated_workspace(
+            profile, head, output_dir, candidate_paths
+        ) as (temporary, clone):
             new_paths: list[str] = []
             for change in change_set.changes:
                 pure = generic_safe_relative(change.path)
