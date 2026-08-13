@@ -23,6 +23,7 @@ from onebrief.schemas import ToolPackId
 from onebrief.toolpack_lifecycle import AdapterId, ProjectToolPackLifecycle
 from onebrief.toolpacks import execute_toolpacks
 from onebrief.execution_agents import DeveloperAgent
+from onebrief.unity_runtime_evidence import requested_ui_surfaces
 
 
 def _git(root: Path, *args: str) -> str:
@@ -833,6 +834,34 @@ def test_unity_visual_preflight_does_not_leak_future_language_contract_into_logi
     assert not any("LanguageDropdown" in issue for issue in issues)
     assert not any("glyph" in issue.lower() for issue in issues)
     assert not any("responsive Unity visual evidence" in issue for issue in issues)
+
+
+def test_unity_verification_intent_excludes_future_scope_named_only_in_constraints() -> None:
+    contract = json.dumps({
+        "goal": "Milestone M01: modernize Login and reach Lobby.",
+        "desired_output": "Login to Lobby evidence only.",
+        "completion_contract": {
+            "target_state": "Login reaches Lobby through the preserved authentication path.",
+            "quality_criteria": [{
+                "description": "Login surface and authentication transition work",
+                "evidence_required": "Login to Lobby PlayMode evidence",
+            }],
+        },
+        "project_architecture": {
+            "constraints": [
+                "Do not implement or demand evidence for future Settings UI modernization."
+            ],
+        },
+        "assumptions": [
+            "The finished product will later need responsive mobile/desktop localization."
+        ],
+    })
+
+    intent = ApprovedProjectDevelopmentToolPack._unity_verification_intent(contract)
+
+    assert requested_ui_surfaces(intent) == {"login", "lobby"}
+    assert "settings" not in intent.casefold()
+    assert "mobile" not in intent.casefold()
 
 
 def test_unity_visual_preflight_allows_temporary_capture_camera_but_rejects_synthetic_canvas(tmp_path: Path) -> None:

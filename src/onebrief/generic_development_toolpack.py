@@ -2487,6 +2487,12 @@ class ApprovedProjectDevelopmentToolPack:
                 change_set.summary,
                 *(item.reason for item in change_set.changes),
             ])
+            # The serialized verification contract can contain assumptions,
+            # future-milestone prohibitions, and architecture notes.  Those
+            # words are useful context for the maker but must never expand the
+            # executable evidence scope.  Unity adapters consume only the
+            # active goal, deliverables, and completion contract projection.
+            unity_goal_text = self._unity_verification_intent(goal_text)
             hygiene_failure: RuntimeError | None = None
             try:
                 self._git("diff", "--check", "--", *approved_paths, cwd=clone)
@@ -2508,7 +2514,7 @@ class ApprovedProjectDevelopmentToolPack:
             if any(
                 item.enabled and item.adapter_id == AdapterId.UNITY_LAYOUT_DIAGNOSTICS
                 for item in profile.adapters
-            ) and self._requires_unity_visual_runtime(goal_text):
+            ) and self._requires_unity_visual_runtime(unity_goal_text):
                 install_unity_layout_diagnostic_source(clone)
             dependency_results, repaired_locks = self._restore_node_dependencies(profile, clone)
             for repaired in repaired_locks:
@@ -2518,7 +2524,10 @@ class ApprovedProjectDevelopmentToolPack:
                     )
                 if repaired not in approved_paths:
                     approved_paths.append(repaired)
-            commands = self._commands(profile, clone, goal_text)
+            command_goal_text = (
+                unity_goal_text if self._uses_unity_runtime(profile) else goal_text
+            )
+            commands = self._commands(profile, clone, command_goal_text)
             results = dependency_results + [
                 self.runner(command_id, argv, clone, timeout)
                 for command_id, argv, timeout in commands
@@ -2634,7 +2643,7 @@ class ApprovedProjectDevelopmentToolPack:
                     clone,
                     clone / "onebrief-playmode-visual-results.xml",
                     evidence_dir,
-                    goal_text,
+                    unity_goal_text,
                 )
                 manifest_path = evidence_dir / "runtime-evidence.json"
                 manifest_artifact = ArtifactReference(
