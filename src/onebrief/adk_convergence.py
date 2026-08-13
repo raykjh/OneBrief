@@ -221,9 +221,8 @@ class AdkConvergenceAgent(BaseAgent):
                             binding = {
                                 **dict(binding),
                                 "model": previous_binding.get("model"),
-                                "stage": (
-                                    str(previous_binding.get("stage", "long_form_draft"))
-                                    + f"_continued_r{round_number}"
+                                "stage": previous_binding.get(
+                                    "stage", "long_form_draft"
                                 ),
                                 "sticky_escalation": True,
                                 "prior_binding": dict(previous_binding),
