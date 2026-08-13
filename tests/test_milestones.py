@@ -122,7 +122,7 @@ def test_plan_assigns_every_criterion_once_and_finishes_with_full_regression() -
 def test_scoped_requirements_revalidate_passed_dependencies() -> None:
     plan = _plan()
     requirements = _requirements()
-    settings = next(item for item in plan.milestones if "Secondary" in item.title)
+    settings = next(item for item in plan.milestones if "Settings vertical" in item.title)
     scoped = requirements_for_milestone(requirements, settings)
     selected = {
         item.criterion_id for item in scoped.completion_contract.quality_criteria
@@ -130,6 +130,27 @@ def test_scoped_requirements_revalidate_passed_dependencies() -> None:
     assert set(settings.contract.primary_criterion_ids).issubset(selected)
     assert "Q01" in selected
     assert "unrelated future scope" in scoped.normalized_goal
+
+
+def test_unity_flow_is_decomposed_into_real_vertical_slices() -> None:
+    plan = _plan()
+    titles = [item.title for item in plan.milestones]
+    assert titles[:5] == [
+        "Immutable approved baseline",
+        "Login vertical slice",
+        "Lobby vertical slice",
+        "Settings vertical slice and complete flow",
+        "Presentation and adaptability",
+    ]
+    lobby = plan.milestones[2]
+    assert lobby.contract.primary_criterion_ids == []
+    assert [item.criterion_id for item in lobby.contract.slice_quality_criteria] == [
+        "Q91", "Q92"
+    ]
+    scoped = requirements_for_milestone(_requirements(), lobby)
+    assert [item.criterion_id for item in scoped.completion_contract.quality_criteria] == [
+        "Q01", "Q91", "Q92"
+    ]
 
 
 def test_checkpoints_are_idempotent_and_dependency_bound(tmp_path: Path) -> None:

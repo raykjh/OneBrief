@@ -112,6 +112,9 @@ criteria into a `MilestonePlan` of independently executable vertical slices. Thi
 cannot invent scope or weaken a criterion:
 
 - every overall criterion has exactly one primary milestone owner;
+- coarse end-to-end criteria may be preceded by explicit derived slice criteria
+  (for example Login, Lobby, then Settings) so partial work is executable without
+  pretending the parent criterion has already passed;
 - each later slice revalidates the passed criteria on which it depends;
 - every PASS receipt binds the milestone contract, source revisions, dependency
   checkpoint IDs, candidate digest, and evidence digests;

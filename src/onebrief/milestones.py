@@ -27,6 +27,7 @@ from onebrief.generic_development_toolpack import ProjectCodeChangeSet, ProjectF
 from onebrief.project_import import ExternalProjectImporter, MANIFEST_NAME, ProjectManifest
 from onebrief.schemas import (
     CompletionContract,
+    EvaluationMode,
     IntakeRequest,
     InternalSource,
     QualityCriterion,
@@ -102,6 +103,7 @@ class MilestoneCompletionContract(BaseModel):
     target_state: str = Field(min_length=3, max_length=1200)
     primary_criterion_ids: list[str] = Field(default_factory=list, max_length=12)
     criterion_ids: list[str] = Field(default_factory=list, max_length=12)
+    slice_quality_criteria: list[QualityCriterion] = Field(default_factory=list, max_length=6)
     deliverables: list[str] = Field(min_length=1, max_length=12)
     evidence_requirements: list[str] = Field(min_length=1, max_length=20)
     verification_scope: VerificationScope
@@ -113,6 +115,11 @@ class MilestoneCompletionContract(BaseModel):
             raise ValueError("primary milestone criteria must be included in its verification contract")
         if len(self.criterion_ids) != len(set(self.criterion_ids)):
             raise ValueError("milestone criterion IDs must be unique")
+        all_ids = [*self.criterion_ids, *(
+            item.criterion_id for item in self.slice_quality_criteria
+        )]
+        if len(all_ids) != len(set(all_ids)):
+            raise ValueError("milestone overall and slice criterion IDs must be unique")
         return self
 
 
@@ -389,35 +396,79 @@ def build_milestone_plan(
             remaining.pop(item.criterion_id, None)
         return selected
 
-    compile_items = take(("compil", "build success", "컴파일", "빌드 성공"))
-    flow_items = take(("flow", "navigation", "login", "lobby", "화면 이동", "로그인", "로비"))
-    settings_items = take(("settings", "volume", "bgm", "sfx", "설정", "음량"))
     presentation_items = take((
         "responsive", "visual style", "glyph", "localization", "layout", "rendered",
         "반응형", "시각", "글리프", "다국어", "레이아웃",
     ))
+    settings_items = take(("settings", "volume", "bgm", "sfx", "설정", "음량"))
+    flow_items = take(("flow", "navigation", "login", "lobby", "화면 이동", "로그인", "로비"))
+    compile_items = take(("compil", "build success", "컴파일", "빌드 성공"))
     preservation_items = take((
         "regression", "preserv", "unmodified", "isolated", "do not modify",
         "회귀", "보존", "원본", "격리",
     ))
-    groups: list[tuple[str, str, list[QualityCriterion]]] = []
-    if flow_items or compile_items:
+    groups: list[tuple[str, str, list[QualityCriterion], list[QualityCriterion]]] = []
+    target_text = " ".join([
+        goal,
+        requirements.normalized_goal,
+        contract.target_state,
+        *(item.description for item in criteria),
+    ]).casefold()
+    unity_surface_flow = (
+        "unity" in target_text
+        and all(token in target_text for token in ("login", "lobby", "settings"))
+    )
+    if unity_surface_flow:
+        groups.extend([
+            (
+                "Login vertical slice",
+                "The modernized Login surface uses the preserved authentication path and reaches Lobby in PlayMode.",
+                compile_items,
+                [QualityCriterion(
+                    criterion_id="Q91",
+                    description="Login surface and preserved authentication transition work",
+                    evaluation_mode=EvaluationMode.DETERMINISTIC,
+                    evidence_required="Unity compile output and PlayMode evidence for Login to Lobby.",
+                )],
+            ),
+            (
+                "Lobby vertical slice",
+                "The modernized Lobby renders preserved server-backed data and exposes working navigation targets.",
+                [],
+                [QualityCriterion(
+                    criterion_id="Q92",
+                    description="Lobby renders preserved data and navigation without regressions",
+                    evaluation_mode=EvaluationMode.DETERMINISTIC,
+                    evidence_required="PlayMode evidence for Lobby data, buttons, and navigation targets.",
+                )],
+            ),
+            (
+                "Settings vertical slice and complete flow",
+                "Settings controls bind to preserved client systems and the full Login to Lobby to Settings to Lobby flow works.",
+                [*flow_items, *settings_items],
+                [],
+            ),
+        ])
+    elif flow_items or compile_items:
         groups.append((
             "Executable primary flow",
             "The primary user flow works in the target runtime on a compiling candidate.",
             [*compile_items, *flow_items],
+            [],
         ))
-    if settings_items:
+    if settings_items and not unity_surface_flow:
         groups.append((
             "Secondary controls",
             "The requested secondary controls work against the preserved underlying systems.",
             settings_items,
+            [],
         ))
     if presentation_items:
         groups.append((
             "Presentation and adaptability",
             "The implemented surfaces meet the responsive, visual, and language requirements.",
             presentation_items,
+            [],
         ))
     leftovers = list(remaining.values())
     # Preserve at most four implementation passes for a medium job. This is a
@@ -428,9 +479,10 @@ def build_milestone_plan(
             "Remaining contract slice",
             "The remaining independently verifiable contract slice is implemented.",
             chunk,
+            [],
         ))
     if not groups:
-        groups.append(("Requested outcome", contract.target_state, criteria))
+        groups.append(("Requested outcome", contract.target_state, criteria, []))
 
     milestones: list[MilestoneSpec] = [MilestoneSpec(
         milestone_id="M00",
@@ -448,13 +500,15 @@ def build_milestone_plan(
         budget_weight=0.01,
     )]
     cumulative: list[str] = []
+    cumulative_slice_criteria: list[QualityCriterion] = []
     previous = "M00"
     implementation_count = len(groups)
     working_fraction = 0.84
     per_group = working_fraction / max(1, implementation_count)
-    for index, (title, outcome, primary) in enumerate(groups, start=1):
+    for index, (title, outcome, primary, slice_criteria) in enumerate(groups, start=1):
         primary_ids = [item.criterion_id for item in primary]
         cumulative.extend(primary_ids)
+        cumulative_slice_criteria.extend(slice_criteria)
         inherited = [
             item.criterion_id for item in criteria
             if item.criterion_id in cumulative
@@ -474,8 +528,15 @@ def build_milestone_plan(
                 target_state=outcome,
                 primary_criterion_ids=primary_ids,
                 criterion_ids=inherited,
+                slice_quality_criteria=list(cumulative_slice_criteria),
                 deliverables=[f"Verified vertical slice: {title}"],
-                evidence_requirements=evidence or ["Executable evidence for the milestone outcome"],
+                evidence_requirements=(
+                    [
+                        *evidence,
+                        *(item.evidence_required for item in cumulative_slice_criteria),
+                    ]
+                    or ["Executable evidence for the milestone outcome"]
+                ),
                 verification_scope=(
                     VerificationScope.TARGETED if index == 1 else VerificationScope.AFFECTED
                 ),
@@ -535,6 +596,7 @@ def requirements_for_milestone(
         item for item in contract.quality_criteria
         if item.criterion_id in milestone.contract.criterion_ids
     ]
+    selected.extend(milestone.contract.slice_quality_criteria)
     scoped = CompletionContract(
         target_state=milestone.contract.target_state,
         quality_criteria=selected,
