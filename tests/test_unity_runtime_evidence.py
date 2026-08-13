@@ -331,7 +331,12 @@ def test_invalid_manifest_exposes_actionable_schema_failure(tmp_path: Path) -> N
         '{"status":"passed","screenshot_captured":true}', encoding="utf-8"
     )
 
-    with pytest.raises(RuntimeError, match="scenarios"):
+    with pytest.raises(RuntimeError, match="scenarios") as failure:
         validate_and_copy_unity_visual_evidence(
             tmp_path, results, tmp_path / "packaged", "Login UI"
         )
+
+    message = str(failure.value)
+    assert "scenario_id" in message
+    assert "screenshot_path" in message
+    assert "Generate the manifest and PNG captures during the test run" in message

@@ -237,7 +237,15 @@ def validate_and_copy_unity_visual_evidence(
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         detail = " ".join(str(exc).split())[:2_000]
         raise RuntimeError(
-            "Unity visual evidence manifest is invalid: " + detail
+            "Unity visual evidence manifest is invalid: "
+            + detail
+            + ". Repair the approved executed PlayMode test so it writes "
+            + "schema_version='onebrief-unity-visual-evidence-v1' and a non-empty "
+            + "scenarios array. Every scenario must include scenario_id and "
+            + "screenshot_path; for UI completion evidence also record observed_state, "
+            + "interaction, assertion_count, viewport_width, and viewport_height. "
+            + "Generate the manifest and PNG captures during the test run rather than "
+            + "adding static evidence files to the repository."
         ) from exc
 
     observed: set[str] = set()
