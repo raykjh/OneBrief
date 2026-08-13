@@ -463,6 +463,43 @@ def test_authority_preserving_evidence_repair_can_borrow_unused_reserve(
     assert summary["evidence_construction"]["borrowed_from_reserve_usd_micros"] > 0
 
 
+def test_compact_transport_retry_can_borrow_reserve_without_new_semantic_turn(
+    tmp_path: Path,
+) -> None:
+    estimate = _estimate().model_copy(update={
+        "phase_budgets": [
+            PhaseBudgetEstimate(
+                phase=ExecutionPhase.EVIDENCE_CONSTRUCTION,
+                minimum_cost_usd=0.001,
+                recommended_cost_usd=0.001,
+                maximum_cost_usd=0.001,
+                max_ai_repair_calls=1,
+                max_deterministic_attempts=2,
+            ),
+            PhaseBudgetEstimate(
+                phase=ExecutionPhase.RESERVE,
+                minimum_cost_usd=0,
+                recommended_cost_usd=0,
+                maximum_cost_usd=0,
+            ),
+        ]
+    })
+    store = BudgetStore(tmp_path / "run")
+    store.approve(estimate, 0.1)
+
+    call = store.reserve_call(
+        stage=(
+            "evidence_construction::repair::"
+            "long_form_draft_reasoning_escalation_r1_compact_retry"
+        ),
+        model="gemini-3.1-pro-preview",
+        input_token_cap=1_000,
+        output_token_cap=1_000,
+    )
+
+    assert call.phase_reserve_borrowed_usd_micros > 0
+
+
 def test_deterministic_attempts_have_a_separate_hard_limit(tmp_path: Path) -> None:
     store = BudgetStore(tmp_path)
     store.approve(_estimate(deterministic_limit=1), 0.1)

@@ -295,6 +295,21 @@ def is_ai_repair_stage(stage: str) -> bool:
     )
 
 
+def is_authority_preserving_ai_repair_reservation(stage: str) -> bool:
+    """Recognize a repair and its structured-output transport retry.
+
+    A compact retry is not another semantic repair turn, but it remains inside
+    the same approved phase and authority. It may therefore use non-editing
+    reserve without consuming another ``max_ai_repair_calls`` slot.
+    """
+
+    normalized = stage.casefold()
+    return is_ai_repair_stage(stage) or (
+        normalized.endswith("_compact_retry")
+        and any(marker in normalized for marker in ("repair", "reasoning_escalation"))
+    )
+
+
 def is_evidence_path(path: str) -> bool:
     normalized = path.replace("\\", "/").strip("/").casefold()
     parts = {part for part in PurePosixPath(normalized).parts if part}

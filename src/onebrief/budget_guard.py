@@ -23,6 +23,7 @@ from onebrief.phase_execution import (
     allocate_phase_policy,
     deterministic_attempt,
     is_ai_repair_stage,
+    is_authority_preserving_ai_repair_reservation,
     phase_attempt_ledger_sha256,
     phase_for_stage,
     phase_policy_sha256,
@@ -395,7 +396,9 @@ class BudgetStore:
                         # may borrow unused reserve instead of stopping over a
                         # tiny phase-estimation error. A new product stage or
                         # broader authority still requires a new decision.
-                        approved_repair = is_ai_repair_stage(stage)
+                        approved_repair = is_authority_preserving_ai_repair_reservation(
+                            stage
+                        )
                         if (
                             phase != ExecutionPhase.RESERVE
                             and approved_repair
