@@ -52,12 +52,43 @@ class BoundedRepairResumePlan(BaseModel):
     reused_artifacts: list[str]
 
 
+def _development_lineage_work_dirs(work: Path) -> list[Path]:
+    """Return immediate then ancestor work dirs from bounded continuation receipts."""
+
+    current_job = work.resolve().parent
+    jobs_dir = current_job.parent.resolve()
+    result: list[Path] = []
+    seen: set[Path] = set()
+    for _ in range(32):
+        current_work = current_job / "work"
+        if current_job in seen or not current_work.is_dir():
+            break
+        seen.add(current_job)
+        result.append(current_work)
+        manifest_path = current_work / "continuation_manifest.json"
+        try:
+            parent_id = str(json.loads(
+                manifest_path.read_text(encoding="utf-8")
+            ).get("source_job_id", ""))
+        except (OSError, json.JSONDecodeError, AttributeError, TypeError):
+            break
+        if not parent_id or Path(parent_id).name != parent_id:
+            break
+        parent_job = (jobs_dir / parent_id).resolve()
+        if parent_job.parent != jobs_dir:
+            break
+        current_job = parent_job
+    return result
+
+
 def _most_progressed_development_pair(work: Path) -> tuple[Path, Path]:
-    """Choose the verifier-demonstrated checkpoint, including newer rounds.
+    """Choose the verifier-demonstrated checkpoint across the durable lineage.
 
     An explicit best checkpoint can become stale when the progress rank itself
-    is corrected.  Comparing it with every complete candidate/failure pair
-    makes continuation self-healing without trusting model-authored claims.
+    is corrected, and an immediate child may have resumed the wrong older
+    checkpoint. Comparing every complete candidate/failure pair in the bounded
+    lineage makes continuation self-healing without trusting model-authored
+    claims or copying unverified model state from unrelated runs.
     """
     recovery = work / "operator_recovery.json"
     recovered_candidate = work / "code_change_set.json"
@@ -76,31 +107,34 @@ def _most_progressed_development_pair(work: Path) -> tuple[Path, Path]:
         ):
             return recovered_candidate, recovered_failure
 
-    pairs: list[tuple[tuple[int, int], int, Path, Path]] = []
-    best_candidate = work / "development_best_candidate.json"
-    best_failure = work / "development_best_failure.txt"
-    if best_candidate.is_file() and best_failure.is_file():
-        pairs.append((
-            development_failure_quality(best_failure.read_text("utf-8")),
-            -1,
-            best_candidate,
-            best_failure,
-        ))
-    for candidate in work.glob("code_change_set_r*.json"):
-        suffix = candidate.stem.removeprefix("code_change_set_r")
-        if not suffix.isdigit():
-            continue
-        failure = work / f"development_verification_failure_r{suffix}.txt"
-        if failure.is_file():
+    pairs: list[tuple[tuple[int, int], int, int, Path, Path]] = []
+    for depth, candidate_work in enumerate(_development_lineage_work_dirs(work)):
+        best_candidate = candidate_work / "development_best_candidate.json"
+        best_failure = candidate_work / "development_best_failure.txt"
+        if best_candidate.is_file() and best_failure.is_file():
             pairs.append((
-                development_failure_quality(failure.read_text("utf-8")),
-                int(suffix),
-                candidate,
-                failure,
+                development_failure_quality(best_failure.read_text("utf-8")),
+                -depth,
+                -1,
+                best_candidate,
+                best_failure,
             ))
+        for candidate in candidate_work.glob("code_change_set_r*.json"):
+            suffix = candidate.stem.removeprefix("code_change_set_r")
+            if not suffix.isdigit():
+                continue
+            failure = candidate_work / f"development_verification_failure_r{suffix}.txt"
+            if failure.is_file():
+                pairs.append((
+                    development_failure_quality(failure.read_text("utf-8")),
+                    -depth,
+                    int(suffix),
+                    candidate,
+                    failure,
+                ))
     if pairs:
-        _quality, _round, candidate, failure = max(
-            pairs, key=lambda item: (item[0], item[1])
+        _quality, _depth, _round, candidate, failure = max(
+            pairs, key=lambda item: (item[0], item[1], item[2])
         )
         return candidate, failure
     return (
@@ -723,16 +757,17 @@ def create_bounded_repair_resume(
         shutil.copy2(candidate, child_work / "code_change_set.json")
         shutil.copy2(failure, child_work / "development_verification_failure.txt")
         reused.extend([candidate.name, failure.name])
-        operator_recovery = source_work / "operator_recovery.json"
+        candidate_work = candidate.parent
+        operator_recovery = candidate_work / "operator_recovery.json"
         if operator_recovery.is_file():
             shutil.copy2(operator_recovery, child_work / operator_recovery.name)
             reused.append(operator_recovery.name)
         trusted_failure = _trusted_semantic_failure_receipt(
-            source_work, candidate, failure
+            candidate_work, candidate, failure
         )
         if trusted_failure is None:
             trusted_failure = _trusted_static_topology_failure_receipt(
-                source_work, candidate, failure
+                candidate_work, candidate, failure
             )
     rejected_fingerprints = discover_rejected_change_fingerprints(source_work)
     if rejected_fingerprints:

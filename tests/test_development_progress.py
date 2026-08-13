@@ -82,6 +82,22 @@ def test_viewport_contract_remains_a_static_failure() -> None:
     )
 
 
+def test_overlay_and_explicit_viewport_failure_outranks_system_framebuffer_failure() -> None:
+    framebuffer = (
+        "development verification failed: Unity visual test contract: "
+        "Texture2D.ReadPixels must not read the system framebuffer in Unity batchmode"
+    )
+    overlay_and_viewport = (
+        "development verification failed: Unity visual test contract: a camera RenderTexture "
+        "does not capture ScreenSpaceOverlay UI | Unity visual test contract: responsive Unity "
+        "batchmode evidence must pass each requested viewport width and height directly into capture"
+    )
+
+    assert development_failure_quality(overlay_and_viewport) > development_failure_quality(
+        framebuffer
+    )
+
+
 def test_semantic_visual_failure_outranks_structural_runtime_evidence() -> None:
     semantic = "independent Unity semantic visual observation failed: mobile UI is clipped"
     evidence = "Unity runtime evidence validation failed: missing scenario"

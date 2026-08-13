@@ -49,10 +49,20 @@ def development_failure_quality(message: str) -> tuple[int, int]:
         stage = 5
     elif "http" in normalized and "failed" in normalized:
         stage = 4
-    elif (
-        "unity visual test contract" in normalized
-        or "static" in normalized and "verification" in normalized
-    ):
+    elif "unity visual test contract" in normalized:
+        # Static checks are themselves a finite ladder. Reaching camera-backed
+        # capture and then exposing overlay/viewport defects is later progress
+        # than still reading the system framebuffer. Treating both as the same
+        # stage let the older one-clause failure win merely because it reported
+        # fewer blockers, so continuation regressed to an already-fixed state.
+        if any(marker in normalized for marker in (
+            "does not capture screenspaceoverlay ui",
+            "responsive unity batchmode evidence must pass each requested viewport",
+        )):
+            stage = 3
+        else:
+            stage = 2
+    elif "static" in normalized and "verification" in normalized:
         stage = 2
     elif "development verification failed" in normalized:
         stage = 3

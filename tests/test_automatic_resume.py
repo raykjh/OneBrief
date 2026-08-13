@@ -775,6 +775,41 @@ def test_missing_system_visual_observer_resumes_latest_runtime_candidate(
     assert "system_observation_failure" in plan.reused_artifacts
 
 
+def test_most_progressed_pair_can_recover_a_better_ancestor_checkpoint(tmp_path: Path) -> None:
+    jobs = tmp_path / "jobs"
+    parent = jobs / "parent"
+    child = jobs / "child"
+    parent_work = parent / "work"
+    child_work = child / "work"
+    parent_work.mkdir(parents=True)
+    child_work.mkdir(parents=True)
+    (parent_work / "development_best_candidate.json").write_text(
+        '{"candidate":"camera-backed"}', encoding="utf-8"
+    )
+    (parent_work / "development_best_failure.txt").write_text(
+        "development verification failed: Unity visual test contract: a camera RenderTexture "
+        "does not capture ScreenSpaceOverlay UI | Unity visual test contract: responsive Unity "
+        "batchmode evidence must pass each requested viewport width and height directly into capture",
+        encoding="utf-8",
+    )
+    (child_work / "development_best_candidate.json").write_text(
+        '{"candidate":"system-framebuffer"}', encoding="utf-8"
+    )
+    (child_work / "development_best_failure.txt").write_text(
+        "development verification failed: Unity visual test contract: Texture2D.ReadPixels "
+        "must not read the system framebuffer in Unity batchmode",
+        encoding="utf-8",
+    )
+    (child_work / "continuation_manifest.json").write_text(
+        json.dumps({"source_job_id": "parent"}), encoding="utf-8"
+    )
+
+    candidate, failure = _most_progressed_development_pair(child_work)
+
+    assert candidate == parent_work / "development_best_candidate.json"
+    assert "ScreenSpaceOverlay" in failure.read_text(encoding="utf-8")
+
+
 def test_truncated_compact_repair_can_resume_from_preserved_candidate(tmp_path: Path) -> None:
     job = tmp_path / "truncated-repair"
     _failed_job(job)
