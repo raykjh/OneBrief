@@ -75,8 +75,32 @@ class ModelExecutionPolicy(BaseModel):
     stage_model_ladders: dict[str, list[ApprovedModel]] = Field(default_factory=dict)
 
     @staticmethod
+    def _unqualify_phase_stage(stage: str) -> str:
+        """Return the approved logical stage behind a bounded phase route.
+
+        Phase-qualified stages are execution/audit identities, not new model
+        capabilities.  Only the exact namespaces emitted by the phase router
+        are removed here; an unknown namespace remains unbound and is rejected
+        by ``model_for``.
+        """
+
+        parts = stage.split("::")
+        phase_names = {
+            "shared_context",
+            "product_implementation",
+            "evidence_construction",
+            "final_verification",
+            "reserve",
+        }
+        if len(parts) >= 2 and parts[0] in phase_names:
+            parts = parts[1:]
+        if len(parts) >= 2 and parts[0] == "repair":
+            parts = parts[1:]
+        return parts[0] if len(parts) == 1 else stage
+
+    @staticmethod
     def _base_stage(stage: str) -> tuple[str, bool]:
-        base_stage = stage
+        base_stage = ModelExecutionPolicy._unqualify_phase_stage(stage)
         terminal_retry = re.compile(r"(?:_compact_retry|_verification_retry)$")
         while terminal_retry.search(base_stage):
             base_stage = terminal_retry.sub("", base_stage)

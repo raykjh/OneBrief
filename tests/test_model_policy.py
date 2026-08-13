@@ -227,6 +227,37 @@ def test_gateway_allows_only_exact_stage_model_binding() -> None:
     assert raw.calls == [("evidence_analysis", "gemini-3.5-flash-lite")]
 
 
+def test_phase_qualified_runtime_stage_uses_approved_logical_binding() -> None:
+    policy = _escalation_policy().model_copy(update={
+        "stage_models": {
+            **_escalation_policy().stage_models,
+            "independent_verification": ApprovedModel.GEMINI_3_1_PRO_PREVIEW,
+        }
+    })
+
+    assert policy.model_for(
+        "product_implementation::long_form_draft"
+    ) == "gemini-3.5-flash"
+    assert policy.model_for(
+        "evidence_construction::repair::long_form_draft"
+    ) == "gemini-3.5-flash"
+    assert policy.model_for(
+        "final_verification::independent_verification"
+    ) == "gemini-3.1-pro-preview"
+    assert policy.model_for(
+        "product_implementation::repair::long_form_draft_reasoning_escalation_r2"
+    ) == "gemini-3.1-pro-preview"
+
+
+def test_unknown_phase_stage_namespace_cannot_smuggle_a_model_binding() -> None:
+    policy = _escalation_policy()
+
+    with pytest.raises(PermissionError, match="no approved model binding"):
+        policy.model_for("product_implementation::unapproved::long_form_draft")
+    with pytest.raises(PermissionError, match="no approved model binding"):
+        policy.model_for("unapproved_phase::long_form_draft")
+
+
 def test_gateway_applies_model_policy_to_multimodal_observation() -> None:
     raw = RecordingGateway()
     policy = _policy().model_copy(update={
