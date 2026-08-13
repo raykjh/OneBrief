@@ -2,6 +2,7 @@
 .git
 .git/**
 .venv/**
+output/**
 benchmarks/**
 .test-tmp*/**
 independent_observations/**
