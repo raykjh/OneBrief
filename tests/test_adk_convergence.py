@@ -14,6 +14,7 @@ from typing_extensions import override
 from onebrief.adk_convergence import (
     MAKER_STATE_KEY,
     MAKER_MODEL_BINDING_STATE_KEY,
+    MAKER_SCHEMA_BINDING_STATE_KEY,
     REVERIFY_EXISTING_STATE_KEY,
     EXACT_EDIT_ANCHORS_STATE_KEY,
     REPAIR_CONTRACT_STATE_KEY,
@@ -460,3 +461,77 @@ def test_same_adk_maker_changes_model_rung_after_verified_failure() -> None:
     ]
     assert state[MAKER_MODEL_BINDING_STATE_KEY]["model"] == "pro-maker-model"
     assert [event["author"] for event in trace].count("onebrief_maker") == 2
+
+
+def test_same_adk_maker_switches_to_an_atomic_output_schema_after_failure() -> None:
+    from onebrief.generic_development_toolpack import (
+        AtomicUnityEvidenceBundle,
+        ProposedProjectCodeChangeSet,
+    )
+
+    class StubGateway(BudgetedGeminiClient):
+        def __init__(self) -> None:
+            self.schemas: list[str] = []
+            self.outputs = [
+                ProposedProjectCodeChangeSet.model_validate({
+                    "summary": "Initial product change.",
+                    "changes": [{
+                        "path": "Assets/UI/Settings.cs",
+                        "base_sha256": "a" * 64,
+                        "search": "old",
+                        "replace": "new",
+                        "reason": "Modernize the product UI.",
+                    }],
+                }).model_dump(mode="json"),
+                _report(Verdict.REVISE),
+                AtomicUnityEvidenceBundle.model_validate({
+                    "summary": "Atomic test harness.",
+                    "playmode_test": {
+                        "path": "Assets/Tests/PlayMode/Flow.cs",
+                        "content": "namespace OneBrief.Visual { public class Flow {} }",
+                        "reason": "Prove the runtime flow.",
+                    },
+                    "test_assembly": {
+                        "path": "Assets/Tests/PlayMode/Flow.asmdef",
+                        "content": '{"optionalUnityReferences":["TestAssemblies"]}',
+                        "reason": "Discover the runtime test.",
+                    },
+                }).model_dump(mode="json"),
+                _report(Verdict.PASS),
+            ]
+
+        def generate_adk_response(self, **kwargs: Any) -> types.GenerateContentResponse:
+            schema = getattr(kwargs["config"], "response_schema", None)
+            self.schemas.append(getattr(schema, "__name__", str(schema)))
+            payload = self.outputs.pop(0)
+            return types.GenerateContentResponse(candidates=[types.Candidate(
+                content=types.Content(
+                    role="model", parts=[types.Part(text=json.dumps(payload))]
+                ),
+                finish_reason=types.FinishReason.STOP,
+            )])
+
+    def select_schema(report, _ctx, _round):
+        return AtomicUnityEvidenceBundle if report is not None else None
+
+    gateway = StubGateway()
+    agent = build_text_convergence_agent(
+        gateway=gateway,
+        maker_model="maker-model",
+        verifier_model="verifier-model",
+        maker_schema=ProposedProjectCodeChangeSet,
+        max_revision_rounds=2,
+        maker_instruction="Create the product, then its proof.",
+        verifier_instruction="Verify it.",
+        maker_schema_selector=select_schema,
+    )
+
+    state, _trace = asyncio.run(run_convergence_agent(agent, {"goal": "Finish it."}))
+
+    assert gateway.schemas == [
+        "ProposedProjectCodeChangeSet",
+        "VerificationReport",
+        "AtomicUnityEvidenceBundle",
+        "VerificationReport",
+    ]
+    assert state[MAKER_SCHEMA_BINDING_STATE_KEY] == "AtomicUnityEvidenceBundle"

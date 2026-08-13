@@ -61,6 +61,7 @@ from onebrief.development_change_tracking import (
     write_rejected_change_fingerprints,
 )
 from onebrief.generic_development_toolpack import (
+    AtomicUnityEvidenceBundle,
     AnchoredRangeRepairProjectCodeChangeSet,
     ApprovedProjectDevelopmentToolPack,
     CompactProposedProjectCodeChangeSet,
@@ -1690,6 +1691,8 @@ class ExecutionPipeline:
                 RepairContract.model_validate(active_contract_payload)
                 if active_contract_payload else None
             )
+            if isinstance(raw, AtomicUnityEvidenceBundle):
+                raw = raw.as_change_set()
             proposed_paths = [
                 str(getattr(item, "path", "")).replace("\\", "/")
                 for item in getattr(raw, "changes", [])
@@ -2515,6 +2518,19 @@ class ExecutionPipeline:
                 "round_number": round_number,
                 "decision": selection.model_dump(mode="json"),
             }
+
+        def select_maker_schema(
+            report: VerificationReport | None, _ctx, _round_number: int
+        ) -> type | None:
+            if report is None or report.verdict != Verdict.REVISE:
+                return None
+            feedback = " | ".join([
+                *report.blocking_issues,
+                *report.revision_instructions,
+            ])
+            if requires_atomic_unity_evidence_pair(feedback):
+                return AtomicUnityEvidenceBundle
+            return None
         agent = build_text_convergence_agent(
             gateway=self.gateway,
             maker_model=maker_model,
@@ -2554,6 +2570,7 @@ class ExecutionPipeline:
             ),
             verifier_output_tokens=VERIFIER_OUTPUT_CAP,
             maker_model_selector=select_maker_model,
+            maker_schema_selector=select_maker_schema,
             after_maker=after_maker,
             verification_gate=verification_gate,
         )

@@ -30,6 +30,7 @@ EXACT_EDIT_ANCHORS_STATE_KEY = "onebrief_exact_edit_anchors"
 REPAIR_PLAN_STATE_KEY = "onebrief_repair_plan"
 REPAIR_CONTRACT_STATE_KEY = "onebrief_repair_contract"
 MAKER_MODEL_BINDING_STATE_KEY = "onebrief_maker_model_binding"
+MAKER_SCHEMA_BINDING_STATE_KEY = "onebrief_maker_schema_binding"
 
 
 class BudgetedAdkLlm(BaseLlm):
@@ -108,6 +109,10 @@ MakerModelHook = Callable[
     [VerificationReport | None, InvocationContext, int],
     dict[str, Any] | Awaitable[dict[str, Any] | None] | None,
 ]
+MakerSchemaHook = Callable[
+    [VerificationReport | None, InvocationContext, int],
+    type | None,
+]
 
 
 class AdkConvergenceAgent(BaseAgent):
@@ -123,6 +128,7 @@ class AdkConvergenceAgent(BaseAgent):
     verification_state_key: str = VERIFICATION_STATE_KEY
     max_revision_rounds: int = Field(default=2, ge=0, le=12)
     maker_model_selector: MakerModelHook | None = None
+    maker_schema_selector: MakerSchemaHook | None = None
     after_maker: MakerHook | None = None
     verification_gate: GateHook | None = None
 
@@ -157,6 +163,28 @@ class AdkConvergenceAgent(BaseAgent):
                 and ctx.session.state.get(self.maker_state_key) is not None
             )
             if not reverify_existing:
+                if self.maker_schema_selector is not None:
+                    raw_verification = ctx.session.state.get(self.verification_state_key)
+                    current_report = (
+                        VerificationReport.model_validate(raw_verification)
+                        if raw_verification is not None
+                        else None
+                    )
+                    selected_schema = self.maker_schema_selector(
+                        current_report, ctx, round_number
+                    )
+                    if selected_schema is not None:
+                        if not issubclass(selected_schema, __import__("pydantic").BaseModel):
+                            raise TypeError("dynamic maker schema must be a Pydantic model")
+                        self.maker.output_schema = selected_schema
+                        yield Event(
+                            author=self.name,
+                            invocation_id=ctx.invocation_id,
+                            branch=ctx.branch,
+                            actions=EventActions(state_delta={
+                                MAKER_SCHEMA_BINDING_STATE_KEY: selected_schema.__name__
+                            }),
+                        )
                 if self.maker_model_selector is not None:
                     raw_verification = ctx.session.state.get(self.verification_state_key)
                     current_report = (
@@ -251,6 +279,7 @@ def build_text_convergence_agent(
     maker_output_tokens: int = 6000,
     verifier_output_tokens: int = 2200,
     maker_model_selector: MakerModelHook | None = None,
+    maker_schema_selector: MakerSchemaHook | None = None,
     after_maker: MakerHook | None = None,
     verification_gate: GateHook | None = None,
 ) -> AdkConvergenceAgent:
@@ -312,6 +341,7 @@ def build_text_convergence_agent(
         sub_agents=[maker, verifier],
         max_revision_rounds=max_revision_rounds,
         maker_model_selector=maker_model_selector,
+        maker_schema_selector=maker_schema_selector,
         after_maker=after_maker,
         verification_gate=verification_gate,
     )

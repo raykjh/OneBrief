@@ -3,9 +3,11 @@ from pathlib import Path
 
 import pytest
 from google.genai import types
+from pydantic import ValidationError
 
 from onebrief.development_toolpack import CodeChangeSet, DevelopmentCommandResult, DevelopmentRun
 from onebrief.generic_development_toolpack import (
+    AtomicUnityEvidenceBundle,
     AnchoredRangeRepairProjectCodeChangeSet,
     CompactProposedProjectCodeChangeSet, ExactRepairProjectCodeChangeSet,
     ProjectCodeChangeSet, ProposedProjectCodeChangeSet,
@@ -1538,6 +1540,42 @@ def test_missing_unity_harness_is_an_atomic_test_and_asmdef_pair() -> None:
     )
     assert "one atomic two-file repair" in instruction
     assert "Do not submit or retain only one half" in instruction
+
+
+def test_atomic_unity_evidence_schema_requires_sibling_test_and_asmdef() -> None:
+    bundle = AtomicUnityEvidenceBundle.model_validate({
+        "summary": "Executable visual evidence pair.",
+        "playmode_test": {
+            "path": "Assets/Tests/PlayMode/OneBriefVisualFlowTest.cs",
+            "content": "namespace OneBrief.Visual { public class Flow {} }\n",
+            "reason": "Exercise the real UI flow.",
+        },
+        "test_assembly": {
+            "path": "Assets/Tests/PlayMode/OneBrief.Visual.Tests.asmdef",
+            "content": '{"optionalUnityReferences":["TestAssemblies"]}\n',
+            "reason": "Make the PlayMode test discoverable.",
+        },
+    })
+
+    promoted = bundle.as_change_set()
+    assert [item.path for item in promoted.changes] == [
+        "Assets/Tests/PlayMode/OneBriefVisualFlowTest.cs",
+        "Assets/Tests/PlayMode/OneBrief.Visual.Tests.asmdef",
+    ]
+    with pytest.raises(ValidationError):
+        AtomicUnityEvidenceBundle.model_validate({
+            "summary": "Incomplete pair.",
+            "playmode_test": bundle.playmode_test.model_dump(),
+        })
+    with pytest.raises(ValidationError, match="siblings"):
+        AtomicUnityEvidenceBundle.model_validate({
+            "summary": "Split pair.",
+            "playmode_test": bundle.playmode_test.model_dump(),
+            "test_assembly": {
+                **bundle.test_assembly.model_dump(),
+                "path": "Assets/Other/Tests/PlayMode/OneBrief.Visual.Tests.asmdef",
+            },
+        })
 
 
 def test_duplicate_unity_screenshot_feedback_requires_capture_at_each_real_state() -> None:

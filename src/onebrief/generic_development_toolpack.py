@@ -447,6 +447,72 @@ class CompactProposedProjectCodeChangeSet(BaseModel):
     changes: list[CompactProposedProjectFileChange] = Field(min_length=1, max_length=2)
 
 
+class AtomicUnityEvidenceFile(BaseModel):
+    """One required member of a newly generated Unity PlayMode evidence pair."""
+
+    path: str
+    content: str = Field(min_length=1, max_length=8000)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        normalized = generic_safe_relative(value).as_posix()
+        if "/tests/playmode/" not in f"/{normalized.casefold()}":
+            raise ValueError("Unity evidence members must be below Tests/PlayMode")
+        return normalized
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def bound_reason(cls, value: object) -> str:
+        return str(value)[:500]
+
+
+class AtomicUnityEvidenceBundle(BaseModel):
+    """Indivisible output contract for an executable Unity evidence harness.
+
+    Both members are required by the JSON response schema.  This prevents a
+    maker from spending repeated turns on a PlayMode source that cannot be
+    discovered, or an assembly wrapper that contains no executable evidence.
+    """
+
+    schema_version: str = "onebrief-atomic-unity-evidence-bundle-v1"
+    summary: str = Field(min_length=3, max_length=500)
+    playmode_test: AtomicUnityEvidenceFile
+    test_assembly: AtomicUnityEvidenceFile
+
+    @model_validator(mode="after")
+    def validate_atomic_pair(self) -> "AtomicUnityEvidenceBundle":
+        test_path = PurePosixPath(self.playmode_test.path)
+        assembly_path = PurePosixPath(self.test_assembly.path)
+        if test_path.suffix.casefold() != ".cs":
+            raise ValueError("playmode_test must be a C# source")
+        if assembly_path.suffix.casefold() != ".asmdef":
+            raise ValueError("test_assembly must be an asmdef")
+        if test_path.parent != assembly_path.parent:
+            raise ValueError("Unity evidence members must be siblings")
+        return self
+
+    def as_change_set(self) -> CompactProposedProjectCodeChangeSet:
+        return CompactProposedProjectCodeChangeSet(
+            summary=self.summary,
+            changes=[
+                {
+                    "path": self.playmode_test.path,
+                    "base_sha256": None,
+                    "content": self.playmode_test.content,
+                    "reason": self.playmode_test.reason,
+                },
+                {
+                    "path": self.test_assembly.path,
+                    "base_sha256": None,
+                    "content": self.test_assembly.content,
+                    "reason": self.test_assembly.reason,
+                },
+            ],
+        )
+
+
 class ExactRepairProjectFileChange(BaseModel):
     """One existing-candidate edit; full-file output is structurally impossible."""
 
