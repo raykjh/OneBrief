@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class FailureOwner(StrEnum):
@@ -75,6 +76,20 @@ class EvidenceBinding(BaseModel):
     artifact: ArtifactReference | None = None
     command_id: str | None = Field(default=None, max_length=120)
     observation_id: str | None = Field(default=None, pattern=r"^FO-[a-f0-9]{16}$")
+
+    @field_validator("criterion_id", mode="before")
+    @classmethod
+    def discard_non_contract_criterion_id(cls, value: object) -> object:
+        return normalize_criterion_id(value)
+
+
+def normalize_criterion_id(value: object) -> str | None:
+    """Keep only completion-contract IDs; foreign labels remain unbound evidence."""
+
+    if value is None:
+        return None
+    candidate = str(value).strip().upper()
+    return candidate if re.fullmatch(r"Q[0-9]{2}", candidate) else None
 
 
 class WorkHandoffEnvelopeV1(BaseModel):

@@ -4,6 +4,7 @@ from onebrief.completion_ledger import (
     settle_consistent_verification,
 )
 from onebrief.execution_schemas import CriterionCheck, VerificationReport, Verdict
+from onebrief.handoff_protocol import EvidenceBinding
 from onebrief.development_toolpack import (
     DevelopmentCommandResult,
     DevelopmentVerificationReceipt,
@@ -296,3 +297,38 @@ def test_compile_receipt_cannot_satisfy_mixed_behavior_criterion() -> None:
     )
 
     assert all(check.criterion_id != "Q91" for check in report.criterion_checks)
+def test_foreign_decision_ids_cannot_become_completion_criteria() -> None:
+    report = VerificationReport.model_validate({
+        "verdict": "PASS",
+        "criterion_checks": [{
+            "criterion_id": "S02",
+            "criterion": "A SixSense style choice",
+            "passed": True,
+            "evidence": "The model mentioned a preference decision.",
+            "evidence_bindings": [{
+                "binding_id": "EB-0123456789abcdef",
+                "criterion_id": "S02",
+                "kind": "visual",
+                "status": "passed",
+                "summary": "Visible but not an active completion criterion.",
+            }],
+        }],
+        "blocking_issues": [],
+        "revision_instructions": [],
+        "missing_information": [],
+    })
+
+    assert report.criterion_checks[0].criterion_id is None
+    assert report.criterion_checks[0].evidence_bindings[0].criterion_id is None
+
+
+def test_valid_completion_criterion_ids_are_normalized_and_preserved() -> None:
+    binding = EvidenceBinding.model_validate({
+        "binding_id": "EB-fedcba9876543210",
+        "criterion_id": "q01",
+        "kind": "compile",
+        "status": "passed",
+        "summary": "Unity compiled.",
+    })
+
+    assert binding.criterion_id == "Q01"

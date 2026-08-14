@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from onebrief.handoff_protocol import EvidenceBinding
+from onebrief.handoff_protocol import EvidenceBinding, normalize_criterion_id
 from onebrief.temperament import TemperamentDecision
 
 
@@ -64,6 +64,11 @@ class CriterionCheck(BaseModel):
     passed: bool
     evidence: str
     evidence_bindings: list[EvidenceBinding] = Field(default_factory=list, max_length=32)
+
+    @field_validator("criterion_id", mode="before")
+    @classmethod
+    def discard_non_contract_criterion_id(cls, value: object) -> object:
+        return normalize_criterion_id(value)
 
     @model_validator(mode="after")
     def bindings_match_criterion(self) -> "CriterionCheck":
