@@ -1335,6 +1335,21 @@ class ExecutionPipeline:
                     "requested settings screen, then discover and interact with its existing scene controls; do not "
                     "create any replacement control inside the test."
                 )
+            if (
+                "protected destination evidence" in lowered
+                or "precondition-free click test" in lowered
+            ):
+                return (
+                    "Inspect the approved repository context, loaded scene, and existing controller path for a "
+                    "deterministic authentication fixture before changing product code. Reuse an existing test or "
+                    "development account selector, sandbox profile, seeded session, credential-and-terms controls, "
+                    "or equivalent authenticated-state setup through the shipped UI/controller. Then invoke the "
+                    "shipped authentication, start, or direct-enter control and assert and capture the protected "
+                    "destination reached by that real path. Do not use a precondition-free Start click, install or "
+                    "replace a product navigation listener, or load the destination scene from the evidence test. "
+                    "If no approved deterministic authentication fixture exists, report that missing fixture as the "
+                    "blocker instead of changing product navigation."
+                )
             if "unity visual test contract" in lowered and "real ui interaction" in lowered:
                 return (
                     "Operate the loaded scene's real navigation control (for example its Button.onClick) or activate "

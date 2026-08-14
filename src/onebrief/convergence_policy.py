@@ -20,7 +20,7 @@ from onebrief.handoff_protocol import FailureCode, FailureOwner
 
 
 CURRENT_CONVERGENCE_POLICY_REVISION = (
-    "onebrief-convergence-2026-08-14-phase-owned-handoff-v6"
+    "onebrief-convergence-2026-08-14-phase-owned-handoff-v7"
 )
 LEGACY_CONVERGENCE_POLICY_REVISION = "onebrief-convergence-legacy-v1"
 
@@ -319,6 +319,10 @@ def extract_symptom_keys(
             "changed_visible_text_count must compare before/after visible text snapshots",
             "identical duplicate local ui-control declaration",
         )),
+        ("auth_precondition", (
+            "protected destination evidence",
+            "precondition-free click test",
+        )),
         ("runtime_evidence_json", ("must write onebrief-evidence/runtime-evidence.json",)),
         ("png_capture", ("must capture png runtime evidence",)),
         ("scenario_schema", ("must use schema_version onebrief-unity-visual-evidence-v1",)),
@@ -468,6 +472,30 @@ def _hypothesis(
         ),
     }
     cause, probe, signal, boundary, reasoning = templates[layer]
+    if (
+        layer == FailureLayer.EVIDENCE_TOPOLOGY
+        and any(marker in evidence_signature.casefold() for marker in (
+            "protected destination evidence",
+            "precondition-free click test",
+        ))
+    ):
+        cause = (
+            "The evidence harness invokes a protected journey without first establishing an approved "
+            "authenticated or deterministic test state through the existing application path."
+        )
+        probe = (
+            "Inspect the approved scene and controller context for an existing test account, sandbox profile, "
+            "seeded session, credential-and-terms flow, or equivalent deterministic authentication fixture, then "
+            "exercise that fixture through the shipped UI/controller before the protected transition."
+        )
+        signal = (
+            "The unchanged product-owned authentication path reaches the protected destination and produces a "
+            "new trusted receipt without a test-installed listener or direct scene load."
+        )
+        boundary = (
+            "Tests/PlayMode authentication setup and observation only; product navigation, server protocol, and "
+            "acceptance criteria remain unchanged."
+        )
     if (
         layer == FailureLayer.SEMANTIC_PRODUCT
         and "unity layout diagnostics" in evidence_signature.casefold()

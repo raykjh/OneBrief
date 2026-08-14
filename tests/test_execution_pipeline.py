@@ -1769,6 +1769,21 @@ def test_unity_evidence_mutation_feedback_demands_removal_not_replacement() -> N
     assert "Do not substitute a different test-side label repair" in instructions
 
 
+def test_protected_unity_destination_feedback_requires_existing_auth_fixture() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "development verification failed: Unity visual test contract: protected destination "
+        "evidence must establish an approved authenticated/test state or exercise the complete "
+        "authentication UI; a precondition-free click test must not drive product navigation repairs"
+    )
+
+    instruction = " ".join(report.revision_instructions)
+    assert "deterministic authentication fixture" in instruction
+    assert "test or development account selector" in instruction
+    assert "shipped authentication" in instruction
+    assert "Do not use a precondition-free Start click" in instruction
+    assert "report that missing fixture" in instruction
+
+
 def test_unity_missing_surface_feedback_requires_separate_executed_captures() -> None:
     report = ExecutionPipeline._development_failure_report(
         "Unity visual evidence requires a distinct rendered scenario for every requested real UI surface: settings"

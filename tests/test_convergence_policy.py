@@ -138,6 +138,12 @@ def test_missing_authentication_precondition_is_evidence_topology_not_product() 
 
     assert observation.layer == FailureLayer.EVIDENCE_TOPOLOGY
     assert observation.owner == FailureOwner.EVIDENCE
+    assert observation.symptom_keys == ["artifact:auth_precondition"]
+
+    contract = ConvergencePolicy().issue_contract(ConvergenceLedger(), observation)
+    assert "existing test account" in contract.hypothesis.cheapest_probe
+    assert "shipped UI/controller" in contract.hypothesis.cheapest_probe
+    assert "product navigation" in contract.hypothesis.repair_boundary
 
 
 def test_unchanged_requested_unity_locale_is_a_semantic_product_failure() -> None:
