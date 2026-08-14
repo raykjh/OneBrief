@@ -239,42 +239,13 @@ class UnityEvidenceJourneyPlan(BaseModel):
                 raise ValueError(
                     "a later destination must follow a real shipped-control interaction"
                 )
-        for index, step in enumerate(self.steps):
-            if not (
-                step.action == "click_button"
-                and _target_contains(step, ("directenter",))
-            ):
-                continue
-            account_selected = any(
-                prior.action == "select_dropdown_index"
-                and _target_contains(
-                    prior,
-                    ("testaccount", "account", "profile", "auth", "session", "user"),
-                )
-                for prior in self.steps[:index]
-            )
-            if not account_selected:
-                raise ValueError(
-                    "direct-enter authentication requires a preceding approved account/profile "
-                    "dropdown selection"
-                )
-        initial_scene = (self.steps[0].scene_name or "").casefold()
-        reaches_protected_scene = any(
-            step.action == "wait_for_scene"
-            and (step.scene_name or "").casefold() != initial_scene
-            for step in self.steps[1:]
-        )
-        if (
-            "login" in initial_scene
-            and reaches_protected_scene
-            and not journey_establishes_authentication_precondition(self)
-        ):
-            raise ValueError(
-                "Login-to-protected-scene evidence requires a complete approved authentication "
-                "path: select an account/profile before DirectEnter/SignIn/Login/Authenticate, "
-                "or complete both terms acceptance and identity input; a generic Start click is "
-                "not an authentication precondition"
-            )
+        # Authentication completeness is deliberately enforced by the fixed
+        # executable preflight after this provider-facing plan is rendered.
+        # Keeping it out of Pydantic output validation lets an incomplete model
+        # plan become structured repair feedback instead of terminating the
+        # whole Quest before the convergence loop can correct it.  The trusted
+        # generator emits the authentication marker only for a complete typed
+        # path, and preflight still blocks every marker-free protected journey.
         return self
 
 
