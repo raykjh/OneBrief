@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 import re
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TypeVar
 from uuid import uuid4
 
@@ -136,6 +136,7 @@ from onebrief.public_research import PublicResearchResult
 from onebrief.phase_execution import (
     PHASE_DECISION_STATE_KEY,
     PHASE_STATE_KEY,
+    PhaseDecision,
     active_execution_phase,
     build_evidence_specification,
     decide_repair_phase,
@@ -147,6 +148,10 @@ from onebrief.schemas import ExecutionPhase
 from onebrief.toolpacks import execute_toolpacks
 from onebrief.unity_semantic_observation import observe_unity_visual_evidence
 from onebrief.unity_layout_diagnostics import compact_unity_layout_diagnostic_context
+from onebrief.unity_evidence_plan import (
+    UnityEvidenceJourneyPlan,
+    render_unity_evidence_journey,
+)
 from onebrief.workbook_export import export_workbook
 from onebrief.temperament import (
     VERIFIER_PROFILE,
@@ -520,7 +525,27 @@ def missing_unity_evidence_bundle_paths(
     return missing
 
 
-def normalize_atomic_unity_evidence_bundle(raw: object) -> object:
+def _existing_unity_evidence_paths(
+    current_payload: object | None,
+) -> tuple[str | None, str | None]:
+    test_path: str | None = None
+    assembly_path: str | None = None
+    for change in development_proposal_changes(current_payload):
+        path = development_change_path(change).replace("\\", "/")
+        if "/tests/playmode/" not in f"/{path.casefold()}":
+            continue
+        suffix = PurePosixPath(path).suffix.casefold()
+        if suffix == ".cs" and test_path is None:
+            test_path = path
+        elif suffix == ".asmdef" and assembly_path is None:
+            assembly_path = path
+    return test_path, assembly_path
+
+
+def normalize_atomic_unity_evidence_bundle(
+    raw: object,
+    current_payload: object | None = None,
+) -> object:
     """Restore the typed atomic contract after ADK state serialization.
 
     ADK validates the provider response with the selected Pydantic schema, then
@@ -528,6 +553,39 @@ def normalize_atomic_unity_evidence_bundle(raw: object) -> object:
     must rehydrate the exact schema before applying the indivisible pair.
     """
 
+    if isinstance(raw, UnityEvidenceJourneyPlan) or (
+        isinstance(raw, dict)
+        and raw.get("schema_version") == "onebrief-unity-evidence-journey-plan-v1"
+    ):
+        plan = (
+            raw if isinstance(raw, UnityEvidenceJourneyPlan)
+            else UnityEvidenceJourneyPlan.model_validate(raw)
+        )
+        existing_test, existing_assembly = _existing_unity_evidence_paths(
+            current_payload
+        )
+        rendered = render_unity_evidence_journey(
+            plan,
+            existing_test_path=existing_test,
+            existing_assembly_path=existing_assembly,
+        )
+        return CompactProposedProjectCodeChangeSet(
+            summary=plan.summary,
+            changes=[
+                {
+                    "path": rendered.playmode_test_path,
+                    "base_sha256": None,
+                    "content": rendered.playmode_test_source,
+                    "reason": "Trusted OneBrief compilation of the declarative Unity journey.",
+                },
+                {
+                    "path": rendered.test_assembly_path,
+                    "base_sha256": None,
+                    "content": rendered.test_assembly_source,
+                    "reason": "Trusted sibling TestAssemblies wrapper for the generated journey.",
+                },
+            ],
+        )
     if isinstance(raw, AtomicUnityEvidenceBundle):
         return raw.as_change_set()
     if isinstance(raw, dict) and (
@@ -564,6 +622,7 @@ def development_maker_schema_for(
     report: VerificationReport | None,
     current_payload: object | None,
     exact_edit_anchors: list[dict[str, object]] | None = None,
+    active_phase: ExecutionPhase | None = None,
 ) -> type | None:
     """Select the next bounded software response contract from current state."""
 
@@ -574,6 +633,15 @@ def development_maker_schema_for(
         *report.revision_instructions,
     ])
     normalized_feedback = " ".join(feedback.split()).casefold()
+    if (
+        active_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
+        and (
+            is_unity_evidence_contract_feedback(feedback)
+            or is_missing_unity_evidence_harness(feedback)
+            or "unity_playmode_visual_tests" in normalized_feedback
+        )
+    ):
+        return UnityEvidenceJourneyPlan
     if (
         "unity_compile" in normalized_feedback
         and "tests\\playmode\\" in normalized_feedback
@@ -590,7 +658,7 @@ def development_maker_schema_for(
         requires_atomic_unity_evidence_pair(feedback)
         and missing_unity_evidence_bundle_paths(feedback, current_candidate)
     ):
-        return AtomicUnityEvidenceBundle
+        return UnityEvidenceJourneyPlan
     if is_development_product_target_failure(feedback):
         bounded_unity_product_repair = any(marker in normalized_feedback for marker in (
             "unity_playmode_visual_tests",
@@ -2669,7 +2737,22 @@ class ExecutionPipeline:
                 RepairContract.model_validate(active_contract_payload)
                 if active_contract_payload else None
             )
-            raw = normalize_atomic_unity_evidence_bundle(raw)
+            raw_provider_payload = raw
+            raw = normalize_atomic_unity_evidence_bundle(raw, previous_change_set)
+            if isinstance(raw_provider_payload, UnityEvidenceJourneyPlan) or (
+                isinstance(raw_provider_payload, dict)
+                and raw_provider_payload.get("schema_version")
+                == "onebrief-unity-evidence-journey-plan-v1"
+            ):
+                plan_text = (
+                    raw_provider_payload.model_dump_json(indent=2)
+                    if isinstance(raw_provider_payload, BaseModel)
+                    else json.dumps(raw_provider_payload, ensure_ascii=False, indent=2)
+                )
+                self._write(
+                    output_dir / f"unity_evidence_journey_plan_r{round_number}.json",
+                    plan_text,
+                )
             proposed_paths = [
                 development_change_path(item)
                 for item in development_proposal_changes(raw)
@@ -3601,6 +3684,11 @@ class ExecutionPipeline:
             "You are OneBrief's accountable software maker. Return the smallest complete runnable source "
             "change set that satisfies the work contract. Existing-file paths must exactly match a non-null "
             "repository_path and retain its exact sha256 as base_sha256; new text source files use null. "
+            "When the response schema is UnityEvidenceJourneyPlan, do not author or repair C# or asmdef text. "
+            "Return only the ordered declarative scene/control journey. OneBrief compiles that plan into a "
+            "trusted PlayMode harness, assertions, screenshots, and an atomic evidence manifest. For protected "
+            "login destinations, include the existing approved test-account, terms, session, or credential "
+            "precondition before the shipped navigation control. "
             "Files marked immutable_acceptance_contract may not be changed. Never touch secrets, dependencies, "
             "Git metadata, deployment, accounts, financial transactions, or paths outside the approved project. "
             "For every existing-file change, use one exact search/replace edit and never return the entire file; "
@@ -3748,16 +3836,24 @@ class ExecutionPipeline:
                 *report.blocking_issues,
                 *report.revision_instructions,
             ]).strip()
-            affected_paths = [
-                str(getattr(item, "path", ""))
-                for item in getattr(previous_change_set, "changes", [])
-            ]
-            phase_decision = decide_repair_phase(
-                context="development_acceptance_verification",
-                failure_text=failure_text,
-                round_number=round_number,
-                affected_paths=affected_paths,
+            existing_phase_payload = _ctx.session.state.get(
+                PHASE_DECISION_STATE_KEY
             )
+            try:
+                phase_decision = PhaseDecision.model_validate(
+                    existing_phase_payload
+                )
+            except (ValidationError, TypeError):
+                affected_paths = [
+                    str(getattr(item, "path", ""))
+                    for item in getattr(previous_change_set, "changes", [])
+                ]
+                phase_decision = decide_repair_phase(
+                    context="development_acceptance_verification",
+                    failure_text=failure_text,
+                    round_number=round_number,
+                    affected_paths=affected_paths,
+                )
             if not phase_decision.model_repair_allowed or phase_decision.next_phase is None:
                 return None
             _ctx.session.state[PHASE_STATE_KEY] = phase_decision.next_phase.value
@@ -3803,6 +3899,7 @@ class ExecutionPipeline:
                 report,
                 _ctx.session.state.get(MAKER_STATE_KEY),
                 _ctx.session.state.get(EXACT_EDIT_ANCHORS_STATE_KEY),
+                active_execution_phase(_ctx.session.state),
             )
             return selected
         agent = build_text_convergence_agent(
@@ -3819,7 +3916,17 @@ class ExecutionPipeline:
                 "independent_verification", "gemini-3.5-flash"
             ),
             maker_schema=(
-                (
+                UnityEvidenceJourneyPlan
+                if (
+                    prior_failure.is_file()
+                    and initial_maker_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
+                    and (
+                        is_unity_evidence_contract_feedback(prior_failure_text)
+                        or is_missing_unity_evidence_harness(prior_failure_text)
+                        or "unity_playmode_visual_tests" in prior_failure_text.casefold()
+                    )
+                )
+                else (
                     (
                         catalog_bound_product_repair_schema(exact_edit_anchors)
                         if product_target_repair and exact_edit_anchors

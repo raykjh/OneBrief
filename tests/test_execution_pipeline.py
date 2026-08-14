@@ -48,6 +48,10 @@ from onebrief.execution_pipeline import (
 from onebrief.execution_agents import DeveloperAgent
 from onebrief.execution_limits import DEVELOPER_OUTPUT_CAP
 from onebrief.guarded_gemini import BudgetedGeminiClient
+from onebrief.unity_evidence_plan import (
+    UnityEvidenceJourneyPlan,
+    render_unity_evidence_journey,
+)
 from onebrief.convergence_policy import RepairContract
 from onebrief.execution_schemas import (
     AnalysisPackage,
@@ -106,6 +110,100 @@ def test_dict_development_proposal_counts_atomic_evidence_members() -> None:
     }
 
     assert missing_unity_evidence_bundle_paths(feedback, proposal) == []
+
+
+def test_declarative_unity_journey_compiles_trusted_harness() -> None:
+    plan = UnityEvidenceJourneyPlan.model_validate({
+        "summary": "Prove the preserved login journey.",
+        "test_directory": "Assets/JULPAE/Tests/PlayMode",
+        "steps": [
+            {"action": "load_scene", "scene_name": "LoginScene_All"},
+            {"action": "capture", "scenario_id": "login"},
+            {
+                "action": "select_dropdown_index",
+                "target": "TestAccountDropdown",
+                "value_index": 1,
+            },
+            {"action": "click_button", "target": "DirectEnterButton"},
+            {"action": "wait_for_scene", "scene_name": "LobbyScene_All"},
+            {"action": "capture", "scenario_id": "lobby"},
+        ],
+    })
+
+    rendered = render_unity_evidence_journey(plan)
+
+    assert "ONEBRIEF_DECLARATIVE_EVIDENCE_V1" in rendered.playmode_test_source
+    assert 'RequireActive("TestAccountDropdown")' in rendered.playmode_test_source
+    assert 'RequireActive("DirectEnterButton")' in rendered.playmode_test_source
+    assert "ScenarioReceipt" in rendered.playmode_test_source
+    assert "WriteManifestAtomically(receipts.ToArray())" in rendered.playmode_test_source
+    assert "TestAssemblies" in rendered.test_assembly_source
+    assert len(rendered.playmode_test_source.encode("utf-8")) < 8_000
+
+
+def test_declarative_unity_journey_rejects_direct_destination_load() -> None:
+    with pytest.raises(ValidationError, match="only the initial scene"):
+        UnityEvidenceJourneyPlan.model_validate({
+            "summary": "Invalid direct navigation proof.",
+            "test_directory": "Assets/Tests/PlayMode",
+            "steps": [
+                {"action": "load_scene", "scene_name": "Login"},
+                {"action": "assert_active", "target": "StartButton"},
+                {"action": "load_scene", "scene_name": "Lobby"},
+                {"action": "capture", "scenario_id": "lobby"},
+            ],
+        })
+
+
+def test_declarative_unity_journey_reuses_existing_evidence_paths() -> None:
+    raw = {
+        "schema_version": "onebrief-unity-evidence-journey-plan-v1",
+        "summary": "Repair the journey plan.",
+        "test_directory": "Assets/Other/Tests/PlayMode",
+        "steps": [
+            {"action": "load_scene", "scene_name": "Login"},
+            {"action": "assert_active", "target": "StartButton"},
+            {"action": "capture", "scenario_id": "login"},
+        ],
+    }
+    previous = {
+        "changes": [
+            {"path": "Assets/Scripts/LoginView.cs"},
+            {"path": "Assets/JULPAE/Tests/PlayMode/ExistingJourney.cs"},
+            {"path": "Assets/JULPAE/Tests/PlayMode/ExistingJourney.asmdef"},
+        ]
+    }
+
+    normalized = normalize_atomic_unity_evidence_bundle(raw, previous)
+
+    assert [item.path for item in normalized.changes] == [
+        "Assets/JULPAE/Tests/PlayMode/ExistingJourney.cs",
+        "Assets/JULPAE/Tests/PlayMode/ExistingJourney.asmdef",
+    ]
+
+
+def test_evidence_phase_selects_declarative_plan_for_runtime_failure() -> None:
+    report = VerificationReport(
+        verdict=Verdict.REVISE,
+        criterion_checks=[{
+            "criterion": "Preserved login reaches Lobby",
+            "passed": False,
+            "evidence": "The executable journey remained in Login.",
+        }],
+        blocking_issues=[
+            "unity_playmode_visual_tests: login destination was not reached"
+        ],
+        revision_instructions=["Establish the existing test account first."],
+        missing_information=[],
+    )
+
+    selected = development_maker_schema_for(
+        report,
+        current_payload=None,
+        active_phase=ExecutionPhase.EVIDENCE_CONSTRUCTION,
+    )
+
+    assert selected is UnityEvidenceJourneyPlan
 
 
 def test_product_handoff_never_inherits_failing_test_path() -> None:
@@ -2109,7 +2207,7 @@ def test_atomic_schema_returns_to_bounded_repair_after_pair_exists() -> None:
 
     assert development_maker_schema_for(
         report, product_only.model_dump(mode="json")
-    ) is AtomicUnityEvidenceBundle
+    ) is UnityEvidenceJourneyPlan
     assert development_maker_schema_for(
         report, with_pair.model_dump(mode="json")
     ) is UnityEvidenceAnchoredSourceRepair
