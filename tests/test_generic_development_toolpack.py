@@ -50,6 +50,47 @@ def test_proposed_exact_edit_accepts_bounded_component_replacement() -> None:
     assert len(proposal.changes[0].replace or "") == 12_000
 
 
+def test_project_change_rejects_duplicate_csharp_locals_in_one_scope() -> None:
+    with pytest.raises(ValidationError, match="redeclares identifier.*centerPanelGo"):
+        ProjectFileChange.model_validate({
+            "path": "Assets/Game/LoginStyle.cs",
+            "base_sha256": "a" * 64,
+            "reason": "Apply the approved login style.",
+            "content": """public class LoginStyle
+{
+    void Apply()
+    {
+        GameObject centerPanelGo = Find(\"CenterPanel\");
+        if (centerPanelGo != null) { Use(centerPanelGo); }
+        GameObject centerPanelGo = Find(\"CenterPanel\");
+    }
+}
+""",
+        })
+
+
+def test_project_change_allows_same_csharp_local_in_separate_scopes() -> None:
+    change = ProjectFileChange.model_validate({
+        "path": "Assets/Game/LoginStyle.cs",
+        "base_sha256": "a" * 64,
+        "reason": "Keep independent helper scopes valid.",
+        "content": """public class LoginStyle
+{
+    void ApplyA()
+    {
+        GameObject panel = Find(\"A\");
+    }
+
+    void ApplyB()
+    {
+        GameObject panel = Find(\"B\");
+    }
+}
+""",
+    })
+    assert change.path == "Assets/Game/LoginStyle.cs"
+
+
 def test_catalog_anchored_product_repair_structurally_excludes_full_files_and_tests() -> None:
     repair = CatalogAnchoredProductRepair.model_validate({
         "summary": "Repair one product runtime window.",

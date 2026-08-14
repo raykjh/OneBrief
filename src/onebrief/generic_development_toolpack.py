@@ -97,6 +97,49 @@ def _csharp_code_only(value: str) -> str:
     return token.sub(" ", value)
 
 
+def _duplicate_csharp_declarations_by_scope(source: str) -> set[str]:
+    """Find plainly duplicated declarations in one lexical brace scope.
+
+    This intentionally covers only line-oriented declarations. It catches a
+    common full-file revision failure before an expensive Unity run without
+    pretending to be a C# compiler or rejecting loop variables and parameters.
+    """
+
+    structural = _csharp_code_only(source)
+    next_scope = 0
+    scopes: list[int] = [next_scope]
+    declared: dict[int, set[str]] = {next_scope: set()}
+    duplicates: set[str] = set()
+    declaration = re.compile(
+        r"^\s*(?:(?:public|private|protected|internal|static|readonly|const|volatile|new)\s+)*"
+        r"(?!(?:return|throw|case|yield|break|continue)\b)"
+        r"(?:global::)?[A-Za-z_][A-Za-z0-9_.]*(?:\s*<[^;={}()]+>)?(?:\s*\[\s*\])?"
+        r"\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|;)",
+    )
+    for line in structural.splitlines():
+        leading = re.match(r"^\s*(}*)", line)
+        leading_closes = len(leading.group(1)) if leading else 0
+        for _ in range(leading_closes):
+            if len(scopes) > 1:
+                scopes.pop()
+        candidate = line[leading.end():] if leading else line
+        match = declaration.match(candidate)
+        if match:
+            name = match.group(1)
+            names = declared.setdefault(scopes[-1], set())
+            if name in names:
+                duplicates.add(name)
+            names.add(name)
+        for character in candidate:
+            if character == "{":
+                next_scope += 1
+                scopes.append(next_scope)
+                declared[next_scope] = set()
+            elif character == "}" and len(scopes) > 1:
+                scopes.pop()
+    return duplicates
+
+
 def _declared_unity_viewports(source: str) -> list[tuple[int, int]]:
     """Extract literal or paired-array viewport declarations from a PlayMode test."""
 
@@ -323,6 +366,14 @@ class ProjectFileChange(BaseModel):
     def block_host_runtime_access(self) -> "ProjectFileChange":
         if DANGEROUS_RUNTIME.search(self.content):
             raise ValueError("change content requests a prohibited host-runtime capability")
+        normalized_path = self.path.replace("\\", "/").casefold()
+        if normalized_path.endswith(".cs") and "/tests/" not in f"/{normalized_path}":
+            duplicates = sorted(_duplicate_csharp_declarations_by_scope(self.content))
+            if duplicates:
+                raise ValueError(
+                    "C# change redeclares identifier(s) in the same lexical scope: "
+                    + ", ".join(duplicates)
+                )
         return self
 
 
