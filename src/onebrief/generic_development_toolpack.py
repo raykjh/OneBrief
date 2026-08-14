@@ -1800,6 +1800,7 @@ class ApprovedProjectDevelopmentToolPack:
         *,
         limit: int = 6,
         max_total_chars: int = 48_000,
+        preferred_paths: list[str] | None = None,
     ) -> list[dict[str, object]]:
         """Return bounded read-only excerpts for one trusted repair hypothesis.
 
@@ -1816,6 +1817,11 @@ class ApprovedProjectDevelopmentToolPack:
         allowed_suffixes = {item.casefold() for item in profile.allowed_suffixes}
         read_prefixes = tuple(profile.allowed_read_prefixes)
         tracked = [item for item in self._git("ls-files", "-z").split("\0") if item]
+        preferred = {
+            normalized
+            for path in (preferred_paths or [])
+            if (normalized := self.approved_edit_path(path)) is not None
+        }
         expanded = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", failure_text)
         stop_words = {
             "approved", "before", "blocker", "change", "complete", "context",
@@ -1909,7 +1915,7 @@ class ApprovedProjectDevelopmentToolPack:
         scan_paths = set(sorted(
             matched_paths | path_matched,
             key=candidate_path_rank,
-        )[: max(48, limit * 12)])
+        )[: max(48, limit * 12)]) | preferred
         ranked: list[tuple[int, int, str, bytes, str, list[tuple[int, int]]]] = []
         for relative in tracked:
             if relative not in scan_paths:
@@ -1950,12 +1956,14 @@ class ApprovedProjectDevelopmentToolPack:
                     line,
                 ) else 0
                 scored_lines.append((len(line_terms) * 5 + declaration_bonus, index))
+            if not scored_lines and normalized in preferred:
+                scored_lines = [(1, 0)]
             if not scored_lines:
                 continue
             vendor_penalty = 80 if any(
                 token in normalized_tokens(normalized) for token in vendor_tokens
             ) else 0
-            score = path_hits * 20 + len(distinct_content_terms) * 4 + max(
+            score = (10_000 if normalized in preferred else 0) + path_hits * 20 + len(distinct_content_terms) * 4 + max(
                 item[0] for item in scored_lines
             ) - vendor_penalty
             ranked.append((score, path_hits, normalized.casefold(), data, text, scored_lines))

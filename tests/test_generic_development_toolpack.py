@@ -678,6 +678,19 @@ def test_diagnostic_context_discovers_existing_auth_fixture_without_edit_authori
     manifest = json.loads((tmp_path / "diagnostic" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["read_only"] is True
 
+    preferred = ApprovedProjectDevelopmentToolPack(
+        "generic-node", registry
+    ).inspect_diagnostic_context(
+        tmp_path / "preferred-diagnostic",
+        "Settings volume and localization controller requires a bounded source anchor.",
+        limit=1,
+        preferred_paths=["src/Login/AuthenticationController.js"],
+    )
+    assert [item["path"] for item in preferred] == [
+        "src/Login/AuthenticationController.js"
+    ]
+    assert preferred[0]["anchors"]
+
 
 def test_generic_inspection_understands_korean_localization_goal(tmp_path: Path) -> None:
     root, registry = _approved_node_project(tmp_path)

@@ -3490,6 +3490,7 @@ class ExecutionPipeline:
                 diagnostic = development_pack.inspect_diagnostic_context(
                     output_dir / "diagnostic_repository_context" / f"r{round_number:02d}",
                     feedback + " | " + json.dumps(contract, ensure_ascii=False),
+                    preferred_paths=proposed_existing_paths,
                 )
                 current_exact_edit_anchors = [
                     {
