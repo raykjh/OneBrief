@@ -162,6 +162,9 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
         "preserved authentication/server journey",
         "newly wiring a product ui onclick listener directly to scenemanager.loadscene",
         "invoke the existing controller/router path and prove that path instead",
+        "change set contains only verification code",
+        "not reachable from any committed .unity/.prefab script guid",
+        "repair or attach the active component instead of editing a detached source file",
     )):
         return FailureLayer.SEMANTIC_PRODUCT
     if any(marker in text for marker in (
@@ -263,11 +266,9 @@ def failure_owner_for(code: FailureCode, layer: FailureLayer) -> FailureOwner:
     if code in {
         FailureCode.UNITY_SCREENSHOT_NOT_MATERIALIZED,
         FailureCode.EVIDENCE_TOPOLOGY_INVALID,
-        FailureCode.EVIDENCE_INTEGRITY_INVALID,
     } or layer in {
         FailureLayer.EVIDENCE_RUNTIME,
         FailureLayer.EVIDENCE_TOPOLOGY,
-        FailureLayer.EVIDENCE_INTEGRITY,
     }:
         return FailureOwner.EVIDENCE
     if layer in {FailureLayer.PROVIDER, FailureLayer.STRUCTURED_OUTPUT}:

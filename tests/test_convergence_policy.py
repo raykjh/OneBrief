@@ -178,6 +178,45 @@ def test_detached_unity_component_opens_a_new_unrestricted_binding_probe() -> No
     assert "active component" in contract.hypothesis.cheapest_probe
 
 
+def test_mixed_unity_contract_routes_detached_product_failure_before_evidence_repairs() -> None:
+    policy = ConvergencePolicy()
+    observation = policy.observe(
+        context="development_verification",
+        failure_text=(
+            "Unity visual test contract: changed Unity UI MonoBehaviour SettingsBinder "
+            "is not reachable from any committed .unity/.prefab script GUID, runtime "
+            "initialization entrypoint, or other production source reference; repair or "
+            "attach the active component instead of editing a detached source file | "
+            "Unity visual test contract: the OneBrief.Visual test must discover the real "
+            "LanguageDropdown control from the loaded scene"
+        ),
+        attempt_number=1,
+        affected_paths=["Assets/UI/SettingsBinder.cs"],
+    )
+    contract = policy.issue_contract(ConvergenceLedger(), observation)
+
+    assert observation.layer == FailureLayer.SEMANTIC_PRODUCT
+    assert observation.owner == FailureOwner.PRODUCT
+    assert contract.verification_ladder[0] == "exact_source_promotion"
+    assert "active component" in contract.hypothesis.cheapest_probe
+
+
+def test_verification_only_candidate_routes_next_repair_to_product_owner() -> None:
+    observation = ConvergencePolicy().observe(
+        context="development_verification",
+        failure_text=(
+            "Unity visual test contract: the change set contains only verification code; "
+            "add an actual production UI implementation under the approved project source "
+            "before claiming UI modernization"
+        ),
+        attempt_number=2,
+        affected_paths=["Assets/Tests/PlayMode/SettingsFlowTest.cs"],
+    )
+
+    assert observation.layer == FailureLayer.SEMANTIC_PRODUCT
+    assert observation.owner == FailureOwner.PRODUCT
+
+
 def test_locale_observer_measurement_order_is_evidence_topology() -> None:
     observation = ConvergencePolicy().observe(
         context="development_verification",
