@@ -1914,7 +1914,7 @@ def test_unity_visual_preflight_rejects_protected_destination_without_auth_preco
     issues = pack._unity_visual_contract_issues(
         profile,
         clone,
-        "Preserve the authentication/server transition and verify Login -> Lobby.",
+        "The Login surface uses the preserved authentication path and reaches Lobby in PlayMode.",
     )
 
     assert any("protected destination evidence" in issue for issue in issues)

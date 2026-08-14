@@ -2293,14 +2293,18 @@ class ApprovedProjectDevelopmentToolPack:
                     )
             requested_surfaces = requested_ui_surfaces(intent_text)
             requested_transition = requested_ui_transition(intent_text)
+            protected_destinations = set(requested_transition[1:]) or (
+                requested_surfaces - {"login"}
+            )
             invokes_product_control = any(token in structural for token in (
                 ".onclick.invoke", "executeevents.execute", "pointerclickevent",
                 "submitevent",
             ))
             asserts_destination = bool(
-                len(requested_transition) >= 2
+                "login" in requested_surfaces
+                and protected_destinations
                 and re.search(r"\bAssert\s*\.", structural, re.IGNORECASE)
-                and any(surface in combined for surface in requested_transition[1:])
+                and any(surface in combined for surface in protected_destinations)
             )
             authentication_precondition = bool(
                 re.search(
