@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from enum import StrEnum
 import re
 
@@ -25,6 +26,38 @@ class AnalysisPackage(BaseModel):
     constraints: list[str]
     risks: list[str]
     temperament_decisions: list[TemperamentDecision] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def assign_missing_or_duplicate_finding_ids(cls, value: object) -> object:
+        """Treat provider-authored finding IDs as transport keys, not evidence."""
+
+        if not isinstance(value, dict) or not isinstance(value.get("findings"), list):
+            return value
+        normalized = dict(value)
+        findings = [dict(item) if isinstance(item, dict) else item for item in value["findings"]]
+        raw_ids = [
+            str(item.get("finding_id") or "") if isinstance(item, dict) else ""
+            for item in findings
+        ]
+        counts = Counter(raw_ids)
+        used = {
+            finding_id for finding_id, count in counts.items()
+            if finding_id.startswith("F") and count == 1
+        }
+        next_index = 1
+        for item, finding_id in zip(findings, raw_ids, strict=True):
+            if not isinstance(item, dict):
+                continue
+            if finding_id.startswith("F") and counts[finding_id] == 1:
+                continue
+            while (candidate := f"F{next_index:03d}") in used:
+                next_index += 1
+            item["finding_id"] = candidate
+            used.add(candidate)
+            next_index += 1
+        normalized["findings"] = findings
+        return normalized
 
     @model_validator(mode="after")
     def validate_findings(self) -> "AnalysisPackage":

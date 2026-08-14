@@ -201,6 +201,37 @@ def test_verification_report_discards_provider_artifact_digest_placeholder() -> 
     assert report.criterion_checks[0].evidence_bindings[0].command_id == "unity_compile"
 
 
+def test_analysis_package_assigns_unique_ids_to_duplicate_provider_findings() -> None:
+    analysis = AnalysisPackage.model_validate({
+        "objective": "Inspect the approved Unity baseline.",
+        "findings": [
+            {
+                "finding_id": "F01",
+                "source_name": "a.cs",
+                "evidence": "Login exists.",
+                "implication": "Verify Login.",
+            },
+            {
+                "finding_id": "F01",
+                "source_name": "b.cs",
+                "evidence": "Lobby exists.",
+                "implication": "Verify Lobby.",
+            },
+            {
+                "finding_id": "F99",
+                "source_name": "c.cs",
+                "evidence": "Settings exists.",
+                "implication": "Preserve Settings.",
+            },
+        ],
+        "recommended_structure": ["Verify the active Quest."],
+        "constraints": ["Do not modify the original."],
+        "risks": [],
+    })
+
+    assert [item.finding_id for item in analysis.findings] == ["F001", "F002", "F99"]
+
+
 def test_declarative_unity_journey_compiles_trusted_harness() -> None:
     plan = UnityEvidenceJourneyPlan.model_validate({
         "summary": "Prove the preserved login journey.",
