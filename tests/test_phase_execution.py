@@ -120,6 +120,7 @@ def test_phase_routing_and_path_authority_are_disjoint() -> None:
     assert phase_for_stage(
         "evidence_construction::repair::long_form_draft"
     ) == ExecutionPhase.EVIDENCE_CONSTRUCTION
+    assert phase_for_stage("policy_guard") == ExecutionPhase.FINAL_VERIFICATION
     assert is_evidence_path("Assets/Tests/PlayMode/UiEvidenceTests.cs")
     assert not is_evidence_path("Assets/Scripts/LoginView.cs")
     assert path_allowed_for_phase(

@@ -1760,6 +1760,64 @@ def test_unity_visual_preflight_rejects_replaced_product_click_listener(
     assert any("must not install a replacement onClick listener" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_rejects_new_product_authentication_bypass(
+    tmp_path: Path,
+) -> None:
+    root, registry = _approved_node_project(tmp_path)
+    product = root / "Assets" / "Scripts" / "LoginLocalizationBinder.cs"
+    product.parent.mkdir(parents=True)
+    product.write_text(
+        "public sealed class LoginLocalizationBinder : MonoBehaviour { "
+        "[RuntimeInitializeOnLoadMethod] static void Install() { ApplyLabels(); } "
+        "static void ApplyLabels() {} }",
+        encoding="utf-8",
+    )
+    clone = tmp_path / "unity-product-auth-bypass"
+    shutil.copytree(root, clone)
+    candidate = clone / "Assets" / "Scripts" / "LoginLocalizationBinder.cs"
+    candidate.write_text(
+        "public sealed class LoginLocalizationBinder : MonoBehaviour { "
+        "[RuntimeInitializeOnLoadMethod] static void Install() { "
+        "ApplyLabels(); button.onClick.AddListener(() => "
+        "UnityEngine.SceneManagement.SceneManager.LoadScene(\"LobbyScene_All\")); } "
+        "static void ApplyLabels() {} }",
+        encoding="utf-8",
+    )
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualLoginLobbyTest.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        "SceneManager.LoadScene(\"LoginScene_All\"); Assert.IsNotNull(button); "
+        "var login = OneBriefAtomicScreenshot.CaptureScenario(\"login\", \"LoginScene_All\", "
+        "\"initial\", 1, \"login.png\", Camera.main, 1920, 1080, canvases); "
+        "button.onClick.Invoke(); Assert.IsTrue(SceneManager.GetActiveScene().name.Contains(\"Lobby\")); "
+        "var lobby = OneBriefAtomicScreenshot.CaptureScenario(\"lobby\", \"LobbyScene_All\", "
+        "\"login_click\", 1, \"lobby.png\", Camera.main, 1920, 1080, canvases); "
+        "OneBriefAtomicScreenshot.WriteManifestAtomically(login, lobby); } }",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+
+    issues = pack._unity_visual_contract_issues(
+        profile,
+        clone,
+        "Modernize the Unity login and lobby UI while preserving the authentication transition.",
+        [
+            "Assets/Scripts/LoginLocalizationBinder.cs",
+            "Assets/Tests/PlayMode/OneBriefVisualLoginLobbyTest.cs",
+            "Assets/Tests/PlayMode/OneBrief.Visual.Tests.asmdef",
+        ],
+    )
+
+    assert any("preserved authentication/server journey" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_rejects_direct_destination_load_after_click(
     tmp_path: Path,
 ) -> None:

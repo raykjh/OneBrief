@@ -5,10 +5,11 @@ from __future__ import annotations
 import re
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from onebrief.execution_schemas import CriterionCheck, VerificationReport, Verdict
 from onebrief.handoff_protocol import (
+    EvidenceBinding,
     EvidenceKind,
     EvidenceStatus,
     create_evidence_binding,
@@ -267,7 +268,21 @@ def apply_trusted_development_evidence(
             return EvidenceKind.COMPILE
         return None
 
+    trusted_bindings: dict[EvidenceKind, EvidenceBinding] = {}
+    raw_receipt = development_evidence.get("verification_receipt")
+    if isinstance(raw_receipt, dict):
+        raw_bindings = raw_receipt.get("evidence_bindings")
+        if isinstance(raw_bindings, list):
+            for raw_binding in raw_bindings:
+                try:
+                    binding = EvidenceBinding.model_validate(raw_binding)
+                except (TypeError, ValidationError):
+                    continue
+                if binding.status == EvidenceStatus.PASSED:
+                    trusted_bindings.setdefault(binding.kind, binding)
+
     replacements: dict[str, CriterionCheck] = {}
+    used_binding_ids: set[str] = set()
     for criterion in contract.quality_criteria:
         kind = criterion_kind(
             f"{criterion.description} {criterion.evidence_required}"
@@ -275,13 +290,19 @@ def apply_trusted_development_evidence(
         command_id = passed_commands.get(kind) if kind is not None else None
         if command_id is None:
             continue
-        binding = create_evidence_binding(
-            criterion_id=criterion.criterion_id,
-            kind=kind,
-            status=EvidenceStatus.PASSED,
-            summary=f"Trusted adapter {command_id} completed with exit code 0.",
-            command_id=command_id,
+        trusted = trusted_bindings.get(kind)
+        binding = (
+            trusted.model_copy(update={"criterion_id": criterion.criterion_id})
+            if trusted is not None
+            else create_evidence_binding(
+                criterion_id=criterion.criterion_id,
+                kind=kind,
+                status=EvidenceStatus.PASSED,
+                summary=f"Trusted adapter {command_id} completed with exit code 0.",
+                command_id=command_id,
+            )
         )
+        used_binding_ids.add(binding.binding_id)
         replacements[criterion.criterion_id] = CriterionCheck(
             criterion_id=criterion.criterion_id,
             criterion=criterion.description,
@@ -296,4 +317,13 @@ def apply_trusted_development_evidence(
         if check.criterion_id not in replacements
     ]
     checks.extend(replacements.values())
+    for kind, binding in trusted_bindings.items():
+        if binding.binding_id in used_binding_ids:
+            continue
+        checks.append(CriterionCheck(
+            criterion=f"Trusted development evidence: {kind.value}",
+            passed=True,
+            evidence=binding.summary,
+            evidence_bindings=[binding],
+        ))
     return model_report.model_copy(update={"criterion_checks": checks})

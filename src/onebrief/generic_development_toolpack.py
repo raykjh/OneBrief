@@ -1884,6 +1884,49 @@ class ApprovedProjectDevelopmentToolPack:
                     "under the approved project source before claiming UI modernization"
                 )
             else:
+                preserved_flow_requested = bool(
+                    re.search(
+                        r"(?:\bpreserv(?:e|es|ed|ing)\b|보존|유지).{0,140}?"
+                        r"(?:auth(?:entication)?|server|network|communication|transition|인증|서버|통신|전환)",
+                        intent_text,
+                        re.IGNORECASE | re.DOTALL,
+                    )
+                    or re.search(
+                        r"(?:auth(?:entication)?|server|network|communication|transition|인증|서버|통신|전환)"
+                        r".{0,140}?(?:\bpreserv(?:e|es|ed|ing)\b|보존|유지)",
+                        intent_text,
+                        re.IGNORECASE | re.DOTALL,
+                    )
+                )
+                direct_click_route = re.compile(
+                    r"\.\s*onClick\s*\.\s*AddListener\s*\(.{0,900}?"
+                    r"(?:UnityEngine\s*\.\s*SceneManagement\s*\.\s*)?"
+                    r"SceneManager\s*\.\s*LoadScene(?:Async)?\s*\(",
+                    re.IGNORECASE | re.DOTALL,
+                )
+                if preserved_flow_requested:
+                    for relative in production_paths:
+                        if Path(relative).suffix.casefold() != ".cs":
+                            continue
+                        candidate_path = clone / Path(*PurePosixPath(relative).parts)
+                        base_path = self.root / Path(*PurePosixPath(relative).parts)
+                        if not candidate_path.is_file():
+                            continue
+                        candidate_source = candidate_path.read_text(
+                            encoding="utf-8", errors="replace"
+                        )
+                        base_source = (
+                            base_path.read_text(encoding="utf-8", errors="replace")
+                            if base_path.is_file() else ""
+                        )
+                        if direct_click_route.search(candidate_source) and not direct_click_route.search(
+                            base_source
+                        ):
+                            issues.append(
+                                "a preserved authentication/server journey must not be satisfied by newly "
+                                f"wiring a product UI onClick listener directly to SceneManager.LoadScene in {relative}; "
+                                "invoke the existing controller/router path and prove that path instead"
+                            )
                 changed_scene_assets = any(
                     Path(path).suffix.casefold() in {".unity", ".prefab"}
                     for path in production_paths

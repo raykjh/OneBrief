@@ -1097,6 +1097,10 @@ class ExecutionPipeline:
     def _development_evidence(self, output_dir: Path) -> dict[str, object] | None:
         development_dir = output_dir / "development"
         run = self._load(development_dir / "development_run.json", DevelopmentRun)
+        verification_receipt = self._load(
+            development_dir / "verification_commands.json",
+            DevelopmentVerificationReceipt,
+        )
         change_set_path = output_dir / "code_change_set.json"
         if run is None or not change_set_path.is_file():
             return None
@@ -1164,6 +1168,10 @@ class ExecutionPipeline:
         return {
             "change_set": compact_change_set,
             "development_run": compact_run,
+            "verification_receipt": (
+                verification_receipt.model_dump(mode="json")
+                if verification_receipt is not None else None
+            ),
             "changed_files": changed_files,
             "runtime_evidence": runtime_evidence,
             "trusted_observation_receipts": trusted_observation_receipts,
@@ -4434,9 +4442,10 @@ class ExecutionPipeline:
                     completion_evidence_path,
                     completion_evidence.model_dump_json(indent=2),
                 )
-                report = apply_completion_evidence_override(
-                    model_report, completion_evidence
+                report = apply_trusted_development_evidence(
+                    model_report, requirements, self._development_evidence(output_dir)
                 )
+                report = apply_completion_evidence_override(report, completion_evidence)
                 report = apply_deterministic_override(report, grounding)
                 evidence_sufficiency = validate_evidence_sufficiency(
                     intake, requirements, sources, draft
@@ -4566,9 +4575,10 @@ class ExecutionPipeline:
                         output_dir / f"completion_evidence_r{revision_round}.json",
                         completion_evidence.model_dump_json(indent=2),
                     )
-                    report = apply_completion_evidence_override(
-                        model_report, completion_evidence
+                    report = apply_trusted_development_evidence(
+                        model_report, requirements, self._development_evidence(output_dir)
                     )
+                    report = apply_completion_evidence_override(report, completion_evidence)
                     report = apply_deterministic_override(report, grounding)
                     evidence_sufficiency = validate_evidence_sufficiency(
                         intake, requirements, sources, draft

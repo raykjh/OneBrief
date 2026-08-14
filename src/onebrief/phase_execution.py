@@ -267,8 +267,10 @@ def phase_for_stage(stage: str) -> ExecutionPhase:
             return phase
     if normalized.startswith("long_form_draft") or normalized.startswith("revision"):
         return ExecutionPhase.PRODUCT_IMPLEMENTATION
-    if normalized.startswith("independent_verification") or normalized.startswith(
-        "final_approval"
+    if (
+        normalized.startswith("independent_verification")
+        or normalized.startswith("final_approval")
+        or normalized.startswith("policy_guard")
     ):
         return ExecutionPhase.FINAL_VERIFICATION
     return ExecutionPhase.SHARED_CONTEXT

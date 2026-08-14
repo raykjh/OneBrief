@@ -5,6 +5,12 @@ from onebrief.completion_evidence import (
     validate_completion_evidence,
 )
 from onebrief.execution_schemas import CriterionCheck, VerificationReport, Verdict
+from onebrief.handoff_protocol import (
+    ArtifactReference,
+    EvidenceKind,
+    EvidenceStatus,
+    create_evidence_binding,
+)
 from onebrief.schemas import (
     CompletionContract,
     EvaluationMode,
@@ -194,3 +200,68 @@ def test_trusted_compile_receipt_replaces_model_log_misclassification() -> None:
     assert len(corrected.criterion_checks) == 1
     assert corrected.criterion_checks[0].passed is True
     assert corrected.criterion_checks[0].evidence_bindings[0].command_id == "unity_compile"
+
+
+def test_trusted_receipt_populates_compile_behavior_and_visual_dimensions() -> None:
+    base = requirements("Preserve the Unity authentication path from Login to Lobby.")
+    contract = CompletionContract(
+        target_state="Login reaches Lobby through the preserved authentication path.",
+        quality_criteria=[
+            QualityCriterion(
+                criterion_id="Q01",
+                description="Unity compilation success",
+                evaluation_mode=EvaluationMode.DETERMINISTIC,
+                evidence_required="Unity compile output.",
+            ),
+            QualityCriterion(
+                criterion_id="Q91",
+                description="Preserved Login to Lobby transition behavior",
+                evaluation_mode=EvaluationMode.DETERMINISTIC,
+                evidence_required="PlayMode interaction evidence.",
+            ),
+        ],
+    )
+    bindings = [
+        create_evidence_binding(
+            criterion_id=None,
+            kind=kind,
+            status=EvidenceStatus.PASSED,
+            summary=summary,
+            artifact=(
+                ArtifactReference(
+                    artifact_type="unity_manifest",
+                    path="development/unity/runtime-evidence.json",
+                    sha256="a" * 64,
+                )
+                if kind in {EvidenceKind.BEHAVIOR, EvidenceKind.VISUAL}
+                else None
+            ),
+            command_id=command,
+        )
+        for kind, summary, command in (
+            (EvidenceKind.COMPILE, "Compilation passed.", "unity_compile"),
+            (EvidenceKind.BEHAVIOR, "The shipped click path executed.", "unity_playmode"),
+            (EvidenceKind.VISUAL, "Rendered PNG integrity passed.", "unity_playmode"),
+        )
+    ]
+    payload = evidence("unity_compile", "unity_playmode")
+    payload["verification_receipt"] = {
+        "evidence_bindings": [item.model_dump(mode="json") for item in bindings]
+    }
+
+    corrected = apply_trusted_development_evidence(
+        passing_report(),
+        base.model_copy(update={"completion_contract": contract}),
+        payload,
+    )
+
+    observed = {
+        binding.kind
+        for check in corrected.criterion_checks
+        for binding in check.evidence_bindings
+    }
+    assert observed == {
+        EvidenceKind.COMPILE,
+        EvidenceKind.BEHAVIOR,
+        EvidenceKind.VISUAL,
+    }
