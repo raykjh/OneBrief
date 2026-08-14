@@ -212,6 +212,24 @@ def test_invalid_unity_visual_manifest_stays_in_evidence_construction() -> None:
     assert decision.model_repair_allowed is True
 
 
+def test_compile_error_in_generated_test_stays_in_evidence_construction() -> None:
+    decision = decide_repair_phase(
+        context="development_verification",
+        failure_text=(
+            "development verification failed: unity_compile (exit_code=1) "
+            "Assets/Tests/PlayMode/OneBriefVisualLoginTest.cs(48,30): error CS0029: "
+            "Cannot implicitly convert type OneBrief.Visual.OneBriefAtomicScreenshot."
+            "ScenarioReceipt to string"
+        ),
+        round_number=3,
+        affected_paths=["Assets/Tests/PlayMode/OneBriefVisualLoginTest.cs"],
+    )
+
+    assert decision.failure_code == FailureCode.BUILD_FAILED
+    assert decision.failure_owner == FailureOwner.EVIDENCE
+    assert decision.next_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
+
+
 def test_visual_preflight_authentication_bypass_stays_product_owned() -> None:
     decision = decide_repair_phase(
         context="development_verification",

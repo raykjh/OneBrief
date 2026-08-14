@@ -2321,6 +2321,16 @@ class ApprovedProjectDevelopmentToolPack:
                     "OneBriefAtomicScreenshot.WriteManifestAtomically requires the complete schema JSON and every "
                     "CaptureReceipt; a zero-argument log-only call cannot publish durable evidence"
                 )
+            if re.search(
+                r"\bstring\s+[a-z_][a-z0-9_]*\s*=\s*"
+                r"onebriefatomicscreenshot\.capturescenario\s*\(",
+                structural,
+            ):
+                issues.append(
+                    "OneBriefAtomicScreenshot.CaptureScenario returns ScenarioReceipt, not string; "
+                    "store it as var or OneBriefAtomicScreenshot.ScenarioReceipt and pass that receipt "
+                    "to WriteManifestAtomically"
+                )
             if '${"' in combined or "${'" in combined:
                 issues.append("use valid C# interpolation ($\"...\"), never JavaScript-style ${...}")
             if "runtime-evidence.json" not in combined and not uses_scenario_api:

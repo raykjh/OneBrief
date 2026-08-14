@@ -346,6 +346,19 @@ def classify_failure_owner(
     layer = classify_failure_layer(context, failure_text)
     code = classify_failure_code(context, failure_text, layer)
     typed_owner = failure_owner_for(code, layer)
+    paths = affected_paths or []
+    evidence_targeted = bool(paths) and all(is_evidence_path(path) for path in paths)
+    # Build/runtime codes normally indicate a shipped-product defect, but the
+    # compiler can name a generated test or trusted evidence harness as the
+    # only failing surface. The exact failed delta is a stronger ownership
+    # signal than the generic build code; keep that repair in the evidence
+    # wallet so a test compiler error cannot open product-write authority.
+    if layer in {
+        FailureLayer.BUILD,
+        FailureLayer.RUNTIME,
+        FailureLayer.SOURCE_BINDING,
+    } and evidence_targeted:
+        return FailureOwner.EVIDENCE
     if code != FailureCode.UNKNOWN or layer in {
         FailureLayer.EVIDENCE_RUNTIME,
         FailureLayer.EVIDENCE_TOPOLOGY,
@@ -357,8 +370,6 @@ def classify_failure_owner(
     }:
         return typed_owner
     normalized = failure_text.casefold()
-    paths = affected_paths or []
-    evidence_targeted = bool(paths) and all(is_evidence_path(path) for path in paths)
     # Layer classification is authoritative when runtime evidence has already
     # identified a shipped product defect.  Audit suffixes from the evidence
     # phase must not pull that defect back into the test-harness wallet.

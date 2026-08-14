@@ -1306,6 +1306,18 @@ class ExecutionPipeline:
             blockers = [feedback]
         def blocker_action(blocker: str) -> str:
             lowered = blocker.casefold()
+            if (
+                "cannot implicitly convert type" in lowered
+                and "onebrief.visual.onebriefatomicscreenshot.scenarioreceipt" in lowered
+                and "string" in lowered
+            ):
+                return (
+                    "Repair only the generated evidence test's trusted-helper return type. "
+                    "OneBriefAtomicScreenshot.CaptureScenario returns "
+                    "OneBriefAtomicScreenshot.ScenarioReceipt, not string. Store the result as var or that "
+                    "exact ScenarioReceipt type and pass it unchanged to WriteManifestAtomically. Do not edit "
+                    "product source, redefine the helper, or alter the asserted behavior."
+                )
             if "unity test failures" in lowered:
                 return (
                     "Repair the exact failing PlayMode assertion named in the trusted Unity result. Exercise the "

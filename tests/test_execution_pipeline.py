@@ -2951,6 +2951,20 @@ def test_fake_unity_evidence_helper_failure_requires_the_supplied_exact_api() ->
     assert "WriteManifestAtomically(scenarioReceipt)" in instructions
 
 
+def test_scenario_receipt_compile_error_gets_exact_evidence_only_repair() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "development verification failed: unity_compile: "
+        "Assets/Tests/PlayMode/OneBriefVisualLoginTest.cs(48,30): error CS0029: "
+        "Cannot implicitly convert type 'OneBrief.Visual.OneBriefAtomicScreenshot.ScenarioReceipt' "
+        "to 'string'"
+    )
+
+    instruction = report.revision_instructions[0]
+    assert "CaptureScenario returns" in instruction
+    assert "ScenarioReceipt, not string" in instruction
+    assert "Do not edit product source" in instruction
+
+
 def test_atomic_unity_harness_instruction_publishes_exact_helper_contract() -> None:
     report = ExecutionPipeline._development_failure_report(
         "development verification failed: Unity visual test contract: add a discoverable "

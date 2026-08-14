@@ -1990,6 +1990,33 @@ def test_unity_visual_preflight_rejects_declared_destination_without_runtime_ass
     assert any("precondition-free click test" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_rejects_string_for_scenario_receipt(tmp_path: Path) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-invalid-scenario-receipt-type"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'string receipt = OneBriefAtomicScreenshot.CaptureScenario("login", "Login", '
+        '"load", 1, "login.png", Camera.main, 1280, 720, canvases); '
+        "OneBriefAtomicScreenshot.WriteManifestAtomically(receipt); } }",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile, clone, "Capture rendered Unity Login UI evidence."
+    )
+
+    assert any("CaptureScenario returns ScenarioReceipt, not string" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_accepts_existing_test_account_authentication_path(
     tmp_path: Path,
 ) -> None:
