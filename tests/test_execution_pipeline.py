@@ -23,6 +23,7 @@ from onebrief.execution_pipeline import (
     development_proposal_changes,
     filter_development_proposal_for_phase,
     phase_owned_handoff_paths,
+    paths_outside_active_repair_contract,
     development_toolpack_focus_text,
     development_repair_requires_anchored_range,
     evidence_repair_has_bounded_uncommitted_candidate,
@@ -46,6 +47,7 @@ from onebrief.execution_pipeline import (
 from onebrief.execution_agents import DeveloperAgent
 from onebrief.execution_limits import DEVELOPER_OUTPUT_CAP
 from onebrief.guarded_gemini import BudgetedGeminiClient
+from onebrief.convergence_policy import RepairContract
 from onebrief.execution_schemas import (
     AnalysisPackage,
     DraftArtifact,
@@ -130,6 +132,40 @@ def test_evidence_handoff_falls_back_only_to_prior_evidence_paths() -> None:
     )
 
     assert paths == ["Assets/Tests/PlayMode/OneBriefVisualTests.cs"]
+
+
+def test_verifier_only_replay_does_not_reauthorize_cumulative_candidate_paths() -> None:
+    contract = RepairContract.model_validate({
+        "contract_id": "RC-0123456789abcdef",
+        "observation_id": "FO-0123456789abcdef",
+        "progress_kind": "new_hypothesis",
+        "occurrence": 1,
+        "hypothesis": {
+            "hypothesis_id": "RH-0123456789abcdef",
+            "suspected_cause": "One product runtime behavior remains incomplete.",
+            "cheapest_probe": "Replay the already-built candidate.",
+            "expected_signal": "The unchanged trusted verifier produces a receipt.",
+            "repair_boundary": "One product source file.",
+            "requires_model_reasoning": False,
+        },
+        "permitted_paths": ["Assets/Scripts/LoginBinder.cs"],
+        "verification_ladder": ["compile", "targeted_test"],
+        "execution_allowed": True,
+        "escalation_required": False,
+        "rationale": "Verify before buying another repair turn.",
+    })
+    cumulative_paths = [
+        "Assets/Scripts/LoginBinder.cs",
+        "Assets/Tests/PlayMode/OneBriefVisualLoginLobbyTest.cs",
+        "Assets/Tests/PlayMode/OneBrief.Visual.Tests.asmdef",
+    ]
+
+    assert paths_outside_active_repair_contract(
+        cumulative_paths, contract, reverify_existing=True
+    ) == []
+    assert paths_outside_active_repair_contract(
+        cumulative_paths, contract, reverify_existing=False
+    ) == cumulative_paths[1:]
 
 
 class FakeGateway:

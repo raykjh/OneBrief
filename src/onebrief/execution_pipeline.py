@@ -230,6 +230,33 @@ def phase_owned_handoff_paths(
     ))
 
 
+def paths_outside_active_repair_contract(
+    proposed_paths: list[str],
+    contract: RepairContract | None,
+    *,
+    reverify_existing: bool,
+) -> list[str]:
+    """Return only newly proposed paths that exceed the active repair contract.
+
+    A continuation may restore a cumulative candidate containing product and
+    evidence changes from earlier, separately authorized phases.  A verifier-
+    only replay does not propose those files again, so applying the current
+    one-surface repair contract to the whole restored candidate produces a
+    false authority expansion.  Fresh maker turns remain fail-closed.
+    """
+
+    if reverify_existing or contract is None or not contract.permitted_paths:
+        return []
+    permitted = {
+        path.replace("\\", "/").casefold()
+        for path in contract.permitted_paths
+    }
+    return [
+        path for path in proposed_paths
+        if path.replace("\\", "/").casefold() not in permitted
+    ]
+
+
 def visual_repair_production_target_allowed(path: str) -> bool:
     """Fail closed when a rendered-product defect points at proof instead of product code."""
 
@@ -2637,19 +2664,16 @@ class ExecutionPipeline:
                         development_change_path(item)
                         for item in allowed_changes
                     ]
-            if active_contract is not None and active_contract.permitted_paths:
-                permitted = {
-                    path.replace("\\", "/").casefold()
-                    for path in active_contract.permitted_paths
-                }
-                outside_contract = [
-                    path for path in proposed_paths if path.casefold() not in permitted
-                ]
-                if outside_contract:
-                    raise PermissionError(
-                        "repair proposal is outside the causal contract permitted paths: "
-                        + ", ".join(outside_contract)
-                    )
+            outside_contract = paths_outside_active_repair_contract(
+                proposed_paths,
+                active_contract,
+                reverify_existing=reverify_existing,
+            )
+            if outside_contract:
+                raise PermissionError(
+                    "repair proposal is outside the causal contract permitted paths: "
+                    + ", ".join(outside_contract)
+                )
             active_feedback = " ".join([
                 *(active_report.blocking_issues if active_report else []),
                 *(active_report.revision_instructions if active_report else []),
