@@ -747,6 +747,41 @@ def advance_milestone_candidate(
     change_set = ProjectCodeChangeSet.model_validate_json(
         (output_dir / "development" / "change_set.json").read_text(encoding="utf-8")
     )
+    development_run_path = output_dir / "development" / "development_run.json"
+    development_run = json.loads(development_run_path.read_text(encoding="utf-8"))
+    if development_run.get("result_mode") == "existing_state_verified":
+        patch_path = output_dir / "development" / "changes.patch"
+        if not patch_path.is_file() or patch_path.read_text(
+            encoding="utf-8", errors="replace"
+        ).strip():
+            raise RuntimeError("verified existing-state milestone has a repository patch")
+        if development_run.get("changed_paths") not in ([], None):
+            raise RuntimeError("verified existing-state milestone declares changed paths")
+        for change in change_set.changes:
+            pure = PurePosixPath(change.path)
+            target = (root / Path(*pure.parts)).resolve()
+            if not target.is_relative_to(root) or target.is_symlink() or not target.is_file():
+                raise RuntimeError(
+                    f"verified existing-state milestone target is unavailable: {change.path}"
+                )
+            try:
+                prior = subprocess.run(
+                    ["git", "show", f"HEAD:{change.path}"], cwd=root,
+                    capture_output=True, check=True,
+                ).stdout
+            except subprocess.CalledProcessError as exc:
+                raise RuntimeError(
+                    f"verified existing-state milestone target is untracked: {change.path}"
+                ) from exc
+            if hashlib.sha256(prior).hexdigest() != change.base_sha256:
+                raise RuntimeError(f"milestone candidate base changed: {change.path}")
+            current = target.read_text(encoding="utf-8")
+            normalize = lambda value: value.replace("\r\n", "\n").replace("\r", "\n")
+            if normalize(current) != normalize(change.content):
+                raise RuntimeError(
+                    f"verified existing-state milestone content mismatch: {change.path}"
+                )
+        return before, before, canonical_sha256(change_set)
     for change in change_set.changes:
         pure = PurePosixPath(change.path)
         target = (root / Path(*pure.parts)).resolve()

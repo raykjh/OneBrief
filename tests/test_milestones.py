@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
@@ -7,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from onebrief.milestones import (
+    advance_milestone_candidate,
     MilestoneCheckpoint,
     MilestoneKind,
     MilestonePlan,
@@ -116,6 +118,110 @@ def _evidence(root: Path, name: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(name, encoding="utf-8")
     return path
+
+
+def test_verified_existing_state_advances_without_changed_file_artifacts(tmp_path: Path) -> None:
+    root = tmp_path / "integration"
+    root.mkdir()
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+    source = root / "Assets" / "App.cs"
+    source.parent.mkdir()
+    source.write_text("class App {}\n", encoding="utf-8", newline="\n")
+    subprocess.run(["git", "add", "Assets/App.cs"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "baseline"], cwd=root, check=True, capture_output=True)
+    blob = subprocess.run(
+        ["git", "show", "HEAD:Assets/App.cs"], cwd=root, check=True, capture_output=True
+    ).stdout
+    candidate = ProjectCodeChangeSet(
+        summary="Verify the existing implementation.",
+        changes=[ProjectFileChange(
+            path="Assets/App.cs",
+            base_sha256=hashlib.sha256(blob).hexdigest(),
+            content="class App {}\n",
+            reason="The approved state already satisfies this slice.",
+        )],
+    )
+    output = tmp_path / "M03"
+    development = output / "development"
+    development.mkdir(parents=True)
+    (development / "change_set.json").write_text(
+        candidate.model_dump_json(indent=2), encoding="utf-8"
+    )
+    (development / "development_run.json").write_text(
+        '{"result_mode":"existing_state_verified","changed_paths":[]}', encoding="utf-8"
+    )
+    (development / "changes.patch").write_text("", encoding="utf-8")
+    workspace = MilestoneWorkspace(
+        project_id="julpae",
+        baseline_root=str(root),
+        baseline_registry_root=str(tmp_path / "baseline-registry"),
+        integration_root=str(root),
+        integration_registry_root=str(tmp_path / "integration-registry"),
+        source_revision="a" * 40,
+        integration_base_revision="b" * 40,
+    )
+
+    before, after, digest = advance_milestone_candidate(
+        workspace=workspace, milestone=_plan().milestones[3], output_dir=output
+    )
+
+    assert before == after
+    assert digest == canonical_sha256(candidate)
+    assert subprocess.run(
+        ["git", "status", "--porcelain"], cwd=root, check=True,
+        capture_output=True, text=True,
+    ).stdout == ""
+
+
+def test_verified_existing_state_rejects_content_mismatch(tmp_path: Path) -> None:
+    root = tmp_path / "integration"
+    root.mkdir()
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+    source = root / "Assets" / "App.cs"
+    source.parent.mkdir()
+    source.write_text("class App {}\n", encoding="utf-8", newline="\n")
+    subprocess.run(["git", "add", "Assets/App.cs"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "baseline"], cwd=root, check=True, capture_output=True)
+    blob = subprocess.run(
+        ["git", "show", "HEAD:Assets/App.cs"], cwd=root, check=True, capture_output=True
+    ).stdout
+    candidate = ProjectCodeChangeSet(
+        summary="Claim an existing implementation.",
+        changes=[ProjectFileChange(
+            path="Assets/App.cs",
+            base_sha256=hashlib.sha256(blob).hexdigest(),
+            content="class App { int changed; }\n",
+            reason="This must not be accepted as existing state.",
+        )],
+    )
+    output = tmp_path / "M03"
+    development = output / "development"
+    development.mkdir(parents=True)
+    (development / "change_set.json").write_text(
+        candidate.model_dump_json(indent=2), encoding="utf-8"
+    )
+    (development / "development_run.json").write_text(
+        '{"result_mode":"existing_state_verified","changed_paths":[]}', encoding="utf-8"
+    )
+    (development / "changes.patch").write_text("", encoding="utf-8")
+    workspace = MilestoneWorkspace(
+        project_id="julpae",
+        baseline_root=str(root),
+        baseline_registry_root=str(tmp_path / "baseline-registry"),
+        integration_root=str(root),
+        integration_registry_root=str(tmp_path / "integration-registry"),
+        source_revision="a" * 40,
+        integration_base_revision="b" * 40,
+    )
+
+    with pytest.raises(RuntimeError, match="existing-state milestone content mismatch"):
+        advance_milestone_candidate(
+            workspace=workspace, milestone=_plan().milestones[3], output_dir=output
+        )
 
 
 def test_plan_assigns_every_criterion_once_and_finishes_with_full_regression() -> None:

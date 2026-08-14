@@ -170,7 +170,7 @@ class DeveloperAgent:
         approved_anchor_catalog: list[dict[str, object]] | None = None,
     ) -> BaseModel:
         """Promote an untrusted proposal through the exact approved path boundary."""
-        if self.change_set_schema is ProjectCodeChangeSet:
+        if self.change_set_schema in {ProjectCodeChangeSet, CodeChangeSet}:
             compact_repair = isinstance(
                 raw, (
                     CompactProposedProjectCodeChangeSet,

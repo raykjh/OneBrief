@@ -1346,6 +1346,41 @@ def test_adk_software_failure_keeps_most_progressed_candidate(
 
         def generate_adk_response(self, **_kwargs: object) -> types.GenerateContentResponse:
             payload = self.outputs.pop(0)
+            config = _kwargs.get("config")
+            schema = getattr(config, "response_schema", None)
+            if getattr(schema, "__name__", "").startswith("CatalogBoundProductRepair_"):
+                def enum_values(value: object) -> list[str]:
+                    if isinstance(value, dict):
+                        found = [
+                            item for item in value.get("enum", [])
+                            if isinstance(item, str) and item.startswith("A")
+                        ]
+                        constant = value.get("const")
+                        if isinstance(constant, str) and constant.startswith("A"):
+                            found.append(constant)
+                        return found or next(
+                            (items for nested in value.values() if (items := enum_values(nested))),
+                            [],
+                        )
+                    if isinstance(value, list):
+                        return next(
+                            (items for nested in value if (items := enum_values(nested))),
+                            [],
+                        )
+                    return []
+
+                anchor_id = enum_values(schema.model_json_schema())[0]
+                label = str(payload["summary"])
+                payload = {
+                    "summary": label,
+                    "changes": [{
+                        "path": "web/src/status.ts",
+                        "base_sha256": None,
+                        "anchor_id": anchor_id,
+                        "replace": f"export const status = '{label}';\n",
+                        "reason": label,
+                    }],
+                }
             return types.GenerateContentResponse(candidates=[types.Candidate(
                 content=types.Content(
                     role="model", parts=[types.Part(text=json.dumps(payload))]
@@ -1373,7 +1408,7 @@ def test_adk_software_failure_keeps_most_progressed_candidate(
     output_dir = tmp_path / "regression-output"
     output_dir.mkdir()
 
-    with pytest.raises(RuntimeError, match="no control"):
+    with pytest.raises(RuntimeError, match="no new evidence"):
         ExecutionPipeline(tmp_path / "run", gateway=gateway)._run_adk_development_convergence(
             intake=intake, requirements=_requirements(), sources=[_source()],
             source_payload=[{
