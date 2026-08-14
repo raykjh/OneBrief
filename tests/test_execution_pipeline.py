@@ -33,6 +33,7 @@ from onebrief.execution_pipeline import (
     visual_repair_production_target_allowed,
     relevant_product_repair_sources,
     product_failure_edit_anchors,
+    active_exact_edit_anchors,
     is_unity_evidence_contract_feedback,
     is_development_product_target_failure,
     missing_unity_evidence_bundle_paths,
@@ -2242,6 +2243,12 @@ def test_runtime_product_source_discovery_is_bounded_and_phase_safe() -> None:
         anchor["anchor_id"].startswith("A") and anchor["text"]
         for group in anchors for anchor in group["anchors"]
     )
+
+    assert active_exact_edit_anchors([], anchors) == anchors
+    assert active_exact_edit_anchors(anchors, [{
+        "path": "Assets/Game/Scripts/Login/LoginController.cs",
+        "anchors": [{"anchor_id": "invented", "text": "x"}],
+    }]) == anchors
 
 
 def test_duplicate_unity_screenshot_feedback_requires_capture_at_each_real_state() -> None:

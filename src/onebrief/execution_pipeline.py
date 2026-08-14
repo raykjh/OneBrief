@@ -383,6 +383,34 @@ def product_failure_edit_anchors(
     return groups
 
 
+def active_exact_edit_anchors(
+    current: list[dict[str, object]], state_value: object,
+) -> list[dict[str, object]]:
+    """Adopt only a structurally valid verifier-issued anchor catalog."""
+
+    if not isinstance(state_value, list):
+        return current
+    validated: list[dict[str, object]] = []
+    for group in state_value:
+        if not isinstance(group, dict) or not isinstance(group.get("path"), str):
+            return current
+        anchors = group.get("anchors")
+        if not isinstance(anchors, list) or not anchors:
+            return current
+        valid_anchors: list[dict[str, object]] = []
+        for anchor in anchors:
+            if (
+                not isinstance(anchor, dict)
+                or not re.fullmatch(r"A[0-9a-f]{12}", str(anchor.get("anchor_id", "")))
+                or not isinstance(anchor.get("text"), str)
+                or not str(anchor.get("text", ""))
+            ):
+                return current
+            valid_anchors.append(dict(anchor))
+        validated.append({"path": str(group["path"]), "anchors": valid_anchors})
+    return validated or current
+
+
 def unity_evidence_contract_target_allowed(path: str) -> bool:
     """Allow evidence-topology repairs only in the executed PlayMode harness."""
 
@@ -2487,6 +2515,14 @@ class ExecutionPipeline:
             nonlocal best_failed_candidate, best_failure_message, best_failure_quality
             nonlocal current_exact_edit_anchors
             nonlocal consecutive_identical_candidates
+            # The deterministic verifier can issue a new digest-bound source
+            # catalog after the previous executable check. ADK session state is
+            # authoritative for that turn; a closure captured before the check
+            # must not reject the newly issued anchor as stale.
+            current_exact_edit_anchors = active_exact_edit_anchors(
+                current_exact_edit_anchors,
+                _ctx.session.state.get(EXACT_EDIT_ANCHORS_STATE_KEY),
+            )
             reverify_existing = (
                 round_number == 0
                 and bool(_ctx.session.state.get(REVERIFY_EXISTING_STATE_KEY))
