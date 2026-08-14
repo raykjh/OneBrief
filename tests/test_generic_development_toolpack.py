@@ -534,6 +534,41 @@ def test_generic_inspection_prioritizes_goal_relevant_context(tmp_path: Path) ->
     assert sources[0].name.endswith("localization-manager.js")
 
 
+def test_diagnostic_context_discovers_existing_auth_fixture_without_edit_authority(
+    tmp_path: Path,
+) -> None:
+    root, registry = _approved_node_project(tmp_path)
+    auth = root / "src" / "Login" / "AuthenticationController.js"
+    auth.parent.mkdir(parents=True)
+    auth.write_text(
+        "export function bindDevelopmentAccount(testAccountDropdown, directEnterButton) {\n"
+        "  directEnterButton.onclick = () => createAuthenticatedSession(testAccountDropdown.value);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "Add deterministic authentication fixture")
+    ExternalProjectImporter(registry).import_bytes((root / MANIFEST_NAME).read_bytes())
+    lifecycle = ProjectToolPackLifecycle("generic-node", registry)
+    state = lifecycle.generate_and_qualify()
+    lifecycle.approve(state.qualification.toolpack_sha256)
+
+    context = ApprovedProjectDevelopmentToolPack(
+        "generic-node", registry
+    ).inspect_diagnostic_context(
+        tmp_path / "diagnostic",
+        "Protected destination evidence must inspect an existing deterministic authentication "
+        "fixture such as a development test account and shipped direct-enter control.",
+    )
+
+    matched = next(item for item in context if item["path"] == "src/Login/AuthenticationController.js")
+    assert matched["source_role"] == "read_only_diagnostic_context"
+    assert "repository_path" not in matched
+    assert "directEnterButton" in matched["content_excerpt"]
+    manifest = json.loads((tmp_path / "diagnostic" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["read_only"] is True
+
+
 def test_generic_inspection_understands_korean_localization_goal(tmp_path: Path) -> None:
     root, registry = _approved_node_project(tmp_path)
     localization = root / "src" / "Localization"

@@ -17,6 +17,7 @@ from onebrief.adk_convergence import (
     MAKER_SCHEMA_BINDING_STATE_KEY,
     REVERIFY_EXISTING_STATE_KEY,
     EXACT_EDIT_ANCHORS_STATE_KEY,
+    MAKER_DIAGNOSTIC_CONTEXT_STATE_KEY,
     REPAIR_CONTRACT_STATE_KEY,
     REPAIR_PLAN_STATE_KEY,
     VERIFIER_CONTEXT_STATE_KEY,
@@ -394,6 +395,11 @@ def test_contextual_maker_receives_current_exact_edit_anchors() -> None:
                 "verification_ladder": ["compile", "targeted_test"],
             },
             EXACT_EDIT_ANCHORS_STATE_KEY: [{"path": "web/app/page.tsx"}],
+            MAKER_DIAGNOSTIC_CONTEXT_STATE_KEY: [{
+                "path": "src/auth/session.ts",
+                "source_role": "read_only_diagnostic_context",
+                "content_excerpt": "export function createTestSession() {}",
+            }],
         }
 
     rendered = instruction(Context())
@@ -401,6 +407,8 @@ def test_contextual_maker_receives_current_exact_edit_anchors() -> None:
     assert "web/app/page.tsx" in rendered
     assert '"criterion_id": "Q02"' in rendered
     assert '"cheapest_probe": "compile only"' in rendered
+    assert '"diagnostic_repository_context"' in rendered
+    assert "createTestSession" in rendered
 
 
 def test_deterministic_gate_overrules_model_pass_and_forces_original_maker_retry() -> None:

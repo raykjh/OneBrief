@@ -1653,6 +1653,241 @@ class ApprovedProjectDevelopmentToolPack:
         (output_dir / "repository_inspection.json").write_text(inspection.model_dump_json(indent=2) + "\n", encoding="utf-8")
         return inspection, sources
 
+    def inspect_diagnostic_context(
+        self,
+        output_dir: Path,
+        failure_text: str,
+        *,
+        limit: int = 6,
+        max_total_chars: int = 48_000,
+    ) -> list[dict[str, object]]:
+        """Return bounded read-only excerpts for one trusted repair hypothesis.
+
+        The initial goal-ranked context cannot predict every runtime blocker. A
+        later verifier may prove that the maker needs to discover an existing
+        controller, test fixture, session bootstrap, or similar dependency.
+        This probe searches only committed files inside the already-approved
+        read boundary and exposes excerpts, never new edit authority.
+        """
+
+        if limit <= 0 or max_total_chars <= 0:
+            return []
+        profile, head = self._validate_root()
+        allowed_suffixes = {item.casefold() for item in profile.allowed_suffixes}
+        read_prefixes = tuple(profile.allowed_read_prefixes)
+        tracked = [item for item in self._git("ls-files", "-z").split("\0") if item]
+        expanded = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", failure_text)
+        stop_words = {
+            "approved", "before", "blocker", "change", "complete", "context",
+            "destination", "deterministic", "evidence", "existing", "failure",
+            "fixture", "must", "onebrief", "product", "protected", "repair",
+            "repository", "requested", "state", "through", "unity", "without",
+        }
+        terms = {
+            item.casefold()
+            for item in re.findall(r"[A-Za-z가-힣][A-Za-z0-9_가-힣-]{2,}", expanded)
+            if item.casefold() not in stop_words
+        }
+        lowered = failure_text.casefold()
+        concept_expansions: tuple[tuple[tuple[str, ...], set[str]], ...] = (
+            (("authentication", "authenticated", "login", "credential", "session"), {
+                "login", "auth", "account", "session", "credential", "terms",
+                "test", "development", "dev", "sandbox", "direct", "enter", "start",
+            }),
+            (("navigation", "transition", "route", "scene"), {
+                "navigation", "transition", "route", "router", "scene", "button",
+            }),
+            (("locale", "language", "localization", "glyph"), {
+                "locale", "language", "localization", "dropdown", "text", "font",
+            }),
+            (("audio", "volume", "sound", "bgm", "sfx"), {
+                "audio", "volume", "sound", "music", "bgm", "sfx", "slider",
+            }),
+        )
+        for markers, related in concept_expansions:
+            if any(marker in lowered for marker in markers):
+                terms.update(related)
+        if not terms:
+            return []
+
+        # Ask Git's indexed search for a small candidate set instead of
+        # opening every tracked file in a large game repository. Broad UI
+        # words are excluded from the first pass; path-token matches are added
+        # separately below so an aptly named controller is still considered.
+        broad_probe_terms = {
+            "account", "button", "change", "control", "development", "enter",
+            "language", "login", "navigation", "scene", "session", "start",
+            "state", "test", "text",
+        }
+        probe_terms = sorted(
+            (term for term in terms if len(term) >= 4 and term not in broad_probe_terms),
+            key=lambda item: (-len(item), item),
+        )[:24]
+        matched_paths: set[str] = set()
+        if probe_terms:
+            pattern = "|".join(re.escape(item) for item in probe_terms)
+            completed = subprocess.run(
+                [
+                    "git", "grep", "-I", "-l", "-i", "-E", pattern,
+                    head, "--", *read_prefixes,
+                ],
+                cwd=self.root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=120,
+                shell=False,
+                check=False,
+            )
+            if completed.returncode not in {0, 1}:
+                raise RuntimeError(completed.stderr[:1000])
+            for line in completed.stdout.splitlines():
+                prefix = head + ":"
+                matched_paths.add(line.removeprefix(prefix).replace("\\", "/"))
+
+        def normalized_tokens(value: str) -> str:
+            separated = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", value)
+            return re.sub(r"[^a-z0-9가-힣]+", " ", separated.casefold())
+
+        path_matched = {
+            relative for relative in tracked
+            if any(term in normalized_tokens(relative) for term in terms)
+        }
+        vendor_tokens = {
+            "editor", "externaldependencymanager", "generatedlocalrepo",
+            "googlemobileads", "googleplaygames", "packages", "plugins",
+            "samples", "thirdparty", "vendor",
+        }
+
+        def candidate_path_rank(relative: str) -> tuple[int, int, str]:
+            path_text = normalized_tokens(relative)
+            path_hits = sum(1 for term in terms if term in path_text)
+            vendor = any(token in path_text for token in vendor_tokens)
+            return (1 if vendor else 0, -path_hits, relative.casefold())
+
+        scan_paths = set(sorted(
+            matched_paths | path_matched,
+            key=candidate_path_rank,
+        )[: max(48, limit * 12)])
+        ranked: list[tuple[int, int, str, bytes, str, list[tuple[int, int]]]] = []
+        for relative in tracked:
+            if relative not in scan_paths:
+                continue
+            pure = PurePosixPath(relative)
+            normalized = pure.as_posix()
+            if not any(normalized.startswith(prefix) for prefix in read_prefixes):
+                continue
+            if pure.suffix.casefold() not in allowed_suffixes:
+                continue
+            if pure.suffix.casefold() in {".unity", ".prefab", ".meta"}:
+                continue
+            source_path = (self.root / Path(*pure.parts)).resolve()
+            if (
+                not source_path.is_relative_to(self.root)
+                or source_path.is_symlink()
+                or not source_path.is_file()
+                or source_path.stat().st_size > 1_500_000
+            ):
+                continue
+            # The root was just proven clean and bound to ``head``. Scan local
+            # bytes for candidate ranking, then re-read only the final bounded
+            # selections from Git before exposing them to the model.
+            data = source_path.read_bytes()
+            text = data.decode("utf-8", errors="replace")
+            path_text = normalized_tokens(normalized)
+            path_hits = sum(1 for term in terms if term in path_text)
+            scored_lines: list[tuple[int, int]] = []
+            distinct_content_terms: set[str] = set()
+            for index, line in enumerate(text.splitlines()):
+                line_text = normalized_tokens(line)
+                line_terms = {term for term in terms if term in line_text}
+                if not line_terms:
+                    continue
+                distinct_content_terms.update(line_terms)
+                declaration_bonus = 4 if re.search(
+                    r"\b(class|struct|interface|void|public|private|protected|async|function|def)\b",
+                    line,
+                ) else 0
+                scored_lines.append((len(line_terms) * 5 + declaration_bonus, index))
+            if not scored_lines:
+                continue
+            vendor_penalty = 80 if any(
+                token in normalized_tokens(normalized) for token in vendor_tokens
+            ) else 0
+            score = path_hits * 20 + len(distinct_content_terms) * 4 + max(
+                item[0] for item in scored_lines
+            ) - vendor_penalty
+            ranked.append((score, path_hits, normalized.casefold(), data, text, scored_lines))
+        ranked.sort(key=lambda item: (-item[0], -item[1], item[2]))
+
+        records: list[dict[str, object]] = []
+        total_chars = 0
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for _score, _path_hits, folded_path, data, text, scored_lines in ranked:
+            relative = next(
+                item for item in tracked if item.casefold() == folded_path
+            )
+            committed_data = self._blob(head, relative)
+            if committed_data != data:
+                raise RuntimeError(
+                    f"diagnostic context changed after clean revision validation: {relative}"
+                )
+            data = committed_data
+            text = data.decode("utf-8", errors="replace")
+            lines = text.splitlines()
+            windows: list[tuple[int, int]] = []
+            for _line_score, index in sorted(scored_lines, key=lambda item: (-item[0], item[1])):
+                start = max(0, index - 8)
+                end = min(len(lines), index + 10)
+                if any(not (end <= prior_start or start >= prior_end) for prior_start, prior_end in windows):
+                    continue
+                windows.append((start, end))
+                if len(windows) >= 4:
+                    break
+            windows.sort()
+            excerpt = "\n\n".join(
+                f"--- lines {start + 1}-{end} ---\n" + "\n".join(lines[start:end])
+                for start, end in windows
+            )
+            remaining = max_total_chars - total_chars
+            if remaining <= 0:
+                break
+            excerpt = excerpt[: min(12_000, remaining)]
+            if not excerpt.strip():
+                continue
+            record = {
+                "path": relative,
+                "source_revision": head,
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "source_role": "read_only_diagnostic_context",
+                "content_excerpt": excerpt,
+            }
+            records.append(record)
+            total_chars += len(excerpt)
+            excerpt_path = output_dir / (hashlib.sha256(relative.encode("utf-8")).hexdigest()[:12] + ".txt")
+            excerpt_path.write_text(
+                f"path: {relative}\nsource_revision: {head}\n\n{excerpt}\n",
+                encoding="utf-8",
+            )
+            if len(records) >= limit:
+                break
+
+        manifest = {
+            "schema_version": "onebrief-read-only-diagnostic-context-v1",
+            "source_revision": head,
+            "failure_sha256": hashlib.sha256(failure_text.encode("utf-8")).hexdigest(),
+            "read_only": True,
+            "files": records,
+        }
+        temporary = output_dir / f"manifest.{uuid4().hex}.tmp"
+        temporary.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, output_dir / "manifest.json")
+        return records
+
     def _commands(
         self, profile, clone: Path, goal_text: str
     ) -> list[tuple[str, list[str], int]]:

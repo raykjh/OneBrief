@@ -27,6 +27,7 @@ VERIFIER_CONTEXT_STATE_KEY = "onebrief_verifier_context"
 SKIP_VERIFIER_STATE_KEY = "onebrief_skip_verifier"
 REVERIFY_EXISTING_STATE_KEY = "onebrief_reverify_existing_candidate"
 EXACT_EDIT_ANCHORS_STATE_KEY = "onebrief_exact_edit_anchors"
+MAKER_DIAGNOSTIC_CONTEXT_STATE_KEY = "onebrief_maker_diagnostic_context"
 REPAIR_PLAN_STATE_KEY = "onebrief_repair_plan"
 REPAIR_CONTRACT_STATE_KEY = "onebrief_repair_contract"
 MAKER_MODEL_BINDING_STATE_KEY = "onebrief_maker_model_binding"
@@ -369,6 +370,9 @@ def build_text_convergence_agent(
                 "repair_plan": ctx.state.get(REPAIR_PLAN_STATE_KEY),
                 "repair_contract": ctx.state.get(REPAIR_CONTRACT_STATE_KEY),
                 "exact_edit_anchors": ctx.state.get(EXACT_EDIT_ANCHORS_STATE_KEY, []),
+                "diagnostic_repository_context": ctx.state.get(
+                    MAKER_DIAGNOSTIC_CONTEXT_STATE_KEY, []
+                ),
                 "execution_phase": ctx.state.get("onebrief:execution_phase"),
             },
             ensure_ascii=False,

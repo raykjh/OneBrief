@@ -23,6 +23,7 @@ from onebrief.adk_convergence import (
     VERIFICATION_STATE_KEY,
     REVERIFY_EXISTING_STATE_KEY,
     EXACT_EDIT_ANCHORS_STATE_KEY,
+    MAKER_DIAGNOSTIC_CONTEXT_STATE_KEY,
     REPAIR_CONTRACT_STATE_KEY,
     REPAIR_PLAN_STATE_KEY,
     VERIFIER_CONTEXT_STATE_KEY,
@@ -2007,6 +2008,28 @@ class ExecutionPipeline:
                 receipt,
             )
 
+        def refresh_diagnostic_repository_context(
+            feedback: str, ctx, round_number: int
+        ) -> list[dict[str, object]]:
+            """Expose new read-only source excerpts only when trusted evidence asks for inspection."""
+
+            normalized = " ".join(feedback.split()).casefold()
+            if not isinstance(development_pack, ApprovedProjectDevelopmentToolPack):
+                return []
+            if not any(marker in normalized for marker in (
+                "protected destination evidence",
+                "precondition-free click test",
+                "inspect the approved repository context",
+            )):
+                return []
+            context = development_pack.inspect_diagnostic_context(
+                output_dir / "diagnostic_repository_context" / f"r{round_number:02d}",
+                feedback,
+            )
+            if context:
+                ctx.session.state[MAKER_DIAGNOSTIC_CONTEXT_STATE_KEY] = context
+            return context
+
         # A Cloud continuation may restore the last verified-or-failed candidate
         # into the fresh child work directory.  Preserve that candidate as the
         # same maker's starting point instead of silently asking the model to
@@ -3442,6 +3465,14 @@ class ExecutionPipeline:
         ) -> VerificationReport:
             model_report = enforce_temperament_audit(raw_report, VERIFIER_PROFILE)
             if bool(ctx.session.state.get(SKIP_VERIFIER_STATE_KEY, False)):
+                refresh_diagnostic_repository_context(
+                    " | ".join([
+                        *model_report.blocking_issues,
+                        *model_report.revision_instructions,
+                    ]),
+                    ctx,
+                    round_number,
+                )
                 return model_report
             self._write(
                 output_dir / f"model_verification_r{round_number}.json",
@@ -3530,6 +3561,8 @@ class ExecutionPipeline:
                 *report.blocking_issues,
                 *report.revision_instructions,
             ])[:12_000]
+            if report.verdict == Verdict.REVISE:
+                refresh_diagnostic_repository_context(feedback, ctx, round_number)
             if is_development_product_target_failure(feedback):
                 ctx.session.state[EXACT_EDIT_ANCHORS_STATE_KEY] = (
                     product_failure_edit_anchors(prepared_sources, feedback)
