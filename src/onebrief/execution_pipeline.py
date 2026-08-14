@@ -757,13 +757,7 @@ def development_maker_schema_for(
     ):
         return UnityEvidenceJourneyPlan
     if is_development_product_target_failure(feedback):
-        bounded_unity_product_repair = any(marker in normalized_feedback for marker in (
-            "unity_playmode_visual_tests",
-            "unity test failures",
-            "preserved authentication/server journey",
-            "directly to scenemanager.loadscene",
-        ))
-        if exact_edit_anchors and bounded_unity_product_repair:
+        if exact_edit_anchors:
             return catalog_bound_product_repair_schema(exact_edit_anchors)
         return ExactRepairProjectCodeChangeSet
     if (

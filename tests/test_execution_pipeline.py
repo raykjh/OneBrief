@@ -2778,6 +2778,23 @@ def test_unseen_large_source_binding_uses_catalog_anchored_repair() -> None:
     assert issubclass(selected, CatalogAnchoredProductRepair)
 
 
+def test_prohibited_runtime_repair_with_anchors_stays_catalog_bounded() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "change content requests a prohibited host-runtime capability"
+    )
+    anchors = [{
+        "path": "Assets/JULPAE/Scripts/Localization/JulpaeLanguageSelectorGroup.cs",
+        "anchors": [{
+            "anchor_id": "Aabcdef012345",
+            "text": "private void OnDropdownChanged(int index) {}",
+        }],
+    }]
+
+    selected = development_maker_schema_for(report, None, anchors)
+
+    assert issubclass(selected, CatalogAnchoredProductRepair)
+
+
 def test_runtime_product_source_discovery_is_bounded_and_phase_safe() -> None:
     sources = [{
         "repository_path": "Assets/Game/Scripts/Common/SceneRouter.cs",
