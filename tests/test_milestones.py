@@ -223,6 +223,53 @@ def test_budget_reserves_every_milestone_before_owner_approval() -> None:
     assert any("vertical-slice passes" in item for item in estimate.notes)
 
 
+def test_execution_caps_quest_allocation_at_quoted_maximum(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    plan = _plan()
+    captured: dict[str, float] = {}
+
+    class CapturingQuestStore:
+        def __init__(self, _root, **kwargs):
+            captured["approved_budget_usd"] = kwargs["approved_budget_usd"]
+            raise RuntimeError("captured")
+
+    monkeypatch.setattr("onebrief.milestones.QuestStore", CapturingQuestStore)
+    workspace = MilestoneWorkspace(
+        project_id="julpae",
+        baseline_root=str(tmp_path),
+        baseline_registry_root=str(tmp_path),
+        integration_root=str(tmp_path),
+        integration_registry_root=str(tmp_path),
+        source_revision="a" * 40,
+        integration_base_revision="a" * 40,
+    )
+    state = type("State", (), {
+        "execution_ready": True,
+        "generated": type("Generated", (), {
+            "sha256": "b" * 64,
+            "allowed_write_prefixes": ["Assets/"],
+        })(),
+    })()
+    monkeypatch.setattr(
+        "onebrief.milestones.ProjectToolPackLifecycle.state", lambda _self: state
+    )
+
+    with pytest.raises(RuntimeError, match="captured"):
+        execute_milestone_plan(
+            plan=plan,
+            requirements=_requirements(),
+            work_dir=tmp_path / "work",
+            workspace=workspace,
+            pipeline_factory=lambda _root: object(),
+            intake=IntakeRequest(goal="Modernize Unity UI."),
+            sources=[],
+            approved_budget_usd=plan.maximum_cost_usd + 5,
+        )
+
+    assert captured["approved_budget_usd"] == plan.maximum_cost_usd
+
+
 def test_workspace_clone_enables_windows_long_paths_before_checkout(
     tmp_path: Path, monkeypatch,
 ) -> None:

@@ -892,6 +892,12 @@ def execute_milestone_plan(
     state = lifecycle.state()
     if not state.execution_ready or state.generated is None:
         raise PermissionError("baseline ToolPack changed before Quest execution")
+    # The user's immutable approval is a ceiling, not a requirement to spend
+    # beyond the quoted plan.  Quest allocation is bounded by both values.
+    quest_budget_usd = min(
+        plan.maximum_cost_usd,
+        plan.maximum_cost_usd if approved_budget_usd is None else approved_budget_usd,
+    )
     quest_store = QuestStore(
         work_dir / "quest_state",
         plan=plan,
@@ -900,7 +906,7 @@ def execute_milestone_plan(
         allowed_write_prefixes=list(getattr(
             state.generated, "allowed_write_prefixes", []
         )),
-        approved_budget_usd=approved_budget_usd,
+        approved_budget_usd=quest_budget_usd,
     )
 
     def run_quest_pipeline(
