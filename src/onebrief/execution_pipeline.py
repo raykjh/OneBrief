@@ -788,6 +788,10 @@ def development_maker_schema_for(
         ):
             return UnityRenderTextureEvidenceRepair
         return UnityEvidenceAnchoredSourceRepair
+    if active_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION:
+        if exact_edit_anchors:
+            return catalog_bound_evidence_repair_schema(exact_edit_anchors)
+        return UnityEvidenceJourneyPlan
     # Dynamic schemas persist on the same LlmAgent. Explicitly restore the
     # normal bounded repair contract after the atomic pair has been created.
     return CompactProposedProjectCodeChangeSet
@@ -3102,7 +3106,8 @@ class ExecutionPipeline:
                         SKIP_VERIFIER_STATE_KEY: True,
                     }
             if (
-                (semantic_visual_repair or product_target_repair)
+                active_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+                and (semantic_visual_repair or product_target_repair)
                 and not evidence_contract_repair
                 and not reverify_existing
             ):

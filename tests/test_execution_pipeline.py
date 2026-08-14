@@ -2861,6 +2861,26 @@ def test_unseen_evidence_source_binding_stays_in_evidence_catalog() -> None:
     })
 
 
+def test_evidence_phase_fallback_never_reopens_general_compact_repair() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "The trusted failure is owned by evidence_construction, but the proposal "
+        "changed only product source. Repair the executable evidence harness."
+    )
+    anchors = [{
+        "path": "Assets/Tests/PlayMode/OneBriefGeneratedJourneyTest.cs",
+        "anchors": [{
+            "anchor_id": "Aabcdef012345",
+            "text": "RequireActive(\"LanguageDropdown\");",
+        }],
+    }]
+
+    selected = development_maker_schema_for(
+        report, None, anchors, ExecutionPhase.EVIDENCE_CONSTRUCTION
+    )
+
+    assert issubclass(selected, CatalogAnchoredEvidenceRepair)
+
+
 def test_prohibited_runtime_repair_with_anchors_stays_catalog_bounded() -> None:
     report = ExecutionPipeline._development_failure_report(
         "change content requests a prohibited host-runtime capability"
