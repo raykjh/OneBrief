@@ -137,6 +137,7 @@ from onebrief.schemas import (
     InternalSource,
     OutputTarget,
     RequirementsAnalysis,
+    SourcePriority,
     ToolPackId,
 )
 from onebrief.public_research import PublicResearchResult
@@ -189,6 +190,43 @@ def quest_initial_execution_phase(sources: list[InternalSource]) -> ExecutionPha
         return ExecutionPhase(payload["initial_execution_phase"])
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         raise RuntimeError("active Quest has an invalid initial execution phase") from exc
+
+
+def approved_runtime_authority_source(
+    development_pack: ApprovedProjectDevelopmentToolPack,
+) -> InternalSource | None:
+    """Project the approved non-secret runtime fixture into maker context."""
+
+    profile = development_pack._profile()
+    bindings = [
+        item.model_dump(mode="json")
+        for item in profile.runtime_arguments
+        if item.authentication_selector and item.authentication_submit
+    ]
+    if not bindings:
+        return None
+    payload = {
+        "schema_version": "onebrief-approved-runtime-authority-v1",
+        "toolpack_sha256": profile.sha256,
+        "instruction": (
+            "For protected-destination evidence, use each authentication_selector "
+            "before its paired authentication_submit exactly as ordered. Do not substitute "
+            "an onboarding or generic Start path."
+        ),
+        "bindings": bindings,
+    }
+    content = json.dumps(payload, ensure_ascii=False, indent=2)
+    encoded = content.encode("utf-8")
+    return InternalSource(
+        name="onebrief-approved-runtime-authority.json",
+        priority=SourcePriority.MANDATORY,
+        requirement_keys=["approved_runtime_authority"],
+        summary="Digest-bound non-secret runtime arguments and authentication controls.",
+        content=content,
+        media_type="application/json",
+        size_bytes=len(encoded),
+        sha256=hashlib.sha256(encoded).hexdigest(),
+    )
 
 
 def development_proposal_changes(raw: object) -> list[object]:
@@ -2113,6 +2151,13 @@ class ExecutionPipeline:
             isinstance(development_pack, ApprovedProjectDevelopmentToolPack)
             and development_pack._uses_unity_runtime(development_pack._profile())
         )
+        if isinstance(development_pack, ApprovedProjectDevelopmentToolPack):
+            runtime_authority = approved_runtime_authority_source(development_pack)
+            if runtime_authority is not None:
+                source_payload = [
+                    *source_payload,
+                    runtime_authority.model_dump(mode="json"),
+                ]
         prepared_sources: list[dict[str, object]] = []
         for source in source_payload:
             prepared = dict(source)
@@ -3764,7 +3809,9 @@ class ExecutionPipeline:
             "Return only the ordered declarative scene/control journey. OneBrief compiles that plan into a "
             "trusted PlayMode harness, assertions, screenshots, and an atomic evidence manifest. For protected "
             "login destinations, include the existing approved test-account, terms, session, or credential "
-            "precondition before the shipped navigation control. "
+            "precondition before the shipped navigation control. When onebrief-approved-runtime-authority.json "
+            "is present, it is the mandatory exact fixture: use authentication_selector before its paired "
+            "authentication_submit and do not substitute any other login path. "
             "Files marked immutable_acceptance_contract may not be changed. Never touch secrets, dependencies, "
             "Git metadata, deployment, accounts, financial transactions, or paths outside the approved project. "
             "For every existing-file change, use one exact search/replace edit and never return the entire file; "

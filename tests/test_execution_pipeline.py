@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from google.genai import types
@@ -43,6 +44,7 @@ from onebrief.execution_pipeline import (
     rollback_detached_development_changes,
     should_preserve_unity_evidence_checkpoint,
     is_unity_localization_product_failure,
+    approved_runtime_authority_source,
     quest_initial_execution_phase,
     unity_evidence_contract_target_allowed,
 )
@@ -62,6 +64,7 @@ from onebrief.execution_schemas import (
     Verdict,
 )
 from onebrief.producer import estimate_budget
+from onebrief.toolpack_lifecycle import ApprovedRuntimeArgument
 from onebrief.schemas import (
     CompletionContract,
     IntakeRequest,
@@ -120,6 +123,37 @@ def test_active_quest_binds_initial_evidence_phase() -> None:
 
 def test_missing_active_quest_keeps_legacy_product_phase() -> None:
     assert quest_initial_execution_phase([]) == ExecutionPhase.PRODUCT_IMPLEMENTATION
+
+
+def test_approved_runtime_authentication_is_projected_as_mandatory_context() -> None:
+    binding = ApprovedRuntimeArgument(
+        adapter_id="unity_playmode_visual_tests",
+        argument="--julpae-recording-profile",
+        value="onebrief-evidence",
+        source_paths=[
+            "Assets/JULPAE/Scripts/Common/JulpaeRecordingProfile.cs",
+            "Assets/JULPAE/Scripts/Login/LoginSceneController.cs",
+        ],
+        source_digest_sha256="1" * 64,
+        authentication_selector="DevPanel/TestAccountDropdown",
+        authentication_submit="DevPanel/DirectEnterButton",
+    )
+    pack = SimpleNamespace(_profile=lambda: SimpleNamespace(
+        runtime_arguments=[binding], sha256="2" * 64,
+    ))
+
+    source = approved_runtime_authority_source(pack)
+
+    assert source is not None
+    assert source.priority == SourcePriority.MANDATORY
+    payload = json.loads(source.content)
+    assert payload["toolpack_sha256"] == "2" * 64
+    assert payload["bindings"][0]["authentication_selector"] == (
+        "DevPanel/TestAccountDropdown"
+    )
+    assert payload["bindings"][0]["authentication_submit"] == (
+        "DevPanel/DirectEnterButton"
+    )
 
 
 def test_dict_development_proposal_counts_atomic_evidence_members() -> None:
