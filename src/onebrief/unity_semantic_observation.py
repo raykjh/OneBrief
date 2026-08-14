@@ -14,6 +14,46 @@ from onebrief.reality_check import (
 )
 
 
+_VISUAL_QUALITY_MARKERS = (
+    "visual style",
+    "responsive",
+    "layout",
+    "typography",
+    "overlap",
+    "clipped",
+    "glyph",
+    "rendered key-screen",
+    "mobile",
+    "desktop aspect",
+)
+
+
+def contract_requires_strict_visual_quality(contract: dict[str, object]) -> bool:
+    """Return whether the active contract authorizes presentation-quality review.
+
+    Runtime screenshots are also used as behavioral evidence.  A verifier must
+    not turn those screenshots into an implicit whole-product visual milestone.
+    Only the active completion criteria can enable strict style/layout review.
+    """
+
+    completion = contract.get("completion_contract")
+    if not isinstance(completion, dict):
+        return False
+    criteria = completion.get("quality_criteria")
+    if not isinstance(criteria, list):
+        return False
+    for criterion in criteria:
+        if not isinstance(criterion, dict):
+            continue
+        text = " ".join(
+            str(criterion.get(key, ""))
+            for key in ("description", "evidence_required")
+        ).casefold()
+        if any(marker in text for marker in _VISUAL_QUALITY_MARKERS):
+            return True
+    return False
+
+
 class UnityFrameObservation(BaseModel):
     artifact_path: str
     visible_text_samples: list[str] = Field(default_factory=list, max_length=40)
@@ -40,6 +80,7 @@ def observe_unity_visual_evidence(
     evidence_dir: Path,
     observation_path: Path,
     goal_text: str,
+    strict_visual_quality: bool = True,
 ) -> ObservationReceipt:
     """Inspect pipeline-owned screenshots and write one independent receipt."""
 
@@ -62,12 +103,23 @@ def observe_unity_visual_evidence(
         paths.append(path)
         allowed[label.casefold()] = label
 
+    review_boundary = (
+        "This active contract explicitly includes presentation quality. Reject blank, "
+        "single-color, camera-background-only, clipped, unreadable, missing-glyph, "
+        "overlapping, non-responsive, or visibly noncompliant styled screens."
+        if strict_visual_quality else
+        "These screenshots are behavioral evidence for a bounded Quest, not approval of the "
+        "whole product's presentation. Confirm only that the contracted UI state is visibly "
+        "present and usable enough to prove the requested behavior. Reject blank or "
+        "camera-background-only frames, but do not fail pre-existing style, layout, debug, "
+        "localization, or responsiveness issues unless an active criterion below explicitly "
+        "requires them. Record such unrelated observations as non-blocking findings."
+    )
     prompt = (
         "Independently inspect every attached Unity runtime screenshot. The maker cannot approve "
         "its own output. Judge only what is visibly rendered, not filenames or claims. Reject a "
-        "blank, single-color, camera-background-only, clipped, unreadable, missing-glyph, overlapping, "
-        "or obviously non-responsive screen. Confirm the requested real UI is visible and usable at "
-        "each supplied viewport. Return exactly one frame entry for every artifact path listed below.\n\n"
+        "claim that is not visible. " + review_boundary + " Confirm the requested real UI is visible "
+        "at each supplied viewport. Return exactly one frame entry for every artifact path listed below.\n\n"
         f"GOAL AND COMPLETION CONTRACT:\n{goal_text[:24000]}\n\n"
         "ARTIFACT PATHS:\n" + "\n".join(f"- {item}" for item in allowed.values())
     )

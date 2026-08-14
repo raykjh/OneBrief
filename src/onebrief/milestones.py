@@ -424,7 +424,7 @@ def build_milestone_plan(
         groups.extend([
             (
                 "Login vertical slice",
-                "The modernized Login surface uses the preserved authentication path and reaches Lobby in PlayMode.",
+                "The Login surface uses the preserved authentication path and reaches Lobby in PlayMode.",
                 compile_items,
                 [QualityCriterion(
                     criterion_id="Q91",

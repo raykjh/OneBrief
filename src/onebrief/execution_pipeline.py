@@ -146,7 +146,10 @@ from onebrief.phase_execution import (
 )
 from onebrief.schemas import ExecutionPhase
 from onebrief.toolpacks import execute_toolpacks
-from onebrief.unity_semantic_observation import observe_unity_visual_evidence
+from onebrief.unity_semantic_observation import (
+    contract_requires_strict_visual_quality,
+    observe_unity_visual_evidence,
+)
 from onebrief.unity_layout_diagnostics import compact_unity_layout_diagnostic_context
 from onebrief.unity_evidence_plan import (
     UnityEvidenceJourneyPlan,
@@ -1152,6 +1155,7 @@ class ExecutionPipeline:
             )
             unity_evidence = development_dir / "unity_visual_evidence"
             if unity_evidence.is_dir():
+                strict_visual_quality = contract_requires_strict_visual_quality(contract)
                 try:
                     observe_unity_visual_evidence(
                         self.gateway,
@@ -1165,10 +1169,14 @@ class ExecutionPipeline:
                             / "unity_ui_observation.json"
                         ),
                         goal_text=json.dumps(contract, ensure_ascii=False),
+                        strict_visual_quality=strict_visual_quality,
                     )
                 except RuntimeError as exc:
-                    diagnostic = compact_unity_layout_diagnostic_context(
-                        development_dir / "unity_layout_diagnostics"
+                    diagnostic = (
+                        compact_unity_layout_diagnostic_context(
+                            development_dir / "unity_layout_diagnostics"
+                        )
+                        if strict_visual_quality else ""
                     )
                     if diagnostic:
                         raise RuntimeError(

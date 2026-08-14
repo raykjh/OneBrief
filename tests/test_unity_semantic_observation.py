@@ -6,6 +6,7 @@ import pytest
 from onebrief.reality_check import ObservationStatus
 from onebrief.unity_semantic_observation import (
     UnitySemanticObservation,
+    contract_requires_strict_visual_quality,
     observe_unity_visual_evidence,
 )
 
@@ -101,3 +102,53 @@ def test_unity_semantic_observer_rejects_blank_runtime_frame(tmp_path: Path) -> 
 
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["status"] == "failed"
+
+
+def test_visual_quality_review_is_bound_to_active_criteria() -> None:
+    behavioral = {
+        "goal": "The Login surface reaches Lobby.",
+        "completion_contract": {
+            "quality_criteria": [{
+                "description": "Preserved authentication transition works",
+                "evidence_required": "PlayMode evidence for Login to Lobby.",
+            }]
+        },
+    }
+    presentation = {
+        "completion_contract": {
+            "quality_criteria": [{
+                "description": "Responsive visual style compliance",
+                "evidence_required": "Rendered mobile and desktop screenshots.",
+            }]
+        },
+    }
+
+    assert contract_requires_strict_visual_quality(behavioral) is False
+    assert contract_requires_strict_visual_quality(presentation) is True
+
+
+def test_behavioral_observation_prompt_does_not_expand_to_visual_milestone(
+    tmp_path: Path,
+) -> None:
+    gateway = FakeGateway({
+        "frames": [
+            {"artifact_path": "screenshots/desktop.png", "visible_text_samples": ["Login"],
+             "findings": ["Login is visible."], "passed": True},
+            {"artifact_path": "screenshots/mobile.png", "visible_text_samples": ["Lobby"],
+             "findings": ["Lobby is visible."], "passed": True},
+        ],
+        "overall_findings": ["The contracted transition is visibly evidenced."],
+    })
+
+    observe_unity_visual_evidence(
+        gateway,
+        model="gemini-test",
+        evidence_dir=_evidence(tmp_path),
+        observation_path=tmp_path / "observation.json",
+        goal_text="Login reaches Lobby.",
+        strict_visual_quality=False,
+    )
+
+    prompt = str(gateway.calls[0]["contents"])
+    assert "bounded Quest" in prompt
+    assert "do not fail pre-existing style" in prompt

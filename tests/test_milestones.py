@@ -165,6 +165,7 @@ def test_scoped_requirements_remove_whole_project_sixsense_and_publish_exact_sco
     assert '"authorized_criterion_ids"' in source.content
     assert "future milestone" in source.content
     assert "unrelated future scope" in scoped.normalized_goal
+    assert "modernized" not in login.outcome.casefold()
 
 
 def test_unity_flow_is_decomposed_into_real_vertical_slices() -> None:
