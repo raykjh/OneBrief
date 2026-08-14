@@ -21,7 +21,14 @@ from onebrief.milestones import (
     prepare_milestone_workspace,
     requirements_for_milestone,
 )
-from onebrief.execution_schemas import ExecutionCheckpoint, PipelineStatus, Verdict
+from onebrief.completion_ledger import build_completion_ledger
+from onebrief.execution_schemas import (
+    CriterionCheck,
+    ExecutionCheckpoint,
+    PipelineStatus,
+    VerificationReport,
+    Verdict,
+)
 from onebrief.generic_development_toolpack import ProjectCodeChangeSet, ProjectFileChange
 from onebrief.schemas import (
     CompletionContract,
@@ -416,16 +423,37 @@ def test_executor_scopes_each_slice_and_finishes_on_clean_baseline(
             (development / "changed_files" / "Assets" / "App.cs").write_text(
                 candidate.changes[0].content, encoding="utf-8"
             )
-            for name in ("final_verification.json", "final_approval.json", "completion_ledger.json"):
-                (output_dir / name).write_text("{}", encoding="utf-8")
-            (output_dir / "execution_checkpoint.json").write_text("{}", encoding="utf-8")
-            return ExecutionCheckpoint(
+            report = VerificationReport(
+                verdict=Verdict.PASS,
+                criterion_checks=[CriterionCheck(
+                    criterion_id=item.criterion_id,
+                    criterion=item.description,
+                    passed=True,
+                    evidence="Fresh executable test evidence.",
+                ) for item in requirements.completion_contract.quality_criteria],
+                blocking_issues=[],
+                revision_instructions=[],
+                missing_information=[],
+            )
+            ledger = build_completion_ledger(requirements.completion_contract, [(0, report)])
+            (output_dir / "final_verification.json").write_text(
+                report.model_dump_json(indent=2), encoding="utf-8"
+            )
+            (output_dir / "final_approval.json").write_text("{}", encoding="utf-8")
+            (output_dir / "completion_ledger.json").write_text(
+                ledger.model_dump_json(indent=2), encoding="utf-8"
+            )
+            checkpoint = ExecutionCheckpoint(
                 status=PipelineStatus.COMPLETE,
                 current_stage="finished",
                 completed_stages=["verification"],
                 revision_round=0,
                 final_verdict=Verdict.PASS,
             )
+            (output_dir / "execution_checkpoint.json").write_text(
+                checkpoint.model_dump_json(indent=2), encoding="utf-8"
+            )
+            return checkpoint
 
     monkeypatch.setattr("onebrief.milestones.ProjectToolPackLifecycle", FakeLifecycle)
     monkeypatch.setattr(
@@ -453,7 +481,8 @@ def test_executor_scopes_each_slice_and_finishes_on_clean_baseline(
     assert "Milestone outcome:" in first_slice_output
     assert "Responsive visual layout" not in first_slice_output
     assert "localization glyph integrity" not in first_slice_output
-    assert calls[0][3][0] == "onebrief-active-milestone-M01.json"
+    assert calls[0][3][0].startswith("onebrief-active-quest-QC-")
+    assert calls[0][3][1] == "onebrief-active-milestone-M01.json"
     assert (tmp_path / "work" / "development" / "change_set.json").is_file()
     store = MilestoneStore(tmp_path / "work" / "milestone_state", plan)
     assert all(store.checkpoint(item.milestone_id) is not None for item in plan.milestones)

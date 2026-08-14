@@ -1855,6 +1855,78 @@ async def session_milestones(
         raise HTTPException(502, f"Service operation failed: {type(exc).__name__}") from exc
 
 
+@app.get("/api/sessions/{session_id}/quests")
+async def session_quests(
+    session_id: str,
+    store: WebSessionStore = Depends(get_session_store),
+) -> dict[str, object]:
+    """Return the Outcome Sketch, Project Canvas, Quest contracts, and receipts."""
+    try:
+        link = store.read_execution(session_id)
+        repository = (
+            LocalJobRepository(Path(link.job_uri))
+            if link.operation_name == "local" else GCSJobStore(link.job_uri)
+        )
+        record = await asyncio.to_thread(repository.read_job)
+        try:
+            canvas = await asyncio.to_thread(
+                repository.read_json, "work/quest_state/project_canvas.json"
+            )
+            outcome = await asyncio.to_thread(
+                repository.read_json, "work/quest_state/outcome_sketch.json"
+            )
+        except FileNotFoundError:
+            return {
+                "session_id": session_id,
+                "job_status": record.status.value,
+                "outcome_sketch": None,
+                "project_canvas": None,
+                "active_quest": None,
+                "contracts": [],
+                "receipts": [],
+                "message": "Quest orchestration is not required or is still being prepared.",
+            }
+        quest_ids = list(dict.fromkeys([
+            *canvas.get("completed_quest_ids", []),
+            *canvas.get("blocked_quest_ids", []),
+            *([canvas["active_quest_id"]] if canvas.get("active_quest_id") else []),
+        ]))
+        contracts = []
+        for quest_id in quest_ids:
+            try:
+                contracts.append(await asyncio.to_thread(
+                    repository.read_json, f"work/quest_state/contracts/{quest_id}.json"
+                ))
+            except FileNotFoundError:
+                raise RuntimeError(f"Project Canvas references missing Quest: {quest_id}")
+        receipts = []
+        for receipt_id in canvas.get("receipt_ids", []):
+            try:
+                receipts.append(await asyncio.to_thread(
+                    repository.read_json, f"work/quest_state/receipts/{receipt_id}.json"
+                ))
+            except FileNotFoundError:
+                raise RuntimeError(f"Project Canvas references missing receipt: {receipt_id}")
+        active_id = canvas.get("active_quest_id")
+        active = next(
+            (item for item in contracts if item.get("quest_id") == active_id), None
+        )
+        return {
+            "session_id": session_id,
+            "job_status": record.status.value,
+            "outcome_sketch": outcome,
+            "project_canvas": canvas,
+            "active_quest": active,
+            "contracts": contracts,
+            "receipts": receipts,
+            "message": record.message,
+        }
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"Service operation failed: {type(exc).__name__}") from exc
+
+
 @app.get("/api/sessions/{session_id}/graph")
 async def session_graph(
     session_id: str,

@@ -154,6 +154,9 @@ def test_home_serves_the_real_workflow() -> None:
     assert '"/criteria"' in response.text
     assert 'id="milestoneList"' in response.text
     assert '"/milestones"' in response.text
+    assert 'id="questList"' in response.text
+    assert '"/quests"' in response.text
+    assert "renderQuests(quests)" in response.text
     assert "계약 기준 " in response.text
     assert "최종 미완료" in response.text
     assert "에이전트 실행 흐름" in response.text
@@ -981,6 +984,60 @@ def test_milestone_endpoint_returns_checkpoint_progress(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["milestones"][0]["state"] == "passed"
     assert response.json()["milestones"][-1]["verification_scope"] == "full_regression"
+
+
+def test_quest_endpoint_returns_canvas_contracts_and_receipts(monkeypatch) -> None:
+    store = InMemoryWebSessionStore()
+    store.save_execution(ExecutionLink(
+        session_id="quests-1",
+        job_uri="gs://test/jobs/job-quests",
+        operation_name="operations/quests",
+        created_at="2026-08-14T00:00:00+00:00",
+    ))
+    canvas = {
+        "active_quest_id": "QC-1111111111111111",
+        "completed_quest_ids": ["QC-0000000000000000"],
+        "blocked_quest_ids": [],
+        "receipt_ids": ["QR-0000000000000000"],
+    }
+
+    class FakeRepository:
+        def read_job(self):
+            return SimpleNamespace(
+                status=SimpleNamespace(value="running"),
+                current_stage="quest",
+                message="Executing M02 Quest.",
+            )
+
+        def read_json(self, relative):
+            values = {
+                "work/quest_state/project_canvas.json": canvas,
+                "work/quest_state/outcome_sketch.json": {"final_outcome": "Working product"},
+                "work/quest_state/contracts/QC-0000000000000000.json": {
+                    "quest_id": "QC-0000000000000000", "milestone_id": "M01"
+                },
+                "work/quest_state/contracts/QC-1111111111111111.json": {
+                    "quest_id": "QC-1111111111111111", "milestone_id": "M02"
+                },
+                "work/quest_state/receipts/QR-0000000000000000.json": {
+                    "receipt_id": "QR-0000000000000000", "state": "passed"
+                },
+            }
+            if relative not in values:
+                raise FileNotFoundError(relative)
+            return values[relative]
+
+    monkeypatch.setattr("onebrief.web_service.GCSJobStore", lambda _uri: FakeRepository())
+    app.dependency_overrides[get_session_store] = lambda: store
+    try:
+        response = TestClient(app).get("/api/sessions/quests-1/quests")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["active_quest"]["milestone_id"] == "M02"
+    assert response.json()["receipts"][0]["state"] == "passed"
+    assert len(response.json()["contracts"]) == 2
 
 
 def test_graph_endpoint_reports_team_planning_before_artifacts_exist(monkeypatch) -> None:

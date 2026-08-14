@@ -390,6 +390,9 @@ def test_rejected_candidate_resumes_without_repeating_completed_context(tmp_path
     milestone_receipt = work / "milestone_state" / "receipts" / "checkpoint.json"
     milestone_receipt.parent.mkdir(parents=True)
     milestone_receipt.write_text('{"verdict":"PASS"}', encoding="utf-8")
+    quest_canvas = work / "quest_state" / "project_canvas.json"
+    quest_canvas.parent.mkdir(parents=True)
+    quest_canvas.write_text('{"active_quest_id":null}', encoding="utf-8")
     milestone_candidate = work / "milestones" / "M01" / "code_change_set.json"
     milestone_candidate.parent.mkdir(parents=True)
     milestone_candidate.write_text('{"candidate":"slice"}', encoding="utf-8")
@@ -403,6 +406,7 @@ def test_rejected_candidate_resumes_without_repeating_completed_context(tmp_path
     assert (child / "work" / "convergence_ledger.json").is_file()
     assert (child / "work" / "repair_contract.json").is_file()
     assert (child / "work" / "milestone_state" / "receipts" / "checkpoint.json").is_file()
+    assert (child / "work" / "quest_state" / "project_canvas.json").is_file()
     assert (child / "work" / "milestones" / "M01" / "code_change_set.json").is_file()
     marker = json.loads(
         (child / "work" / "reverify_existing_candidate.json").read_text("utf-8")

@@ -123,6 +123,11 @@ cannot invent scope or weaken a criterion:
 - the final integration milestone must include every overall criterion and uses full
   regression rather than a targeted check.
 
+The plan is an authorization skeleton, not a set of simultaneously active detailed
+instructions. OneBrief issues exactly one dynamic Quest from the latest verified
+checkpoint, closes it with an independent Verification Receipt, and only then issues
+the next Quest. See [Dynamic Quest orchestration](DYNAMIC_QUEST_ORCHESTRATION.md).
+
 Functional milestones advance only an isolated integration repository. That repository
 is transient and is neither shipped nor uploaded. On continuation, OneBrief reconstructs
 it from the original approved snapshot and the bounded, hash-checked milestone change

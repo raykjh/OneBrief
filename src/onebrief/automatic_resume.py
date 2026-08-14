@@ -672,7 +672,7 @@ def create_bounded_repair_resume(
     source_work = source_job / "work"
     child_work = child / "work"
     child_work.mkdir(parents=True, exist_ok=True)
-    for durable_milestone_dir in ("milestone_state", "milestones"):
+    for durable_milestone_dir in ("milestone_state", "quest_state", "milestones"):
         source = source_work / durable_milestone_dir
         if source.is_dir():
             shutil.copytree(

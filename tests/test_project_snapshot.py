@@ -299,6 +299,9 @@ def test_project_development_job_embeds_snapshot_in_immutable_inputs(
     milestone_receipt = job / "work" / "milestone_state" / "receipt.json"
     milestone_receipt.parent.mkdir(parents=True)
     milestone_receipt.write_text('{"status":"passed"}', encoding="utf-8")
+    quest_receipt = job / "work" / "quest_state" / "receipts" / "receipt.json"
+    quest_receipt.parent.mkdir(parents=True)
+    quest_receipt.write_text('{"state":"passed"}', encoding="utf-8")
     evidence = job / "work" / "project_snapshot" / "restore_evidence.json"
     evidence.write_text('{"status":"verified_and_approved"}', encoding="utf-8")
     package, _digest = build_result_package(job, status=JobStatus.COMPLETE, attempt=1)
@@ -307,6 +310,7 @@ def test_project_development_job_embeds_snapshot_in_immutable_inputs(
     assert not (package / "artifacts" / "milestone_workspace" / "repository").exists()
     assert (package / "artifacts" / "project_snapshot" / "restore_evidence.json").is_file()
     assert (package / "artifacts" / "milestone_state" / "receipt.json").is_file()
+    assert (package / "artifacts" / "quest_state" / "receipts" / "receipt.json").is_file()
 
 
 def test_local_project_job_uses_exact_provenance_without_copying_large_assets(

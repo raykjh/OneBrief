@@ -64,6 +64,12 @@ NON_REUSABLE_MILESTONE_DIRECTORIES = {
 
 
 def _reusable_milestone_artifact(relative: PurePosixPath) -> bool:
+    if relative.parts[0] == "quest_state":
+        return (
+            relative.suffix == ".json"
+            and len(relative.parts) in {2, 3}
+            and (len(relative.parts) == 2 or relative.parts[1] in {"contracts", "receipts"})
+        )
     if relative.parts[0] == "milestone_state":
         return True
     if relative.parts[0] != "milestones" or len(relative.parts) != 3:
@@ -385,7 +391,10 @@ class GCSJobStore:
         # Milestone receipts and their bounded candidate/evidence artifacts are
         # durable execution state, not arbitrary model memory. They are restored
         # under fixed prefixes and validated again by MilestoneStore before use.
-        for prefix in (("milestone_state", "milestones") if hasattr(self.client, "list_blobs") else ()):
+        for prefix in (
+            ("milestone_state", "quest_state", "milestones")
+            if hasattr(self.client, "list_blobs") else ()
+        ):
             blob_prefix = self._name(f"work/{prefix}/")
             for blob in self.client.list_blobs(self.bucket, prefix=blob_prefix):
                 relative_name = blob.name[len(self._name("work/")) :]

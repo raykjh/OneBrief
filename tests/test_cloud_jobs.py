@@ -451,6 +451,10 @@ def test_continuation_reuses_milestone_evidence_but_not_parent_execution_graph(
     tmp_path: Path,
 ) -> None:
     objects = {
+        "jobs/prior/work/quest_state/outcome_sketch.json": b'{"schema_version":"onebrief-outcome-sketch-v1"}',
+        "jobs/prior/work/quest_state/project_canvas.json": b'{"active_quest_id":null}',
+        "jobs/prior/work/quest_state/contracts/QC-1111111111111111.json": b'{"milestone_id":"M01"}',
+        "jobs/prior/work/quest_state/receipts/QR-1111111111111111.json": b'{"state":"blocked"}',
         "jobs/prior/work/milestones/M01/completion_ledger.json": b'{"complete":false}',
         "jobs/prior/work/milestones/M01/execution_graph_state.json": b'{"team_plan":"parent"}',
         "jobs/prior/work/milestones/M01/execution_checkpoint.json": b'{"status":"failed"}',
@@ -491,6 +495,10 @@ def test_continuation_reuses_milestone_evidence_but_not_parent_execution_graph(
     ).download_reusable_artifacts(work)
 
     assert "milestones/M01/completion_ledger.json" in copied
+    assert "quest_state/project_canvas.json" in copied
+    assert "quest_state/contracts/QC-1111111111111111.json" in copied
+    assert "quest_state/receipts/QR-1111111111111111.json" in copied
+    assert (work / "quest_state/outcome_sketch.json").is_file()
     assert (work / "milestones/M01/completion_ledger.json").is_file()
     assert not (work / "milestones/M01/execution_graph_state.json").exists()
     assert not (work / "milestones/M01/execution_checkpoint.json").exists()

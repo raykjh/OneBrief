@@ -537,6 +537,7 @@ def run_job(
                     if progress_callback is not None
                     else None
                 ),
+                approved_budget_usd=approved_usd,
             )
         else:
             checkpoint = pipeline_for(project_registry_root).run(

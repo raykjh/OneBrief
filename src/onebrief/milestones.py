@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, model_validator
 from onebrief.execution_schemas import ExecutionCheckpoint, PipelineStatus, Verdict
 from onebrief.generic_development_toolpack import ProjectCodeChangeSet, ProjectFileChange
 from onebrief.project_import import ExternalProjectImporter, MANIFEST_NAME, ProjectManifest
+from onebrief.quest_orchestration import QuestFailureOwner, QuestStore, infer_failure_owner
 from onebrief.schemas import (
     CompletionContract,
     EvaluationMode,
@@ -881,17 +882,60 @@ def execute_milestone_plan(
     pipeline_factory: Callable[[Path], object],
     intake: IntakeRequest, sources: list[InternalSource],
     checkpoint_callback: Callable[[str], None] | None = None,
+    approved_budget_usd: float | None = None,
 ) -> ExecutionCheckpoint:
-    """Run vertical slices and a final clean-baseline full-contract proof."""
+    """Issue one Quest at a time, verify it, then advance the milestone skeleton."""
     store = MilestoneStore(work_dir / "milestone_state", plan)
+    lifecycle = ProjectToolPackLifecycle(
+        workspace.project_id, Path(workspace.baseline_registry_root)
+    )
+    state = lifecycle.state()
+    if not state.execution_ready or state.generated is None:
+        raise PermissionError("baseline ToolPack changed before Quest execution")
+    quest_store = QuestStore(
+        work_dir / "quest_state",
+        plan=plan,
+        requirements=requirements,
+        toolpack_sha256=state.generated.sha256,
+        allowed_write_prefixes=list(getattr(
+            state.generated, "allowed_write_prefixes", []
+        )),
+        approved_budget_usd=approved_budget_usd,
+    )
+
+    def run_quest_pipeline(
+        *, pipeline: object, quest, run_intake: IntakeRequest,
+        run_requirements: RequirementsAnalysis, run_sources: list[InternalSource],
+        output_dir: Path,
+    ) -> ExecutionCheckpoint:
+        try:
+            return pipeline.run(  # type: ignore[attr-defined]
+                intake=run_intake,
+                requirements=run_requirements,
+                sources=run_sources,
+                output_dir=output_dir,
+            )
+        except Exception as exc:
+            failure = ExecutionCheckpoint(
+                status=PipelineStatus.FAILED,
+                current_stage="quest_execution_failed",
+                completed_stages=[],
+                revision_round=0,
+                message=f"{type(exc).__name__}: {exc}"[:4000],
+            )
+            quest_store.record_result(
+                quest=quest,
+                checkpoint=failure,
+                output_dir=output_dir,
+                failure_owner=infer_failure_owner(output_dir, failure),
+            )
+            publish_failed_milestone_progress(work_dir, output_dir)
+            (work_dir / "execution_checkpoint.json").write_text(
+                failure.model_dump_json(indent=2) + "\n", encoding="utf-8"
+            )
+            raise
     baseline = plan.milestones[0]
     if store.checkpoint(baseline.milestone_id) is None:
-        lifecycle = ProjectToolPackLifecycle(
-            workspace.project_id, Path(workspace.baseline_registry_root)
-        )
-        state = lifecycle.state()
-        if not state.execution_ready or state.generated is None:
-            raise PermissionError("baseline ToolPack changed before milestone execution")
         baseline_evidence = work_dir / "milestone_state" / "baseline_evidence.json"
         baseline_evidence.write_text(json.dumps({
             "source_revision": workspace.source_revision,
@@ -965,17 +1009,55 @@ def execute_milestone_plan(
         if not store.ready(milestone):
             raise RuntimeError(f"milestone dependencies are not complete: {milestone.milestone_id}")
         milestone_dir = work_dir / "milestones" / milestone.milestone_id
+        quest_source_revision = workspace.source_revision
+        for dependency in milestone.dependencies:
+            dependency_checkpoint = store.checkpoint(dependency)
+            if dependency_checkpoint is not None:
+                quest_source_revision = dependency_checkpoint.source_revision_after
+        try:
+            quest = quest_store.issue(
+                milestone=milestone,
+                milestone_store=store,
+                source_revision=quest_source_revision,
+            )
+        except PermissionError as exc:
+            checkpoint = ExecutionCheckpoint(
+                status=PipelineStatus.NEEDS_AUTHORIZATION,
+                current_stage="quest_authorization",
+                completed_stages=[],
+                revision_round=0,
+                message=str(exc),
+            )
+            (work_dir / "execution_checkpoint.json").write_text(
+                checkpoint.model_dump_json(indent=2) + "\n", encoding="utf-8"
+            )
+            return checkpoint
+        quest_source = quest_store.source(quest)
         scoped = requirements_for_milestone(requirements, milestone)
         if milestone.kind == MilestoneKind.INTEGRATION:
             candidate = cumulative_change_set(workspace)
             seed_integration_candidate(milestone_dir, candidate)
             pipeline = pipeline_factory(Path(workspace.baseline_registry_root))
-            checkpoint = pipeline.run(
-                intake=intake,
-                requirements=requirements,
-                sources=sources,
+            checkpoint = run_quest_pipeline(
+                pipeline=pipeline,
+                quest=quest,
+                run_intake=intake,
+                run_requirements=requirements,
+                run_sources=[quest_source, *sources],
                 output_dir=milestone_dir,
             )
+            if checkpoint.status != PipelineStatus.COMPLETE or checkpoint.final_verdict != Verdict.PASS:
+                quest_store.record_result(
+                    quest=quest,
+                    checkpoint=checkpoint,
+                    output_dir=milestone_dir,
+                    failure_owner=infer_failure_owner(milestone_dir, checkpoint),
+                )
+                publish_failed_milestone_progress(work_dir, milestone_dir)
+                (work_dir / "execution_checkpoint.json").write_text(
+                    checkpoint.model_dump_json(indent=2) + "\n", encoding="utf-8"
+                )
+                return checkpoint
             require_milestone_pass(checkpoint, milestone_dir)
             store.record_pass(
                 milestone=milestone,
@@ -983,6 +1065,12 @@ def execute_milestone_plan(
                 source_after=workspace.source_revision,
                 candidate_sha256=canonical_sha256(candidate),
                 evidence_paths=milestone_evidence_paths(milestone_dir),
+            )
+            quest_store.record_result(
+                quest=quest,
+                checkpoint=checkpoint,
+                output_dir=milestone_dir,
+                failure_owner=QuestFailureOwner.NONE,
             )
             if checkpoint_callback is not None:
                 checkpoint_callback(milestone.milestone_id)
@@ -1002,13 +1090,21 @@ def execute_milestone_plan(
             "internal_sources": [scope_source, *intake.internal_sources][:50],
             "max_revision_rounds": milestone.contract.max_revision_rounds,
         })
-        checkpoint = pipeline.run(
-            intake=milestone_intake,
-            requirements=scoped,
-            sources=[scope_source, *sources],
+        checkpoint = run_quest_pipeline(
+            pipeline=pipeline,
+            quest=quest,
+            run_intake=milestone_intake,
+            run_requirements=scoped,
+            run_sources=[quest_source, scope_source, *sources],
             output_dir=milestone_dir,
         )
         if checkpoint.status != PipelineStatus.COMPLETE or checkpoint.final_verdict != Verdict.PASS:
+            quest_store.record_result(
+                quest=quest,
+                checkpoint=checkpoint,
+                output_dir=milestone_dir,
+                failure_owner=infer_failure_owner(milestone_dir, checkpoint),
+            )
             publish_failed_milestone_progress(work_dir, milestone_dir)
             (work_dir / "execution_checkpoint.json").write_text(
                 checkpoint.model_dump_json(indent=2) + "\n", encoding="utf-8"
@@ -1024,6 +1120,12 @@ def execute_milestone_plan(
             source_after=after,
             candidate_sha256=candidate_sha,
             evidence_paths=milestone_evidence_paths(milestone_dir),
+        )
+        quest_store.record_result(
+            quest=quest,
+            checkpoint=checkpoint,
+            output_dir=milestone_dir,
+            failure_owner=QuestFailureOwner.NONE,
         )
         if checkpoint_callback is not None:
             checkpoint_callback(milestone.milestone_id)
