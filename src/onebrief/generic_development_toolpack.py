@@ -837,6 +837,68 @@ def catalog_bound_product_repair_schema(
     )
 
 
+class CatalogAnchoredEvidenceFileChange(CatalogAnchoredProductFileChange):
+    """One trusted catalog edit restricted to an established PlayMode source."""
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        path = generic_safe_relative(value).as_posix()
+        if (
+            "/tests/playmode/" not in f"/{path.casefold()}"
+            or PurePosixPath(path).suffix.casefold() != ".cs"
+        ):
+            raise ValueError(
+                "catalog-anchored evidence repair must target one C# file below Tests/PlayMode"
+            )
+        return path
+
+
+class CatalogAnchoredEvidenceRepair(BaseModel):
+    schema_version: str = "onebrief-project-code-change-set-v1"
+    summary: str = Field(min_length=3, max_length=500)
+    changes: list[CatalogAnchoredEvidenceFileChange] = Field(min_length=1, max_length=1)
+
+
+def catalog_bound_evidence_repair_schema(
+    anchor_catalog: list[dict[str, object]],
+) -> type[CatalogAnchoredEvidenceRepair]:
+    """Bind an evidence-only repair to the currently approved source window."""
+
+    paths = tuple(dict.fromkeys(
+        str(group.get("path", ""))
+        for group in anchor_catalog
+        if isinstance(group, dict) and group.get("path")
+    ))
+    anchor_ids = tuple(dict.fromkeys(
+        str(anchor.get("anchor_id", ""))
+        for group in anchor_catalog
+        if isinstance(group, dict)
+        for anchor in (group.get("anchors") or [])
+        if isinstance(anchor, dict) and re.fullmatch(
+            r"A[0-9a-f]{12}", str(anchor.get("anchor_id", ""))
+        )
+    ))
+    if not paths or not anchor_ids:
+        return CatalogAnchoredEvidenceRepair
+    digest = hashlib.sha256(
+        ("\0".join(paths) + "\0" + "\0".join(anchor_ids)).encode("utf-8")
+    ).hexdigest()[:10]
+    path_literal = Literal.__getitem__(paths)
+    anchor_literal = Literal.__getitem__(anchor_ids)
+    change_model = create_model(
+        f"CatalogBoundEvidenceFileChange_{digest}",
+        __base__=CatalogAnchoredEvidenceFileChange,
+        path=(path_literal, ...),
+        anchor_id=(anchor_literal, ...),
+    )
+    return create_model(
+        f"CatalogBoundEvidenceRepair_{digest}",
+        __base__=CatalogAnchoredEvidenceRepair,
+        changes=(list[change_model], Field(min_length=1, max_length=1)),
+    )
+
+
 class AnchoredRangeRepairProjectFileChange(BaseModel):
     """One unambiguous range replacement for a larger coherent repair slice."""
 

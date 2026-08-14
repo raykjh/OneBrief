@@ -12,6 +12,7 @@ from onebrief.generic_development_toolpack import (
     AnchoredRangeRepairProjectCodeChangeSet,
     CompactProposedProjectCodeChangeSet, ExactRepairProjectCodeChangeSet,
     CatalogAnchoredProductRepair,
+    CatalogAnchoredEvidenceRepair,
     ProjectCodeChangeSet, ProposedProjectCodeChangeSet,
     UnityEvidenceSourceRepair,
     UnityEvidenceAnchoredSourceRepair,
@@ -2828,6 +2829,36 @@ def test_unseen_large_source_binding_uses_catalog_anchored_repair() -> None:
     selected = development_maker_schema_for(report, None, anchors)
 
     assert issubclass(selected, CatalogAnchoredProductRepair)
+
+
+def test_unseen_evidence_source_binding_stays_in_evidence_catalog() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "existing file was not included in approved model context: "
+        "Assets/Tests/PlayMode/OneBriefGeneratedJourneyTest.cs"
+    )
+    anchors = [{
+        "path": "Assets/Tests/PlayMode/OneBriefGeneratedJourneyTest.cs",
+        "anchors": [{
+            "anchor_id": "A0123456789ab",
+            "text": "SelectDropdown(RequireActive(\"LanguageDropdown\"), 1);",
+        }],
+    }]
+
+    selected = development_maker_schema_for(
+        report, None, anchors, ExecutionPhase.EVIDENCE_CONSTRUCTION
+    )
+
+    assert issubclass(selected, CatalogAnchoredEvidenceRepair)
+    selected.model_validate({
+        "summary": "Repair the bounded PlayMode evidence source.",
+        "changes": [{
+            "path": "Assets/Tests/PlayMode/OneBriefGeneratedJourneyTest.cs",
+            "base_sha256": None,
+            "anchor_id": "A0123456789ab",
+            "replace": "SelectDropdown(RequireActive(\"LanguageDropdown\"), 2);",
+            "reason": "Exercise the committed language control.",
+        }],
+    })
 
 
 def test_prohibited_runtime_repair_with_anchors_stays_catalog_bounded() -> None:

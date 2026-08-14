@@ -11,6 +11,7 @@ from pydantic import BaseModel, ValidationError
 from onebrief.development_toolpack import CodeChangeSet, approved_edit_path
 from onebrief.generic_development_toolpack import (
     AnchoredRangeRepairProjectCodeChangeSet,
+    CatalogAnchoredEvidenceRepair,
     CatalogAnchoredProductRepair,
     CompactProposedProjectCodeChangeSet,
     ExactRepairProjectCodeChangeSet,
@@ -177,6 +178,7 @@ class DeveloperAgent:
                     ExactRepairProjectCodeChangeSet,
                     AnchoredRangeRepairProjectCodeChangeSet,
                     CatalogAnchoredProductRepair,
+                    CatalogAnchoredEvidenceRepair,
                 )
             )
             proposed = ProposedProjectCodeChangeSet.model_validate(

@@ -69,6 +69,8 @@ from onebrief.generic_development_toolpack import (
     AtomicUnityEvidenceBundle,
     AnchoredRangeRepairProjectCodeChangeSet,
     CatalogAnchoredProductRepair,
+    CatalogAnchoredEvidenceRepair,
+    catalog_bound_evidence_repair_schema,
     catalog_bound_product_repair_schema,
     ApprovedProjectDevelopmentToolPack,
     CompactProposedProjectCodeChangeSet,
@@ -756,7 +758,10 @@ def development_maker_schema_for(
         and missing_unity_evidence_bundle_paths(feedback, current_candidate)
     ):
         return UnityEvidenceJourneyPlan
-    if is_development_product_target_failure(feedback):
+    if (
+        active_phase != ExecutionPhase.EVIDENCE_CONSTRUCTION
+        and is_development_product_target_failure(feedback)
+    ):
         if exact_edit_anchors:
             return catalog_bound_product_repair_schema(exact_edit_anchors)
         return ExactRepairProjectCodeChangeSet
@@ -765,6 +770,8 @@ def development_maker_schema_for(
         and "existing file was not included in approved model context"
         in normalized_feedback
     ):
+        if active_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION:
+            return catalog_bound_evidence_repair_schema(exact_edit_anchors)
         return catalog_bound_product_repair_schema(exact_edit_anchors)
     requested_pair = (
         "Unity visual test contract: add a discoverable Unity PlayMode test | "
