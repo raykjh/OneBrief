@@ -264,7 +264,7 @@ def test_declarative_unity_journey_compiles_trusted_harness() -> None:
     assert "TestAssemblies" in rendered.test_assembly_source
     assert "item.gameObject.scene.IsValid()" in rendered.playmode_test_source
     assert "item.scene.IsValid() && item.isActiveAndEnabled" not in rendered.playmode_test_source
-    assert len(rendered.playmode_test_source.encode("utf-8")) < 8_000
+    assert len(rendered.playmode_test_source.encode("utf-8")) < 12_000
 
 
 def test_declarative_unity_journey_canonicalizes_exact_assets_root_shorthand() -> None:
@@ -306,6 +306,31 @@ def test_declarative_unity_journey_compiles_complete_onboarding_auth_contract() 
     assert "ONEBRIEF_AUTHENTICATION_PRECONDITION_V1" in rendered.playmode_test_source
     assert 'SetToggleOn(RequireActive("TermsPanel/AgreeToggle"))' in rendered.playmode_test_source
     assert "toggle.SetIsOnWithoutNotify(true)" in rendered.playmode_test_source
+
+
+def test_declarative_unity_journey_compiles_language_and_glyph_evidence() -> None:
+    plan = UnityEvidenceJourneyPlan.model_validate({
+        "summary": "Prove the real settings language control and visible glyph coverage.",
+        "test_directory": "Assets/Tests/PlayMode",
+        "steps": [
+            {"action": "load_scene", "scene_name": "LobbyScene_All"},
+            {
+                "action": "select_dropdown_index",
+                "target": "LanguageDropdown",
+                "value_index": 1,
+            },
+            {"action": "assert_active", "target": "LanguageDropdown"},
+            {"action": "capture", "scenario_id": "settings_language_changed"},
+        ],
+    })
+
+    rendered = render_unity_evidence_journey(plan)
+
+    assert "GetComponent<TMP_Dropdown>()" in rendered.playmode_test_source
+    assert "dropdown.onValueChanged.Invoke(index)" in rendered.playmode_test_source
+    assert "AssertNoMissingGlyphs();" in rendered.playmode_test_source
+    assert "text.font.HasCharacter(character, true, false)" in rendered.playmode_test_source
+    assert '"Unity.TextMeshPro"' in rendered.test_assembly_source
 
 
 def test_declarative_unity_journey_canonicalizes_named_toggle_before_playmode() -> None:

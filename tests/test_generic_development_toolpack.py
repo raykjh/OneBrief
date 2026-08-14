@@ -1232,6 +1232,47 @@ def test_unity_visual_preflight_accepts_current_unity_generic_dropdown_discovery
     assert not any("inspect and interact with visible UI" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_accepts_trusted_language_journey(tmp_path: Path) -> None:
+    from onebrief.unity_evidence_plan import (
+        UnityEvidenceJourneyPlan,
+        render_unity_evidence_journey,
+    )
+
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-trusted-language-journey"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    rendered = render_unity_evidence_journey(UnityEvidenceJourneyPlan.model_validate({
+        "summary": "Prove the real language control and glyph coverage.",
+        "test_directory": "Assets/Tests/PlayMode",
+        "steps": [
+            {"action": "load_scene", "scene_name": "Lobby"},
+            {"action": "assert_active", "target": "LanguageDropdown"},
+            {
+                "action": "select_dropdown_index",
+                "target": "LanguageDropdown",
+                "value_index": 1,
+            },
+            {"action": "capture", "scenario_id": "settings_language_changed"},
+        ],
+    }))
+    (tests / "OneBriefGeneratedJourneyTest.cs").write_text(
+        rendered.playmode_test_source, encoding="utf-8"
+    )
+    (tests / "OneBrief.Generated.Visual.Tests.asmdef").write_text(
+        rendered.test_assembly_source, encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(profile, clone, "Unity language UI")
+
+    assert not any("LanguageDropdown control" in issue for issue in issues)
+    assert not any("missing_glyph_count" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_accepts_semantic_dropdown_enumeration_and_selection(
     tmp_path: Path,
 ) -> None:
