@@ -257,6 +257,25 @@ def paths_outside_active_repair_contract(
         path.replace("\\", "/").casefold()
         for path in contract.permitted_paths
     }
+    normalized_proposed = [
+        path.replace("\\", "/").strip("/").casefold()
+        for path in proposed_paths
+    ]
+    evidence_members = [
+        path for path in normalized_proposed
+        if unity_evidence_contract_target_allowed(path)
+    ]
+    if (
+        len(normalized_proposed) == 2
+        and len(evidence_members) == 2
+        and {PurePosixPath(path).suffix for path in evidence_members} == {".cs", ".asmdef"}
+        and len({PurePosixPath(path).parent for path in evidence_members}) == 1
+        and any(path in permitted for path in evidence_members)
+    ):
+        # The trusted declarative journey compiler emits these siblings together.
+        # Treating the asmdef as a separate authority expansion makes the generated
+        # test impossible to discover and caused a safe but unnecessary stop.
+        permitted.update(evidence_members)
     return [
         path for path in proposed_paths
         if path.replace("\\", "/").casefold() not in permitted

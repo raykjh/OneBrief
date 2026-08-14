@@ -139,6 +139,8 @@ def test_declarative_unity_journey_compiles_trusted_harness() -> None:
     assert "ScenarioReceipt" in rendered.playmode_test_source
     assert "WriteManifestAtomically(receipts.ToArray())" in rendered.playmode_test_source
     assert "TestAssemblies" in rendered.test_assembly_source
+    assert "item.gameObject.scene.IsValid()" in rendered.playmode_test_source
+    assert "item.scene.IsValid() && item.isActiveAndEnabled" not in rendered.playmode_test_source
     assert len(rendered.playmode_test_source.encode("utf-8")) < 8_000
 
 
@@ -359,6 +361,38 @@ def test_verifier_only_replay_does_not_reauthorize_cumulative_candidate_paths() 
     assert paths_outside_active_repair_contract(
         cumulative_paths, contract, reverify_existing=False
     ) == cumulative_paths[1:]
+
+
+def test_generated_unity_evidence_pair_is_one_causal_repair_bundle() -> None:
+    contract = RepairContract.model_validate({
+        "contract_id": "RC-1123456789abcdef",
+        "observation_id": "FO-1123456789abcdef",
+        "progress_kind": "new_hypothesis",
+        "occurrence": 1,
+        "hypothesis": {
+            "hypothesis_id": "RH-1123456789abcdef",
+            "suspected_cause": "The generated PlayMode journey needs its test assembly.",
+            "cheapest_probe": "Compile the generated evidence bundle.",
+            "expected_signal": "Unity discovers and compiles the PlayMode test.",
+            "repair_boundary": "One generated Unity evidence bundle.",
+            "requires_model_reasoning": False,
+        },
+        "permitted_paths": [
+            "Assets/JULPAE/Tests/PlayMode/OneBriefGeneratedJourneyTest.cs"
+        ],
+        "verification_ladder": ["compile", "targeted_test"],
+        "execution_allowed": True,
+        "escalation_required": False,
+        "rationale": "The trusted compiler emits an indivisible test and asmdef pair.",
+    })
+    proposed = [
+        "Assets/JULPAE/Tests/PlayMode/OneBriefGeneratedJourneyTest.cs",
+        "Assets/JULPAE/Tests/PlayMode/OneBrief.Generated.Visual.Tests.asmdef",
+    ]
+
+    assert paths_outside_active_repair_contract(
+        proposed, contract, reverify_existing=False
+    ) == []
 
 
 class FakeGateway:

@@ -118,6 +118,48 @@ def test_regeneration_invalidates_approval_when_repository_head_changes(tmp_path
     assert regenerated.generated.repository_head_sha != first.generated.repository_head_sha
 
 
+def test_julpae_recording_argument_is_bound_to_committed_source_and_approval_digest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root, registry = _registered_unity(tmp_path, monkeypatch)
+    common = root / "Assets" / "JULPAE" / "Scripts" / "Common"
+    login = root / "Assets" / "JULPAE" / "Scripts" / "Login"
+    common.mkdir(parents=True)
+    login.mkdir(parents=True)
+    (common / "JulpaeRecordingProfile.cs").write_text(
+        'class JulpaeRecordingProfile { private const string ProfileArg = "--julpae-recording-profile"; }\n',
+        encoding="utf-8",
+    )
+    (login / "LoginSceneController.cs").write_text(
+        "class LoginSceneController { bool Enabled() => "
+        "JulpaeRecordingProfile.HasDevOrRecordingCommandLineArgs(); }\n",
+        encoding="utf-8",
+    )
+    _git(root, "add", "Assets/JULPAE")
+    _git(root, "commit", "-m", "Add approved recording profile")
+    lifecycle = ProjectToolPackLifecycle("toolpack-game", registry)
+
+    state = lifecycle.generate_and_qualify()
+
+    assert state.qualification is not None
+    assert state.qualification.status == "passed"
+    assert state.generated is not None
+    assert [item.model_dump(mode="json") for item in state.generated.runtime_arguments] == [{
+        "adapter_id": "unity_playmode_visual_tests",
+        "argument": "--julpae-recording-profile",
+        "value": "onebrief-evidence",
+        "source_paths": [
+            "Assets/JULPAE/Scripts/Common/JulpaeRecordingProfile.cs",
+            "Assets/JULPAE/Scripts/Login/LoginSceneController.cs",
+        ],
+        "source_digest_sha256": state.generated.runtime_arguments[0].source_digest_sha256,
+    }]
+    assert lifecycle.approve(state.generated.sha256).execution_ready is True
+
+    without_binding = state.generated.model_copy(update={"runtime_arguments": []})
+    assert without_binding.sha256 != state.generated.sha256
+
+
 def test_stale_capability_binding_keeps_project_visible_for_regeneration(
     tmp_path: Path, monkeypatch
 ) -> None:

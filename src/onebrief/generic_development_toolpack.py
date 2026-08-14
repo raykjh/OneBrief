@@ -1969,6 +1969,9 @@ class ApprovedProjectDevelopmentToolPack:
                         "-quit", "-executeMethod",
                         "OneBriefDiagnostics.LayoutDiagnostics.Export",
                     ]
+                for binding in getattr(profile, "runtime_arguments", []):
+                    if binding.adapter_id == adapter.adapter_id:
+                        argv += [binding.argument, binding.value]
                 commands.append((adapter.adapter_id.value, argv, 900))
         def priority(item: tuple[str, list[str], int]) -> tuple[int, str]:
             command_id = item[0]

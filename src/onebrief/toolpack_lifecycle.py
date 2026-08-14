@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
@@ -80,6 +81,26 @@ class ToolAdapter(BaseModel):
     evidence: str = Field(min_length=1, max_length=1000)
 
 
+class ApprovedRuntimeArgument(BaseModel):
+    """One project-owned, non-secret argv binding emitted by trusted discovery."""
+
+    adapter_id: Literal[AdapterId.UNITY_PLAYMODE_VISUAL_TESTS]
+    argument: Literal["--julpae-recording-profile"]
+    value: Literal["onebrief-evidence"]
+    source_paths: list[str] = Field(min_length=2, max_length=2)
+    source_digest_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def validate_allowlisted_sources(self) -> "ApprovedRuntimeArgument":
+        expected = [
+            "Assets/JULPAE/Scripts/Common/JulpaeRecordingProfile.cs",
+            "Assets/JULPAE/Scripts/Login/LoginSceneController.cs",
+        ]
+        if self.source_paths != expected:
+            raise ValueError("runtime argument sources are not on the trusted allowlist")
+        return self
+
+
 class GeneratedProjectToolPack(BaseModel):
     schema_version: Literal[
         "onebrief-generated-toolpack-v1", "onebrief-generated-toolpack-v2"
@@ -95,6 +116,7 @@ class GeneratedProjectToolPack(BaseModel):
     allowed_write_prefixes: list[str] = Field(max_length=20)
     allowed_suffixes: list[str] = Field(min_length=1, max_length=80)
     adapters: list[ToolAdapter] = Field(min_length=1, max_length=12)
+    runtime_arguments: list[ApprovedRuntimeArgument] = Field(default_factory=list, max_length=8)
     capability_packs: list[CapabilityPackRef] = Field(default_factory=list, max_length=12)
     blocked_boundaries: list[str] = Field(min_length=1, max_length=20)
 
@@ -109,6 +131,13 @@ class GeneratedProjectToolPack(BaseModel):
             raise ValueError("ToolPack requested an unsupported editable suffix")
         if len(self.adapters) != len({(item.adapter_id, item.parameter) for item in self.adapters}):
             raise ValueError("ToolPack adapters must be unique")
+        enabled_adapters = {item.adapter_id for item in self.adapters if item.enabled}
+        if any(item.adapter_id not in enabled_adapters for item in self.runtime_arguments):
+            raise ValueError("runtime arguments require their exact enabled adapter")
+        if len(self.runtime_arguments) != len({
+            (item.adapter_id, item.argument) for item in self.runtime_arguments
+        }):
+            raise ValueError("ToolPack runtime arguments must be unique")
         if self.schema_version == "onebrief-generated-toolpack-v2":
             errors = validate_capability_pack_refs(
                 self.capability_packs,
@@ -273,6 +302,47 @@ class ProjectToolPackLifecycle:
             candidates.extend(sorted(Path(r"C:\Program Files\Unity\Hub\Editor").glob("*/Editor/Unity.exe"), reverse=True))
         return next((item.resolve() for item in candidates if item and item.is_file()), None)
 
+    @staticmethod
+    def _approved_runtime_arguments(root: Path, head_sha: str | None) -> list[ApprovedRuntimeArgument]:
+        """Discover only fixed argv contracts proven by committed project source."""
+
+        if head_sha is None:
+            return []
+        source_paths = [
+            "Assets/JULPAE/Scripts/Common/JulpaeRecordingProfile.cs",
+            "Assets/JULPAE/Scripts/Login/LoginSceneController.cs",
+        ]
+        blobs: list[bytes] = []
+        for relative in source_paths:
+            completed = subprocess.run(
+                ["git", "show", f"{head_sha}:{relative}"],
+                cwd=root,
+                capture_output=True,
+            )
+            if completed.returncode != 0:
+                return []
+            blobs.append(completed.stdout)
+        recording_source = blobs[0].decode("utf-8", errors="replace")
+        login_source = blobs[1].decode("utf-8", errors="replace")
+        if (
+            'private const string ProfileArg = "--julpae-recording-profile"' not in recording_source
+            or "JulpaeRecordingProfile.HasDevOrRecordingCommandLineArgs()" not in login_source
+        ):
+            return []
+        digest = hashlib.sha256()
+        for relative, blob in zip(source_paths, blobs, strict=True):
+            digest.update(relative.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(blob)
+            digest.update(b"\0")
+        return [ApprovedRuntimeArgument(
+            adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+            argument="--julpae-recording-profile",
+            value="onebrief-evidence",
+            source_paths=source_paths,
+            source_digest_sha256=digest.hexdigest(),
+        )]
+
     def generate_and_qualify(self) -> ToolPackLifecycleState:
         record = self._record()
         manifest = record.manifest
@@ -356,6 +426,7 @@ class ProjectToolPackLifecycle:
         capability_packs = capability_pack_refs_for_adapter_ids(
             [item.adapter_id.value for item in adapters]
         )
+        runtime_arguments = self._approved_runtime_arguments(root, inventory.head_sha)
         generated = GeneratedProjectToolPack(
             project_id=self.project_id,
             project_root=str(root),
@@ -374,6 +445,7 @@ class ProjectToolPackLifecycle:
             allowed_write_prefixes=write_prefixes,
             allowed_suffixes=sorted(SAFE_SUFFIXES),
             adapters=adapters,
+            runtime_arguments=runtime_arguments,
             capability_packs=capability_packs,
             blocked_boundaries=[
                 "source repository writes",
@@ -440,6 +512,17 @@ class ProjectToolPackLifecycle:
                 message=(
                     "Every adapter is supplied by an exact-version reusable capability pack, "
                     "and each component digest is current."
+                ),
+            ),
+            QualificationCheck(
+                check_id="runtime_argument_source_integrity",
+                passed=(
+                    generated.runtime_arguments
+                    == self._approved_runtime_arguments(root, inventory.head_sha)
+                ),
+                message=(
+                    "Every project-specific runtime argument is allowlisted and bound to "
+                    "the exact committed source that activates it."
                 ),
             ),
         ]

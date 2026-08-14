@@ -413,6 +413,34 @@ def test_node_validation_orders_lint_then_build_then_test(tmp_path: Path) -> Non
     ]
 
 
+def test_unity_playmode_uses_only_toolpack_bound_runtime_arguments(tmp_path: Path) -> None:
+    editor = tmp_path / "Unity.exe"
+    editor.write_bytes(b"editor")
+    pack = object.__new__(ApprovedProjectDevelopmentToolPack)
+    pack.root = tmp_path
+    pack.lifecycle = SimpleNamespace(_unity_editor=lambda _root: editor)
+    profile = SimpleNamespace(
+        adapters=[SimpleNamespace(
+            enabled=True,
+            adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+            evidence=str(editor),
+            parameter=None,
+        )],
+        runtime_arguments=[SimpleNamespace(
+            adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+            argument="--julpae-recording-profile",
+            value="onebrief-evidence",
+        )],
+    )
+
+    commands = pack._commands(profile, tmp_path, "Verify the Login journey")
+
+    assert len(commands) == 1
+    assert commands[0][1][-2:] == [
+        "--julpae-recording-profile", "onebrief-evidence"
+    ]
+
+
 def test_node_dependency_restore_repairs_lock_then_retries_clean_install(tmp_path: Path) -> None:
     project = tmp_path / "project"
     web = project / "web"
