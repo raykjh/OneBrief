@@ -360,6 +360,38 @@ def test_declarative_unity_journey_restores_transport_placeholders() -> None:
     assert plan.steps[2].viewport_height == 720
 
 
+def test_declarative_unity_journey_discards_irrelevant_transport_operands() -> None:
+    plan = UnityEvidenceJourneyPlan.model_validate({
+        "summary": "Normalize all-required provider transport fields.",
+        "test_directory": "Assets/Tests/PlayMode",
+        "steps": [
+            {
+                "action": "load_scene", "target": "InventedTarget",
+                "scene_name": "LoginScene_All", "value_index": 7,
+                "text_value": "invented", "scenario_id": "M01_Login_To_Lobby",
+            },
+            {
+                "action": "assert_active", "target": "StartButton",
+                "scene_name": "InventedScene", "value_index": 7,
+                "text_value": "invented", "scenario_id": "M01_Login_To_Lobby",
+            },
+            {
+                "action": "capture", "target": "InventedTarget",
+                "scene_name": "InventedScene", "value_index": 7,
+                "text_value": "invented", "scenario_id": "M01_Login_To_Lobby",
+            },
+        ],
+    })
+
+    assert plan.steps[0].target is None
+    assert plan.steps[0].scenario_id is None
+    assert plan.steps[1].scene_name is None
+    assert plan.steps[1].scenario_id is None
+    assert plan.steps[2].target is None
+    assert plan.steps[2].scene_name is None
+    assert plan.steps[2].scenario_id == "m01_login_to_lobby"
+
+
 def test_declarative_unity_journey_reuses_existing_evidence_paths() -> None:
     raw = {
         "schema_version": "onebrief-unity-evidence-journey-plan-v1",

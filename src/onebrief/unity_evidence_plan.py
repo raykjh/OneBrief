@@ -9,6 +9,7 @@ generation, assertions, screenshots, and atomic publication.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import PurePosixPath
 from typing import Literal
 
@@ -69,21 +70,41 @@ class UnityEvidenceJourneyStep(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def canonicalize_named_toggle_action(cls, value: object) -> object:
+    def canonicalize_transport_fields(cls, value: object) -> object:
         """Compile an obvious Unity Toggle selector to the typed toggle operation.
 
         Provider plans have repeatedly described ``AgreeToggle`` correctly but selected the
         generic click action.  A Unity Toggle is not a Button, so accepting that representation
-        only defers a deterministic type error to an expensive PlayMode run.
+        only defers a deterministic type error to an expensive PlayMode run. Gemini's
+        all-required transport schema can also populate mutually irrelevant operands; discard
+        those placeholders before field validation and canonicalize only the evidence row ID.
         """
 
-        if not isinstance(value, dict) or value.get("action") != "click_button":
-            return value
-        target = str(value.get("target") or "").casefold()
-        if "toggle" not in target:
+        if not isinstance(value, dict):
             return value
         normalized = dict(value)
-        normalized["action"] = "set_toggle_on"
+        action = str(normalized.get("action") or "")
+        target_actions = {
+            "assert_active", "select_dropdown_index", "set_toggle_on", "set_input_text",
+            "click_button",
+        }
+        if action not in target_actions:
+            normalized["target"] = None
+        if action not in {"load_scene", "wait_for_scene"}:
+            normalized["scene_name"] = None
+        if action != "select_dropdown_index":
+            normalized["value_index"] = None
+        if action != "set_input_text":
+            normalized["text_value"] = None
+        if action != "capture":
+            normalized["scenario_id"] = None
+        else:
+            raw_scenario = str(normalized.get("scenario_id") or "").casefold()
+            scenario = re.sub(r"[^a-z0-9_-]+", "_", raw_scenario).strip("_-")[:64]
+            normalized["scenario_id"] = scenario or None
+        target = str(normalized.get("target") or "").casefold()
+        if action == "click_button" and "toggle" in target:
+            normalized["action"] = "set_toggle_on"
         return normalized
 
     @field_validator("target", "scene_name", "text_value", "scenario_id", mode="before")
