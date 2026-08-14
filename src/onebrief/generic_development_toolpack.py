@@ -97,6 +97,17 @@ def _csharp_code_only(value: str) -> str:
     return token.sub(" ", value)
 
 
+def _csharp_without_comments(value: str) -> str:
+    """Remove C# comments while preserving executable string arguments."""
+
+    token = re.compile(
+        r'(?P<string>(?:\$@|@\$|@)"(?:""|[^"])*"|(?:\$)?"(?:\\.|[^"\\])*")'
+        r'|(?P<comment>//[^\r\n]*|/\*.*?\*/)',
+        re.DOTALL,
+    )
+    return token.sub(lambda match: match.group("string") or " ", value)
+
+
 def _duplicate_csharp_declarations_by_scope(source: str) -> set[str]:
     """Find plainly duplicated declarations in one lexical brace scope.
 
@@ -153,12 +164,28 @@ def _declared_unity_viewports(source: str) -> list[tuple[int, int]]:
         )
     ]
     structural = _csharp_code_only(source)
+    uncommented = _csharp_without_comments(source)
     measured.extend(
         (int(width), int(height))
         for width, height in re.findall(
             r"\b[A-Za-z_][A-Za-z0-9_]*(?:capture|screenshot)[A-Za-z0-9_]*\s*\(\s*"
             r'"[^"\r\n]*\.png"\s*,\s*(\d{2,5})\s*,\s*(\d{2,5})\s*\)',
-            source,
+            uncommented,
+            re.IGNORECASE,
+        )
+    )
+    measured.extend(
+        (int(width), int(height))
+        for width, height in re.findall(
+            # The trusted declarative compiler supplies observed state and
+            # interaction as executable expressions, so the older literal-only
+            # CaptureScenario pattern above cannot see its viewport arguments.
+            # Bind the dimensions to the PNG argument and following camera
+            # expression instead of trusting comments or descriptive metadata.
+            r"capturescenario\s*\([\s\S]{0,1200}?\"[^\"\r\n]+\.png\"\s*,\s*"
+            r"(?:[A-Za-z_][A-Za-z0-9_.]*\s*\([^()]*\)|[A-Za-z_][A-Za-z0-9_.]*)\s*,\s*"
+            r"(\d{2,5})\s*,\s*(\d{2,5})\s*,",
+            uncommented,
             re.IGNORECASE,
         )
     )
@@ -168,7 +195,7 @@ def _declared_unity_viewports(source: str) -> list[tuple[int, int]]:
             r"capturescenario\s*\(\s*\"[^\"\r\n]+\"\s*,\s*\"[^\"\r\n]+\"\s*,\s*"
             r"\"[^\"\r\n]+\"\s*,\s*\d+\s*,\s*\"[^\"\r\n]+\.png\"\s*,\s*"
             r"[^,()]+\s*,\s*(\d{2,5})\s*,\s*(\d{2,5})\s*,",
-            source,
+            uncommented,
             re.IGNORECASE,
         )
     )

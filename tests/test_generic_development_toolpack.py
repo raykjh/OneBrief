@@ -1519,6 +1519,28 @@ def test_declared_unity_viewports_reads_explicit_synchronous_capture_calls() -> 
     assert _declared_unity_viewports(source) == [(1920, 1080), (1080, 2340)]
 
 
+def test_declared_unity_viewports_reads_trusted_journey_capture_expressions() -> None:
+    source = """
+        receipts.Add(OneBriefAtomicScreenshot.CaptureScenario(
+            "login_mobile", SceneManager.GetActiveScene().name,
+            trace.Count == 0 ? "observe" : string.Join(" -> ", trace),
+            Math.Max(1, assertions), "Screenshots/login_mobile.png",
+            RequireCamera(), 2340, 1080, ActiveCanvases()));
+        receipts.Add(OneBriefAtomicScreenshot.CaptureScenario(
+            "login_desktop", SceneManager.GetActiveScene().name,
+            trace.Count == 0 ? "observe" : string.Join(" -> ", trace),
+            Math.Max(1, assertions), "Screenshots/login_desktop.png",
+            RequireCamera(), 1920, 1080, ActiveCanvases()));
+    """
+
+    assert _declared_unity_viewports(source) == [(2340, 1080), (1920, 1080)]
+
+    commented_claim = (
+        '// CaptureScenario("fake", "state", "observe", 1, "fake.png", camera, 800, 600, canvases)\n'
+    )
+    assert _declared_unity_viewports(commented_claim) == []
+
+
 def test_unity_visual_preflight_rejects_batchmode_capture_that_reuses_screen_size(
     tmp_path: Path,
 ) -> None:
