@@ -154,6 +154,16 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
         "png was not materialized",
     )):
         return FailureLayer.EVIDENCE_RUNTIME
+    # Some deterministic product-safety checks are emitted by the Unity
+    # visual contract preflight because that is where the invalid journey is
+    # observed.  The prefix must not transfer repair authority to the test
+    # harness when the actual defect is newly wired production behavior.
+    if any(marker in text for marker in (
+        "preserved authentication/server journey",
+        "newly wiring a product ui onclick listener directly to scenemanager.loadscene",
+        "invoke the existing controller/router path and prove that path instead",
+    )):
+        return FailureLayer.SEMANTIC_PRODUCT
     if any(marker in text for marker in (
         "unity visual test contract: add",
         "unity visual test contract:",
@@ -220,6 +230,8 @@ def classify_failure_code(
         "png was not materialized",
     )):
         return FailureCode.UNITY_SCREENSHOT_NOT_MATERIALIZED
+    if resolved == FailureLayer.SEMANTIC_PRODUCT:
+        return FailureCode.SEMANTIC_PRODUCT_DEFECT
     if any(marker in text for marker in (
         "evidence harness",
         "evidence topology",

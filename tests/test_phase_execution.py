@@ -212,6 +212,25 @@ def test_invalid_unity_visual_manifest_stays_in_evidence_construction() -> None:
     assert decision.model_repair_allowed is True
 
 
+def test_visual_preflight_authentication_bypass_stays_product_owned() -> None:
+    decision = decide_repair_phase(
+        context="development_verification",
+        failure_text=(
+            "Unity visual test contract: a preserved authentication/server journey "
+            "must not be satisfied by newly wiring a product UI onClick listener "
+            "directly to SceneManager.LoadScene in Assets/Scripts/LoginBinder.cs; "
+            "invoke the existing controller/router path and prove that path instead"
+        ),
+        round_number=1,
+        affected_paths=["Assets/Scripts/LoginBinder.cs"],
+    )
+
+    assert decision.failure_code == FailureCode.SEMANTIC_PRODUCT_DEFECT
+    assert decision.failure_owner == FailureOwner.PRODUCT
+    assert decision.next_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+    assert decision.model_repair_allowed is True
+
+
 def test_unavailable_unity_screenshot_is_typed_and_evidence_owned() -> None:
     decision = decide_repair_phase(
         context="development_verification",
