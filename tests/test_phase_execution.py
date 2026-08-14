@@ -427,6 +427,40 @@ def test_non_escalated_phase_call_cannot_borrow_reserve(tmp_path: Path) -> None:
         )
 
 
+def test_independent_final_verification_can_borrow_non_editing_reserve(
+    tmp_path: Path,
+) -> None:
+    store = BudgetStore(tmp_path)
+    estimate = _estimate(repair_limit=0).model_copy(update={
+        "phase_budgets": [
+            PhaseBudgetEstimate(
+                phase=ExecutionPhase.FINAL_VERIFICATION,
+                minimum_cost_usd=0.001,
+                recommended_cost_usd=0.001,
+                maximum_cost_usd=0.001,
+                max_ai_repair_calls=0,
+                max_deterministic_attempts=2,
+            ),
+            PhaseBudgetEstimate(
+                phase=ExecutionPhase.RESERVE,
+                minimum_cost_usd=0,
+                recommended_cost_usd=0,
+                maximum_cost_usd=0,
+            ),
+        ]
+    })
+    store.approve(estimate, 0.10)
+
+    call = store.reserve_call(
+        stage="final_verification::independent_verification",
+        model="gemini-3.1-pro-preview",
+        input_token_cap=10_000,
+        output_token_cap=2_000,
+    )
+
+    assert call.phase_reserve_borrowed_usd_micros > 0
+
+
 def test_authority_preserving_evidence_repair_can_borrow_unused_reserve(
     tmp_path: Path,
 ) -> None:

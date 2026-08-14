@@ -396,12 +396,19 @@ class BudgetStore:
                         # may borrow unused reserve instead of stopping over a
                         # tiny phase-estimation error. A new product stage or
                         # broader authority still requires a new decision.
+                        # Independent final verification is non-editing and is
+                        # required to settle the completion contract; starving
+                        # it while a non-editing reserve remains would strand a
+                        # candidate after its executable checks already passed.
                         approved_repair = is_authority_preserving_ai_repair_reservation(
                             stage
                         )
+                        approved_non_editing_verification = (
+                            phase == ExecutionPhase.FINAL_VERIFICATION
+                        )
                         if (
                             phase != ExecutionPhase.RESERVE
-                            and approved_repair
+                            and (approved_repair or approved_non_editing_verification)
                             and shortfall <= reserve_available
                         ):
                             phase_reserve_borrowed = shortfall
