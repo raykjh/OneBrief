@@ -262,14 +262,20 @@ class BudgetedGeminiClient:
         if (
             isinstance(response_schema, type)
             and issubclass(response_schema, BaseModel)
-            and response_schema.__name__ == "VerificationReport"
+            and response_schema.__name__ in {
+                "VerificationReport",
+                "UnityEvidenceJourneyPlan",
+            }
         ):
             # ADK maker schemas intentionally use optional mutually-exclusive
             # edit selectors. Converting those schemas to the all-required
             # transport form makes Gemini invent placeholder anchors. The
             # independent VerificationReport has no selector union and is the
-            # provider-incompatible schema observed in production, so only
-            # that verifier boundary receives the stripped transport model.
+            # provider-incompatible schemas observed in production. The
+            # declarative Unity plan also has nested optional action operands;
+            # Vertex rejects that nullable response schema before generation,
+            # while its all-required transport form is safe because the plan
+            # validator ignores irrelevant operands for each action.
             generation.response_schema = gemini_compatible_model(response_schema)
         generation.thinking_config = self._thinking_config(model)
         max_output_tokens = int(generation.max_output_tokens or 4096)
@@ -288,7 +294,18 @@ class BudgetedGeminiClient:
                 generation_config=count_generation,
             ),
         )
-        schema_text = str(generation.response_schema or "")
+        schema_text = (
+            json.dumps(
+                generation.response_schema.model_json_schema(),
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            if (
+                isinstance(generation.response_schema, type)
+                and issubclass(generation.response_schema, BaseModel)
+            )
+            else str(generation.response_schema or "")
+        )
         system_text = str(generation.system_instruction or "")
         observed = int(count.total_tokens or 0)
         local_overhead = approximate_tokens(schema_text) + approximate_tokens(system_text)

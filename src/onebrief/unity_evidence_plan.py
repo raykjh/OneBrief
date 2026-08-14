@@ -65,13 +65,49 @@ class UnityEvidenceJourneyStep(BaseModel):
     viewport_width: int = Field(default=1280, ge=320, le=3840)
     viewport_height: int = Field(default=720, ge=240, le=2160)
 
-    @field_validator("target", "scene_name", "text_value", mode="before")
+    @field_validator("target", "scene_name", "text_value", "scenario_id", mode="before")
     @classmethod
     def normalize_optional_text(cls, value: object) -> str | None:
         if value is None:
             return None
         text = " ".join(str(value).split()).strip()
         return text or None
+
+    @field_validator("frames", mode="before")
+    @classmethod
+    def restore_frames_default(cls, value: object) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 2
+        return parsed if parsed > 0 else 2
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def restore_timeout_default(cls, value: object) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return 10.0
+        return parsed if parsed > 0 else 10.0
+
+    @field_validator("viewport_width", mode="before")
+    @classmethod
+    def restore_width_default(cls, value: object) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 1280
+        return parsed if parsed > 0 else 1280
+
+    @field_validator("viewport_height", mode="before")
+    @classmethod
+    def restore_height_default(cls, value: object) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 720
+        return parsed if parsed > 0 else 720
 
     @model_validator(mode="after")
     def fields_match_action(self) -> "UnityEvidenceJourneyStep":

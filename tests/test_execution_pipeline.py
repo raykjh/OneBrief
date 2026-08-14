@@ -155,6 +155,40 @@ def test_declarative_unity_journey_rejects_direct_destination_load() -> None:
         })
 
 
+def test_declarative_unity_journey_restores_transport_placeholders() -> None:
+    plan = UnityEvidenceJourneyPlan.model_validate({
+        "schema_version": "onebrief-unity-evidence-journey-plan-v1",
+        "summary": "Transport-safe login proof.",
+        "test_directory": "Assets/Tests/PlayMode",
+        "steps": [
+            {
+                "action": "load_scene", "target": "", "scene_name": "Login",
+                "value_index": 0, "text_value": "", "frames": 0,
+                "timeout_seconds": 0, "scenario_id": "", "viewport_width": 0,
+                "viewport_height": 0,
+            },
+            {
+                "action": "assert_active", "target": "StartButton", "scene_name": "",
+                "value_index": 0, "text_value": "", "frames": 0,
+                "timeout_seconds": 0, "scenario_id": "", "viewport_width": 0,
+                "viewport_height": 0,
+            },
+            {
+                "action": "capture", "target": "", "scene_name": "",
+                "value_index": 0, "text_value": "", "frames": 0,
+                "timeout_seconds": 0, "scenario_id": "login", "viewport_width": 0,
+                "viewport_height": 0,
+            },
+        ],
+    })
+
+    assert plan.steps[0].target is None
+    assert plan.steps[0].frames == 2
+    assert plan.steps[0].timeout_seconds == 10
+    assert plan.steps[2].viewport_width == 1280
+    assert plan.steps[2].viewport_height == 720
+
+
 def test_declarative_unity_journey_reuses_existing_evidence_paths() -> None:
     raw = {
         "schema_version": "onebrief-unity-evidence-journey-plan-v1",

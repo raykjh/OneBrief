@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from onebrief.budget_guard import RunStatus
 from onebrief.execution_schemas import VerificationReport
 from onebrief.guarded_gemini import BudgetedGeminiClient
+from onebrief.unity_evidence_plan import UnityEvidenceJourneyPlan
 
 
 class ConstrainedAdkResult(BaseModel):
@@ -158,3 +159,53 @@ def test_adk_maker_schema_keeps_optional_selector_semantics() -> None:
     )
 
     assert captured["schema"] is ConstrainedAdkResult
+
+
+def test_adk_declarative_unity_plan_uses_provider_transport_schema() -> None:
+    captured = {}
+
+    class Store:
+        def read(self):
+            return SimpleNamespace(status=RunStatus.APPROVED)
+
+        def reserve_call(self, **kwargs):
+            captured["reservation"] = kwargs
+            return SimpleNamespace(call_id="call-1")
+
+        def settle_call(self, *_args, **_kwargs):
+            return None
+
+    class Models:
+        def count_tokens(self, **_kwargs):
+            return SimpleNamespace(total_tokens=10)
+
+        def generate_content(self, **kwargs):
+            captured["schema"] = kwargs["config"].response_schema
+            return SimpleNamespace(usage_metadata=SimpleNamespace(
+                prompt_token_count=10,
+                candidates_token_count=2,
+                thoughts_token_count=0,
+                total_token_count=12,
+            ))
+
+    client = BudgetedGeminiClient.__new__(BudgetedGeminiClient)
+    client.store = Store()
+    client.client = SimpleNamespace(models=Models())
+
+    client.generate_adk_response(
+        stage="test_adk_unity_plan_schema",
+        model="gemini-3.5-flash",
+        contents=[types.Content(role="user", parts=[types.Part(text="hello")])],
+        config=types.GenerateContentConfig(
+            max_output_tokens=32,
+            response_mime_type="application/json",
+            response_schema=UnityEvidenceJourneyPlan,
+        ),
+    )
+
+    schema = captured["schema"].model_json_schema()
+    assert captured["schema"] is not UnityEvidenceJourneyPlan
+    step = next(iter(schema["$defs"].values()))
+    assert set(step["required"]) == set(step["properties"])
+    assert "anyOf" not in str(schema)
+    assert captured["reservation"]["input_token_cap"] > 600
