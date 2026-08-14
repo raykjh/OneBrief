@@ -2199,6 +2199,15 @@ class ApprovedProjectDevelopmentToolPack:
                 test_sources.append(content)
 
         issues: list[str] = []
+        try:
+            raw_contract = json.loads(goal_text)
+        except (json.JSONDecodeError, TypeError):
+            raw_contract = {}
+        authorized_evidence_only = bool(
+            isinstance(raw_contract, dict)
+            and raw_contract.get("execution_phase") == "evidence_construction"
+            and any("onebrief_declarative_evidence_v1" in item.casefold() for item in test_sources)
+        )
         preserved_flow_requested = bool(
             re.search(
                 r"(?:\bpreserv(?:e|es|ed|ing)\b|보존|유지).{0,140}?"
@@ -2213,7 +2222,7 @@ class ApprovedProjectDevelopmentToolPack:
                 re.IGNORECASE | re.DOTALL,
             )
         )
-        if changed_paths and re.search(
+        if changed_paths and not authorized_evidence_only and re.search(
             r"(?:\bui\b|screen|visual|layout|responsive|surface|scene|transition|"
             r"navigation|login|lobby|settings|로그인|로비|설정|화면|장면|전환)",
             intent_text,
@@ -2652,8 +2661,9 @@ class ApprovedProjectDevelopmentToolPack:
                 and recording_authentication_contracts
             ):
                 selector, submit = recording_authentication_contracts[0]
-                selector_at = structural.find(selector.casefold())
-                submit_at = structural.find(submit.casefold())
+                combined_lower = combined_source.casefold()
+                selector_at = combined_lower.find(selector.casefold())
+                submit_at = combined_lower.find(submit.casefold())
                 if selector_at < 0 or submit_at <= selector_at:
                     issues.append(
                         "protected destination evidence under the approved recording profile must "

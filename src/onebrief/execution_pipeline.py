@@ -2140,13 +2140,17 @@ class ExecutionPipeline:
     ) -> tuple[DraftArtifact, VerificationReport, int]:
         """Run code creation, isolated verification, review, and same-maker repair in ADK."""
 
+        quest_initial_phase = quest_initial_execution_phase(sources)
+        contract = {
+            **contract,
+            "execution_phase": quest_initial_phase.value,
+        }
         self._write(
             output_dir / "development_verification_contract.json",
             json.dumps(contract, ensure_ascii=False, indent=2),
         )
 
         change_schema, development_pack, developer = self._development_components(intake, output_dir)
-        quest_initial_phase = quest_initial_execution_phase(sources)
         unity_runtime = (
             isinstance(development_pack, ApprovedProjectDevelopmentToolPack)
             and development_pack._uses_unity_runtime(development_pack._profile())
