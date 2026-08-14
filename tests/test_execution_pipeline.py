@@ -188,19 +188,55 @@ def test_declarative_unity_journey_canonicalizes_named_toggle_before_playmode() 
 
 def test_declarative_unity_journey_does_not_certify_start_click_as_authentication() -> None:
     plan = UnityEvidenceJourneyPlan.model_validate({
-        "summary": "Observe an unauthenticated start click.",
+        "summary": "Observe an unauthenticated start click without claiming a protected scene.",
         "test_directory": "Assets/JULPAE/Tests/PlayMode",
         "steps": [
             {"action": "load_scene", "scene_name": "LoginScene_All"},
             {"action": "click_button", "target": "StartButton"},
-            {"action": "wait_for_scene", "scene_name": "LobbyScene_All"},
-            {"action": "capture", "scenario_id": "lobby"},
+            {"action": "assert_active", "target": "StartButton"},
+            {"action": "capture", "scenario_id": "login_after_start"},
         ],
     })
 
     rendered = render_unity_evidence_journey(plan)
 
     assert "ONEBRIEF_AUTHENTICATION_PRECONDITION_V1" not in rendered.playmode_test_source
+
+
+@pytest.mark.parametrize(
+    "steps",
+    [
+        [
+            {"action": "load_scene", "scene_name": "LoginScene_All"},
+            {"action": "click_button", "target": "StartButton"},
+            {"action": "wait_for_scene", "scene_name": "LobbyScene_All"},
+            {"action": "capture", "scenario_id": "lobby"},
+        ],
+        [
+            {"action": "load_scene", "scene_name": "LoginScene_All"},
+            {
+                "action": "select_dropdown_index",
+                "target": "TestAccountDropdown",
+                "value_index": 1,
+            },
+            {"action": "click_button", "target": "StartButton"},
+            {"action": "wait_for_scene", "scene_name": "LobbyScene_All"},
+            {"action": "capture", "scenario_id": "lobby"},
+        ],
+    ],
+)
+def test_declarative_unity_journey_rejects_incomplete_protected_authentication(
+    steps: list[dict[str, object]],
+) -> None:
+    with pytest.raises(
+        ValidationError,
+        match="Login-to-protected-scene evidence requires a complete approved authentication path",
+    ):
+        UnityEvidenceJourneyPlan.model_validate({
+            "summary": "Do not mistake Start for authentication.",
+            "test_directory": "Assets/JULPAE/Tests/PlayMode",
+            "steps": steps,
+        })
 
 
 def test_declarative_unity_journey_rejects_direct_enter_without_account_selection() -> None:

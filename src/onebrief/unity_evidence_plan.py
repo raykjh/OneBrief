@@ -167,6 +167,10 @@ class UnityEvidenceJourneyPlan(BaseModel):
             "Ordered real UI journey. Load only the initial scene; later screens must be reached "
             "through shipped controls. Establish any approved test/authentication precondition "
             "before clicking into a protected destination, wait for that destination, then capture. "
+            "A Login-to-protected-scene journey must use either an account/profile selector followed "
+            "by a DirectEnter/SignIn/Login/Authenticate control, or the complete terms-and-identity "
+            "onboarding path. Selecting an account and then clicking a generic Start button is not "
+            "an authentication contract. "
             "Use set_toggle_on for terms/consent Toggle controls instead of click_button."
         ),
     )
@@ -227,6 +231,23 @@ class UnityEvidenceJourneyPlan(BaseModel):
                     "direct-enter authentication requires a preceding approved account/profile "
                     "dropdown selection"
                 )
+        initial_scene = (self.steps[0].scene_name or "").casefold()
+        reaches_protected_scene = any(
+            step.action == "wait_for_scene"
+            and (step.scene_name or "").casefold() != initial_scene
+            for step in self.steps[1:]
+        )
+        if (
+            "login" in initial_scene
+            and reaches_protected_scene
+            and not journey_establishes_authentication_precondition(self)
+        ):
+            raise ValueError(
+                "Login-to-protected-scene evidence requires a complete approved authentication "
+                "path: select an account/profile before DirectEnter/SignIn/Login/Authenticate, "
+                "or complete both terms acceptance and identity input; a generic Start click is "
+                "not an authentication precondition"
+            )
         return self
 
 
