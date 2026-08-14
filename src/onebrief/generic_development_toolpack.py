@@ -1254,6 +1254,23 @@ class ApprovedProjectDevelopmentToolPack:
                 result = f"{prefix}\n\nnamespace OneBrief.Visual\n{{\n{body}\n}}\n"
         return result
 
+    @classmethod
+    def _normalize_change_set_for_execution(
+        cls, change_set: ProjectCodeChangeSet,
+    ) -> ProjectCodeChangeSet:
+        """Bind the durable handoff to the exact text executed in isolation."""
+
+        return change_set.model_copy(update={
+            "changes": [
+                change.model_copy(update={
+                    "content": cls._normalize_safe_generated_text(
+                        change.path, change.content
+                    ),
+                })
+                for change in change_set.changes
+            ],
+        })
+
     def _blob(self, head: str, relative: str) -> bytes:
         completed = subprocess.run(
             ["git", "show", f"{head}:{relative}"], cwd=self.root,
@@ -1869,7 +1886,8 @@ class ApprovedProjectDevelopmentToolPack:
 
         issues: list[str] = []
         if changed_paths and re.search(
-            r"(?:\bui\b|screen|visual|layout|responsive|로그인|로비|설정|화면)",
+            r"(?:\bui\b|screen|visual|layout|responsive|surface|scene|transition|"
+            r"navigation|login|lobby|settings|로그인|로비|설정|화면|장면|전환)",
             intent_text,
             re.IGNORECASE,
         ):
@@ -2617,6 +2635,11 @@ class ApprovedProjectDevelopmentToolPack:
         for change in change_set.changes:
             if self.approved_edit_path(change.path) is None:
                 raise PermissionError(f"path is outside the approved project source area: {change.path}")
+        # Deterministic generated-source repairs are part of the candidate,
+        # not a transient write-time mutation. Persist, hash, verify, and hand
+        # off this exact normalized representation so milestone promotion can
+        # never see a different file than the verifier executed.
+        change_set = self._normalize_change_set_for_execution(change_set)
         output_dir = output_dir.resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
         candidate_paths = [item.path for item in change_set.changes]
@@ -2639,7 +2662,7 @@ class ApprovedProjectDevelopmentToolPack:
                     new_paths.append(change.path)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(
-                    self._normalize_safe_generated_text(change.path, change.content),
+                    change.content,
                     encoding="utf-8",
                     newline="\n",
                 )

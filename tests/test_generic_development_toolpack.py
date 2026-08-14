@@ -1807,7 +1807,7 @@ def test_unity_visual_preflight_rejects_new_product_authentication_bypass(
     issues = pack._unity_visual_contract_issues(
         profile,
         clone,
-        "Modernize the Unity login and lobby UI while preserving the authentication transition.",
+        "The modernized Login surface uses the preserved authentication path and reaches Lobby in PlayMode.",
         [
             "Assets/Scripts/LoginLocalizationBinder.cs",
             "Assets/Tests/PlayMode/OneBriefVisualLoginLobbyTest.cs",
@@ -2557,6 +2557,38 @@ def test_safe_unity_playmode_asmdef_normalization_removes_zero_test_traps() -> N
     assert payload["precompiledReferences"] == []
     assert payload["defineConstraints"] == []
     assert payload["autoReferenced"] is False
+
+
+def test_execution_change_set_persists_the_exact_normalized_candidate() -> None:
+    proposed = ProjectCodeChangeSet(
+        summary="Add a discoverable PlayMode verification assembly.",
+        changes=[{
+            "path": "Assets/Tests/PlayMode/OneBrief.Visual.Tests.asmdef",
+            "content": json.dumps({
+                "name": "OneBrief.Visual.Tests",
+                "references": ["UnityEngine.TestRunner", "Unity.TextMeshPro"],
+                "includePlatforms": ["Editor"],
+                "overrideReferences": True,
+            }),
+            "reason": "Exercise the deterministic generated-source repair.",
+        }],
+    )
+
+    canonical = ApprovedProjectDevelopmentToolPack._normalize_change_set_for_execution(
+        proposed
+    )
+
+    assert canonical is not proposed
+    assert canonical.changes[0].content != proposed.changes[0].content
+    payload = json.loads(canonical.changes[0].content)
+    assert payload["references"] == ["Unity.TextMeshPro"]
+    assert payload["optionalUnityReferences"] == ["TestAssemblies"]
+    assert payload["includePlatforms"] == []
+    assert payload["overrideReferences"] is False
+    assert (
+        ApprovedProjectDevelopmentToolPack._normalize_change_set_for_execution(canonical)
+        == canonical
+    )
 
 
 def test_asmdef_normalization_does_not_touch_production_or_invalid_json() -> None:
