@@ -200,6 +200,12 @@ class UnityEvidenceJourneyPlan(BaseModel):
     @classmethod
     def validate_test_directory(cls, value: str) -> str:
         normalized = str(PurePosixPath(value.replace("\\", "/"))).strip("/")
+        # The provider sometimes omits Unity's conventional Assets root while
+        # still naming the exact fixed evidence directory.  Canonicalize only
+        # this unambiguous shorthand; every other path must already satisfy the
+        # approved Assets/.../Tests/PlayMode boundary below.
+        if normalized.casefold() == "tests/playmode":
+            normalized = "Assets/Tests/PlayMode"
         lowered = f"/{normalized.casefold()}/"
         if not normalized.startswith("Assets/") or "/tests/playmode/" not in lowered:
             raise ValueError("test_directory must be below Assets/.../Tests/PlayMode")

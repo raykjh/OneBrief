@@ -264,6 +264,20 @@ def test_declarative_unity_journey_compiles_trusted_harness() -> None:
     assert len(rendered.playmode_test_source.encode("utf-8")) < 8_000
 
 
+def test_declarative_unity_journey_canonicalizes_exact_assets_root_shorthand() -> None:
+    plan = UnityEvidenceJourneyPlan.model_validate({
+        "summary": "Use the fixed generated PlayMode evidence directory.",
+        "test_directory": "Tests/PlayMode",
+        "steps": [
+            {"action": "load_scene", "scene_name": "LoginScene_All"},
+            {"action": "assert_active", "target": "StartButton"},
+            {"action": "capture", "scenario_id": "login"},
+        ],
+    })
+
+    assert plan.test_directory == "Assets/Tests/PlayMode"
+
+
 def test_declarative_unity_journey_compiles_complete_onboarding_auth_contract() -> None:
     plan = UnityEvidenceJourneyPlan.model_validate({
         "summary": "Prove the complete first-run authentication journey.",
