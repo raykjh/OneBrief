@@ -814,8 +814,10 @@ def development_maker_schema_for(
         return ExactRepairProjectCodeChangeSet
     if (
         exact_edit_anchors
-        and "existing file was not included in approved model context"
-        in normalized_feedback
+        and any(marker in normalized_feedback for marker in (
+            "existing file was not included in approved model context",
+            "edit anchors could not rediscover one approved source range",
+        ))
     ):
         if active_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION:
             return catalog_bound_evidence_repair_schema(exact_edit_anchors)

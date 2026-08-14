@@ -2901,6 +2901,37 @@ def test_unseen_large_source_binding_uses_catalog_anchored_repair() -> None:
     assert issubclass(selected, CatalogAnchoredProductRepair)
 
 
+def test_stale_search_binding_forces_catalog_anchored_repair() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "edit anchors could not rediscover one approved source range: "
+        "Assets/JULPAE/Scripts/Lobby/TopBarNavButtonStyle.cs"
+    )
+    anchors = [{
+        "path": "Assets/JULPAE/Scripts/Lobby/TopBarNavButtonStyle.cs",
+        "anchors": [{
+            "anchor_id": "A0123456789ab",
+            "text": "[Header(\"Background Colors\")]",
+        }],
+    }]
+
+    selected = development_maker_schema_for(
+        report, None, anchors, ExecutionPhase.PRODUCT_IMPLEMENTATION
+    )
+
+    assert issubclass(selected, CatalogAnchoredProductRepair)
+    with pytest.raises(ValidationError):
+        selected.model_validate({
+            "summary": "Repeat the stale free-form search selector.",
+            "changes": [{
+                "path": "Assets/JULPAE/Scripts/Lobby/TopBarNavButtonStyle.cs",
+                "base_sha256": "a" * 64,
+                "search": "[Header(\"Background Colors\")Capability]",
+                "replace": "replacement",
+                "reason": "This must use the approved anchor ID instead.",
+            }],
+        })
+
+
 def test_unseen_evidence_source_binding_stays_in_evidence_catalog() -> None:
     report = ExecutionPipeline._development_failure_report(
         "existing file was not included in approved model context: "
