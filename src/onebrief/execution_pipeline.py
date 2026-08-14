@@ -588,7 +588,12 @@ def normalize_atomic_unity_evidence_bundle(
             existing_test_path=existing_test,
             existing_assembly_path=existing_assembly,
         )
-        return CompactProposedProjectCodeChangeSet(
+        # The provider authored only the bounded plan above. The C# and asmdef
+        # below are trusted compiler output, so they must not be forced back
+        # through the 8 KiB provider-transport schema. Longer valid journeys
+        # still pass through path approval and normal ProjectCodeChangeSet
+        # binding before isolated execution.
+        return ProjectCodeChangeSet(
             summary=plan.summary,
             changes=[
                 {

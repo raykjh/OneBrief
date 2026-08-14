@@ -293,6 +293,30 @@ def test_declarative_unity_journey_reuses_existing_evidence_paths() -> None:
     ]
 
 
+def test_trusted_declarative_journey_can_compile_beyond_provider_transport_cap() -> None:
+    steps = [
+        {"action": "load_scene", "scene_name": "LoginScene_All"},
+        *(
+            {"action": "assert_active", "target": f"LoginControl{index}"}
+            for index in range(20)
+        ),
+        {"action": "capture", "scenario_id": "login_complete"},
+        {"action": "wait_frames", "frames": 4},
+    ]
+    plan = UnityEvidenceJourneyPlan.model_validate({
+        "summary": "Compile a detailed but bounded login observation journey.",
+        "test_directory": "Assets/Tests/PlayMode",
+        "steps": steps,
+    })
+
+    normalized = normalize_atomic_unity_evidence_bundle(plan)
+
+    assert isinstance(normalized, ProjectCodeChangeSet)
+    source = next(item.content for item in normalized.changes if item.path.endswith(".cs"))
+    assert len(source) > 8_000
+    assert "ONEBRIEF_DECLARATIVE_EVIDENCE_V1" in source
+
+
 def test_evidence_phase_selects_declarative_plan_for_runtime_failure() -> None:
     report = VerificationReport(
         verdict=Verdict.REVISE,
