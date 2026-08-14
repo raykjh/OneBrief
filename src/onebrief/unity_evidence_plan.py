@@ -20,6 +20,7 @@ UnityJourneyAction = Literal[
     "wait_frames",
     "assert_active",
     "select_dropdown_index",
+    "set_toggle_on",
     "set_input_text",
     "click_button",
     "wait_for_scene",
@@ -36,7 +37,8 @@ class UnityEvidenceJourneyStep(BaseModel):
         max_length=300,
         description=(
             "Exact active GameObject name or hierarchy path. Required for "
-            "assert_active, select_dropdown_index, set_input_text, and click_button."
+            "assert_active, select_dropdown_index, set_toggle_on, set_input_text, and "
+            "click_button. Use set_toggle_on for a Unity Toggle; never treat a Toggle as a Button."
         ),
     )
     scene_name: str | None = Field(
@@ -64,6 +66,25 @@ class UnityEvidenceJourneyStep(BaseModel):
     )
     viewport_width: int = Field(default=1280, ge=320, le=3840)
     viewport_height: int = Field(default=720, ge=240, le=2160)
+
+    @model_validator(mode="before")
+    @classmethod
+    def canonicalize_named_toggle_action(cls, value: object) -> object:
+        """Compile an obvious Unity Toggle selector to the typed toggle operation.
+
+        Provider plans have repeatedly described ``AgreeToggle`` correctly but selected the
+        generic click action.  A Unity Toggle is not a Button, so accepting that representation
+        only defers a deterministic type error to an expensive PlayMode run.
+        """
+
+        if not isinstance(value, dict) or value.get("action") != "click_button":
+            return value
+        target = str(value.get("target") or "").casefold()
+        if "toggle" not in target:
+            return value
+        normalized = dict(value)
+        normalized["action"] = "set_toggle_on"
+        return normalized
 
     @field_validator("target", "scene_name", "text_value", "scenario_id", mode="before")
     @classmethod
@@ -112,7 +133,8 @@ class UnityEvidenceJourneyStep(BaseModel):
     @model_validator(mode="after")
     def fields_match_action(self) -> "UnityEvidenceJourneyStep":
         target_actions = {
-            "assert_active", "select_dropdown_index", "set_input_text", "click_button",
+            "assert_active", "select_dropdown_index", "set_toggle_on", "set_input_text",
+            "click_button",
         }
         if self.action in target_actions and not self.target:
             raise ValueError(f"{self.action} requires target")
@@ -144,7 +166,8 @@ class UnityEvidenceJourneyPlan(BaseModel):
         description=(
             "Ordered real UI journey. Load only the initial scene; later screens must be reached "
             "through shipped controls. Establish any approved test/authentication precondition "
-            "before clicking into a protected destination, wait for that destination, then capture."
+            "before clicking into a protected destination, wait for that destination, then capture. "
+            "Use set_toggle_on for terms/consent Toggle controls instead of click_button."
         ),
     )
 
@@ -177,7 +200,9 @@ class UnityEvidenceJourneyPlan(BaseModel):
             if step.action != "wait_for_scene" or index == 1:
                 continue
             if not any(
-                prior.action in {"click_button", "select_dropdown_index", "set_input_text"}
+                prior.action in {
+                    "click_button", "select_dropdown_index", "set_toggle_on", "set_input_text",
+                }
                 for prior in self.steps[:index]
             ):
                 raise ValueError(
@@ -199,6 +224,51 @@ def _cs(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+AUTHENTICATION_CONTRACT_MARKER = "ONEBRIEF_AUTHENTICATION_PRECONDITION_V1"
+
+
+def _target_contains(step: UnityEvidenceJourneyStep, markers: tuple[str, ...]) -> bool:
+    target = (step.target or "").casefold().replace("_", "").replace("-", "")
+    return any(marker in target for marker in markers)
+
+
+def journey_establishes_authentication_precondition(
+    plan: UnityEvidenceJourneyPlan,
+) -> bool:
+    """Recognize only executable authentication paths expressible by the trusted DSL.
+
+    The marker produced from this decision is consumed by deterministic preflight.  It is
+    deliberately based on typed actions rather than provider-authored prose or C# tokens.
+    Runtime verification still has to prove that every referenced control exists and that
+    the shipped flow reaches the asserted destination.
+    """
+
+    account_selector = any(
+        step.action == "select_dropdown_index"
+        and _target_contains(step, ("testaccount", "account", "profile", "auth", "session", "user"))
+        for step in plan.steps
+    )
+    authenticated_submit = any(
+        step.action == "click_button"
+        and _target_contains(step, ("directenter", "signin", "login", "authenticate"))
+        for step in plan.steps
+    )
+    if account_selector and authenticated_submit:
+        return True
+
+    terms_acceptance = any(
+        step.action == "set_toggle_on"
+        and _target_contains(step, ("terms", "agree", "consent", "privacy"))
+        for step in plan.steps
+    )
+    identity_input = any(
+        step.action == "set_input_text"
+        and _target_contains(step, ("nickname", "username", "email", "password", "account"))
+        for step in plan.steps
+    )
+    return terms_acceptance and identity_input
+
+
 def _step_source(step: UnityEvidenceJourneyStep) -> list[str]:
     if step.action == "load_scene":
         return [
@@ -217,6 +287,12 @@ def _step_source(step: UnityEvidenceJourneyStep) -> list[str]:
         return [
             f"SelectDropdown(RequireActive({_cs(step.target or '')}), {step.value_index});",
             f"assertions++; trace.Add({_cs('select_dropdown:' + (step.target or '') + ':' + str(step.value_index))});",
+            f"yield return WaitFrames({step.frames});",
+        ]
+    if step.action == "set_toggle_on":
+        return [
+            f"SetToggleOn(RequireActive({_cs(step.target or '')}));",
+            f"assertions++; trace.Add({_cs('set_toggle_on:' + (step.target or ''))});",
             f"yield return WaitFrames({step.frames});",
         ]
     if step.action == "set_input_text":
@@ -264,6 +340,15 @@ def render_unity_evidence_journey(
     body: list[str] = []
     for step in plan.steps:
         body.extend("            " + line for line in _step_source(step))
+    authentication_contract = (
+        [
+            "        private const string OneBriefAuthenticationContract =",
+            f"            \"{AUTHENTICATION_CONTRACT_MARKER}\";",
+            "",
+        ]
+        if journey_establishes_authentication_precondition(plan)
+        else []
+    )
     source = "\n".join([
         "// ONEBRIEF_DECLARATIVE_EVIDENCE_V1 - generated by trusted runner; do not hand edit.",
         "using System;", "using System.Collections;", "using System.Collections.Generic;",
@@ -271,6 +356,7 @@ def render_unity_evidence_journey(
         "using UnityEngine;", "using UnityEngine.SceneManagement;", "using UnityEngine.TestTools;",
         "using UnityEngine.UI;", "", "namespace OneBrief.Visual", "{",
         "    public sealed class OneBriefGeneratedJourneyTest", "    {",
+        *authentication_contract,
         "        [UnityTest]", "        public IEnumerator ExecuteApprovedJourney()", "        {",
         "            var receipts = new List<OneBriefAtomicScreenshot.ScenarioReceipt>();",
         "            var trace = new List<string>();", "            int assertions = 0;",
@@ -324,6 +410,13 @@ def render_unity_evidence_journey(
         "            else type.GetProperty(\"value\").SetValue(control, index);",
         "            object changed = type.GetProperty(\"onValueChanged\")?.GetValue(control);",
         "            changed?.GetType().GetMethod(\"Invoke\", new[] { typeof(int) })?.Invoke(changed, new object[] { index });",
+        "        }", "",
+        "        private static void SetToggleOn(GameObject target)", "        {",
+        "            Toggle toggle = target.GetComponent<Toggle>();",
+        "            Assert.IsNotNull(toggle, \"Target is not a Toggle: \" + target.name);",
+        "            Assert.IsTrue(toggle.interactable, \"Toggle is not interactable: \" + target.name);",
+        "            toggle.SetIsOnWithoutNotify(true);",
+        "            toggle.onValueChanged.Invoke(true);",
         "        }", "",
         "        private static void SetInputText(GameObject target, string value)", "        {",
         "            Component control = ValueComponent(target, \"text\"); Type type = control.GetType();",

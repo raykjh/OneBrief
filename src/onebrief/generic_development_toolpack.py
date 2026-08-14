@@ -2565,7 +2565,13 @@ class ApprovedProjectDevelopmentToolPack:
                 and re.search(r"\bAssert\s*\.", structural, re.IGNORECASE)
                 and any(surface in combined for surface in protected_destinations)
             )
-            authentication_precondition = bool(
+            trusted_declarative_authentication = bool(
+                "onebrief_declarative_evidence_v1" in combined
+                and "onebrief_authentication_precondition_v1" in combined
+                and "onebriefauthenticationcontract" in structural
+                and "onebriefgeneratedjourneytest" in structural
+            )
+            authentication_precondition = trusted_declarative_authentication or bool(
                 re.search(
                     r"(?:dev(?:elopment)?|test|mock)[a-z0-9_]*(?:account|user|profile|auth|session)"
                     r"|(?:account|user|profile|auth|session)[a-z0-9_]*(?:dev|test|mock)"

@@ -2054,6 +2054,52 @@ def test_unity_visual_preflight_accepts_existing_test_account_authentication_pat
     assert not any("protected destination evidence" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_accepts_trusted_declarative_authentication_contract(
+    tmp_path: Path,
+) -> None:
+    from onebrief.unity_evidence_plan import UnityEvidenceJourneyPlan, render_unity_evidence_journey
+
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-trusted-declarative-auth"
+    plan = UnityEvidenceJourneyPlan.model_validate({
+        "summary": "Prove the complete first-run authentication journey.",
+        "test_directory": "Assets/Tests/PlayMode",
+        "steps": [
+            {"action": "load_scene", "scene_name": "Login"},
+            {"action": "click_button", "target": "StartButton"},
+            {"action": "set_toggle_on", "target": "TermsPanel/AgreeToggle"},
+            {"action": "click_button", "target": "TermsPanel/ConfirmButton"},
+            {
+                "action": "set_input_text",
+                "target": "NicknamePanel/NicknameInputField",
+                "text_value": "TestUser",
+            },
+            {"action": "click_button", "target": "NicknamePanel/ConfirmButton"},
+            {"action": "wait_for_scene", "scene_name": "Lobby"},
+            {"action": "capture", "scenario_id": "lobby"},
+        ],
+    })
+    rendered = render_unity_evidence_journey(plan)
+    test_path = clone / rendered.playmode_test_path
+    test_path.parent.mkdir(parents=True)
+    test_path.write_text(rendered.playmode_test_source, encoding="utf-8")
+    (clone / rendered.test_assembly_path).write_text(
+        rendered.test_assembly_source, encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile,
+        clone,
+        "Preserve the authentication/server transition and verify Login -> Lobby.",
+    )
+
+    assert not any("precondition-free click test" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_requires_one_atomic_manifest_for_all_scenarios(
     tmp_path: Path,
 ) -> None:

@@ -133,12 +133,72 @@ def test_declarative_unity_journey_compiles_trusted_harness() -> None:
     rendered = render_unity_evidence_journey(plan)
 
     assert "ONEBRIEF_DECLARATIVE_EVIDENCE_V1" in rendered.playmode_test_source
+    assert "ONEBRIEF_AUTHENTICATION_PRECONDITION_V1" in rendered.playmode_test_source
     assert 'RequireActive("TestAccountDropdown")' in rendered.playmode_test_source
     assert 'RequireActive("DirectEnterButton")' in rendered.playmode_test_source
     assert "ScenarioReceipt" in rendered.playmode_test_source
     assert "WriteManifestAtomically(receipts.ToArray())" in rendered.playmode_test_source
     assert "TestAssemblies" in rendered.test_assembly_source
     assert len(rendered.playmode_test_source.encode("utf-8")) < 8_000
+
+
+def test_declarative_unity_journey_compiles_complete_onboarding_auth_contract() -> None:
+    plan = UnityEvidenceJourneyPlan.model_validate({
+        "summary": "Prove the complete first-run authentication journey.",
+        "test_directory": "Assets/JULPAE/Tests/PlayMode",
+        "steps": [
+            {"action": "load_scene", "scene_name": "LoginScene_All"},
+            {"action": "click_button", "target": "StartButton"},
+            {"action": "set_toggle_on", "target": "TermsPanel/AgreeToggle"},
+            {"action": "click_button", "target": "TermsPanel/ConfirmButton"},
+            {
+                "action": "set_input_text",
+                "target": "NicknameSetupPanel/NicknameInputField",
+                "text_value": "TestUser",
+            },
+            {"action": "click_button", "target": "NicknameSetupPanel/ConfirmButton"},
+            {"action": "wait_for_scene", "scene_name": "LobbyScene_All"},
+            {"action": "capture", "scenario_id": "lobby"},
+        ],
+    })
+
+    rendered = render_unity_evidence_journey(plan)
+
+    assert "ONEBRIEF_AUTHENTICATION_PRECONDITION_V1" in rendered.playmode_test_source
+    assert 'SetToggleOn(RequireActive("TermsPanel/AgreeToggle"))' in rendered.playmode_test_source
+    assert "toggle.SetIsOnWithoutNotify(true)" in rendered.playmode_test_source
+
+
+def test_declarative_unity_journey_canonicalizes_named_toggle_before_playmode() -> None:
+    plan = UnityEvidenceJourneyPlan.model_validate({
+        "summary": "Normalize a provider-authored terms interaction.",
+        "test_directory": "Assets/JULPAE/Tests/PlayMode",
+        "steps": [
+            {"action": "load_scene", "scene_name": "LoginScene_All"},
+            {"action": "click_button", "target": "TermsPanel/AgreeToggle"},
+            {"action": "assert_active", "target": "TermsPanel/ConfirmButton"},
+            {"action": "capture", "scenario_id": "terms"},
+        ],
+    })
+
+    assert plan.steps[1].action == "set_toggle_on"
+
+
+def test_declarative_unity_journey_does_not_certify_start_click_as_authentication() -> None:
+    plan = UnityEvidenceJourneyPlan.model_validate({
+        "summary": "Observe an unauthenticated start click.",
+        "test_directory": "Assets/JULPAE/Tests/PlayMode",
+        "steps": [
+            {"action": "load_scene", "scene_name": "LoginScene_All"},
+            {"action": "click_button", "target": "StartButton"},
+            {"action": "wait_for_scene", "scene_name": "LobbyScene_All"},
+            {"action": "capture", "scenario_id": "lobby"},
+        ],
+    })
+
+    rendered = render_unity_evidence_journey(plan)
+
+    assert "ONEBRIEF_AUTHENTICATION_PRECONDITION_V1" not in rendered.playmode_test_source
 
 
 def test_declarative_unity_journey_rejects_direct_destination_load() -> None:
