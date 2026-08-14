@@ -1,0 +1,20 @@
+{
+  "schema_version": "onebrief-parallel-lane-submission-v1",
+  "campaign_id": "onebrief-stabilization-20260811",
+  "lane_id": "incident-playbook",
+  "baseline_commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+  "baseline_image_digest": "sha256:87c307cb079b52cadb754778d1a25457f48b65fa548a92903f162b5b088f8f6b",
+  "case_sha256": "d276fb3eda32d70f919b216563c4282df1a9c4bc8f7e4220ba7446f203014b92",
+  "approved_execution_usd": 0.8162,
+  "reserved_intake_usd": 0.2,
+  "lane_total_cap_usd": 1.5,
+  "session_id": "recovered-incident-playbook",
+  "dispatch": {"status": "completed", "event_count": 2, "receipt_recovered": true},
+  "execution": {
+    "session_id": "recovered-incident-playbook",
+    "job_uri": "gs://onebrief-agent-20260805-jobs/jobs/bbd4a25a-6cbd-4b58-a96b-656aa282eb4f",
+    "operation_name": "projects/onebrief-agent-20260805/locations/asia-northeast3/operations/deaeac84-b271-45e5-8020-80e67cf02f05",
+    "agent_engine_resource": "projects/1077683695702/locations/asia-northeast3/reasoningEngines/665354068385857536",
+    "agent_engine_session": "recovered-from-cloud-run-execution-onebrief-worker-r5ckd"
+  }
+}

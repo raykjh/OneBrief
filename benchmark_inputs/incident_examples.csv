@@ -1,0 +1,5 @@
+incident_id,detected_at,summary,impact,service_status,workaround,owner
+INC-101,2026-08-01T09:10:00+09:00,로그인 전체 실패,전체 사용자 로그인 불가,down,없음,identity-team
+INC-102,2026-08-03T14:20:00+09:00,보고서 생성 지연,다수 고객의 보고서가 10분 이상 지연,degraded,기존 보고서 조회 가능,reporting-team
+INC-103,2026-08-05T11:05:00+09:00,설정 화면 아이콘 누락,일부 고객의 비핵심 화면 표시 오류,available,텍스트 메뉴 사용,frontend-team
+

@@ -1,0 +1,19 @@
+{
+  "schema_version": "onebrief-regression-fixture-v1",
+  "source_job_id": "c1e33f3b-e277-4bab-8925-46b0fed9b251",
+  "milestone_id": "M01",
+  "source_revision": "cb3ed328ab5af9bc883b86cb6d660691f5d169be",
+  "failure_text": "Unity visual scenario login_to_lobby screenshot is unavailable",
+  "expected_failure_code": "unity_screenshot_not_materialized",
+  "expected_failure_owner": "evidence",
+  "expected_next_phase": "evidence_construction",
+  "preserved_evidence": {
+    "compile": "passed",
+    "behavior": "passed"
+  },
+  "failed_evidence": {
+    "visual": "missing"
+  },
+  "forbidden_repair_surface": "product source",
+  "required_repair_surface": "Tests/PlayMode evidence source"
+}

@@ -1,0 +1,35 @@
+{
+  "schema_version": "onebrief-benchmark-case-v1",
+  "case_id": "structured-operations-workbook-20260810",
+  "goal": "제공된 작업 요청 CSV와 운영 규칙 문서를 바탕으로 담당자별 작업량, 기한 초과 위험, 우선순위와 주간 요약을 계산하는 실사용 Excel 통합문서를 만든다. 원본 행을 누락하거나 임의 점수를 만들지 말고 모든 요약값이 원본과 수식으로 추적되어야 한다. 입력 시트, 검증된 계산 시트, 대시보드, 오류 목록과 간단한 사용 안내를 포함한 단일 xlsx 결과물을 제공한다.",
+  "acceptance_criteria": [
+    "원본 CSV의 모든 행이 고유 식별자로 보존되고 결과 행과 기계적으로 대조된다.",
+    "우선순위와 위험 판정은 제공된 규칙 또는 문서화된 수식으로만 계산된다.",
+    "누락값·중복값·잘못된 날짜는 오류 목록에 표시되며 조용히 보정되지 않는다.",
+    "담당자별 작업량과 주간 요약이 원본을 변경하면 자동 갱신된다.",
+    "필수 셀의 수식·데이터 유효성·필터·고정 창과 기본 서식이 검증된다.",
+    "최종 전달 폴더의 최상위에는 xlsx와 짧은 사용 안내만 둔다."
+  ],
+  "verification_commands": [
+    "python scripts/verify_workbook.py result.xlsx source.csv rules.json"
+  ],
+  "execution_rules": {
+    "no_midrun_user_feedback": true,
+    "allow_user_call_only_for": [
+      "missing_authoritative_information",
+      "missing_permission",
+      "insufficient_approved_budget"
+    ],
+    "protect_original_worktree": true,
+    "safe_apply_required": false
+  },
+  "intake": {
+    "output_target": "spreadsheet",
+    "desired_output": "one verified .xlsx workbook and a concise usage note",
+    "upload_paths": [
+      "benchmark_inputs/operations_requests.csv",
+      "benchmark_inputs/operations_rules.md"
+    ],
+    "supplement": "The uploaded CSV and rules are complete and authoritative. Use 2026-08-10 as the documented as-of date. Apply only supplied categorical rules; do not invent scores."
+  }
+}

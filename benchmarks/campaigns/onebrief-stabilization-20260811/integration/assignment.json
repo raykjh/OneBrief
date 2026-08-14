@@ -1,0 +1,28 @@
+{
+  "allows_common_code_changes": true,
+  "allows_safe_apply": true,
+  "baseline": {
+    "commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+    "frozen_at": "2026-08-11T06:29:14.747516+00:00",
+    "image_digest": "sha256:87c307cb079b52cadb754778d1a25457f48b65fa548a92903f162b5b088f8f6b",
+    "source_ref": "onebrief-stabilization-20260811",
+    "tree_sha": "2604d938c80a5b6c1db320d8d3cf236124a1a241"
+  },
+  "campaign_id": "onebrief-stabilization-20260811",
+  "lane_id": "integration",
+  "required_lane_ids": [
+    "incident-playbook",
+    "operations-workbook",
+    "service-dashboard",
+    "public-data-greenfield",
+    "exchange-existing"
+  ],
+  "rules": [
+    "Test lanes are evidence-only and must not modify shared source code.",
+    "Only failures observed in at least two lanes are automatically eligible for a common fix.",
+    "Project-specific behavior belongs in a ToolPack or project knowledge pack.",
+    "A new baseline requires all three lanes to pass revalidation.",
+    "Safe apply to the same source project is serialized and owned by integration."
+  ],
+  "schema_version": "onebrief-integration-lane-spec-v1"
+}

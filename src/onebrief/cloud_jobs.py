@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
@@ -15,6 +18,76 @@ from google.cloud import run_v2, storage
 from pydantic import BaseModel
 
 from onebrief.jobs import JobRecord, JobStatus, JobStore, run_job, verify_input_snapshot
+from onebrief.development_progress import development_failure_quality
+from onebrief.development_change_tracking import HISTORY_NAME, REGISTER_NAME
+from onebrief.project_snapshot import ProjectSnapshotManifest, SNAPSHOT_MANIFEST
+
+
+REUSABLE_WORK_ARTIFACTS = (
+    "project_architecture.json",
+    "public_research.json",
+    "public_research.md",
+    "public_research_unavailable.json",
+    "analysis.json",
+    *(f"draft_r{index}.json" for index in range(13)),
+    "code_change_set.json",
+    "code_change_set_retry_r1.json",
+    *(f"code_change_set_r{index}.json" for index in range(13)),
+    *(f"development_verification_failure_r{index}.txt" for index in range(13)),
+    "development_verification_failure.txt",
+    "development_best_candidate.json",
+    "development_best_failure.txt",
+    "development_pending_promotion.json",
+    *(f"development_candidate_promotion_raw_r{index}.json" for index in range(13)),
+    REGISTER_NAME,
+    HISTORY_NAME,
+    "convergence_ledger.json",
+    "repair_contract.json",
+)
+
+# These files are valid only for the exact TeamPlan/project identity that
+# created them.  A continuation gets a new project id and a freshly rebound
+# TeamPlan, so replaying the parent's graph would fail its digest check (or,
+# worse, skip work under stale ownership).  Durable milestone evidence remains
+# reusable; executor runtime state does not.
+NON_REUSABLE_MILESTONE_ARTIFACTS = {
+    "execution_checkpoint.json",
+    "execution_graph_state.json",
+}
+NON_REUSABLE_MILESTONE_DIRECTORIES = {
+    "development",
+    "handoffs",
+    "handoff_receipts",
+    "model_selection_receipts",
+    "toolpacks",
+}
+
+
+def _reusable_milestone_artifact(relative: PurePosixPath) -> bool:
+    if relative.parts[0] == "milestone_state":
+        return True
+    if relative.parts[0] != "milestones" or len(relative.parts) != 3:
+        return False
+    name = relative.name
+    return bool(
+        name in {
+            "analysis.json",
+            "code_change_set.json",
+            "completion_ledger.json",
+            "convergence_ledger.json",
+            "development_best_candidate.json",
+            "development_best_failure.txt",
+            "development_rejected_change_fingerprints.json",
+            "development_rejected_change_history.json",
+            "development_verification_failure.txt",
+            "evidence_specification.json",
+            "repair_contract.json",
+        }
+        or re.fullmatch(r"code_change_set_(?:delta_)?r\d+\.json", name)
+        or re.fullmatch(r"development_verification_failure_r\d+\.txt", name)
+        or re.fullmatch(r"repair_contract_f\d+\.json", name)
+        or re.fullmatch(r"repair_plan_r\d+_n\d+\.json", name)
+    )
 
 
 @dataclass(frozen=True)
@@ -34,6 +107,22 @@ class CloudExecutionReceipt(BaseModel):
     asynchronous: bool = True
 
 
+class RuntimeCapabilityHandoff(BaseModel):
+    """Digest-bound request for an already approved edge-only executor."""
+
+    schema_version: str = "onebrief-runtime-capability-handoff-v1"
+    handoff_id: str
+    job_uri: str
+    job_id: str
+    project_id: str
+    source_head_sha: str
+    required_adapters: list[str]
+    input_manifest_sha256: str
+    approved_budget_usd_micros: int
+    target_executor: str = "approved_local_capability_runner"
+    created_at: str
+
+
 class CloudJobRepository(Protocol):
     def acquire_claim(self) -> None: ...
 
@@ -44,6 +133,8 @@ class CloudJobRepository(Protocol):
     def write_completion(self, record: JobRecord) -> None: ...
 
     def write_failure(self, message: str) -> None: ...
+
+    def write_runtime_handoff(self, handoff: RuntimeCapabilityHandoff) -> None: ...
 
 
 def parse_gcs_job_uri(uri: str) -> GCSJobUri:
@@ -73,13 +164,30 @@ def _safe_relative(blob_name: str, prefix: str) -> Path:
 
 
 def _local_job_files(job_dir: Path) -> list[Path]:
-    return [
-        path
-        for path in sorted(job_dir.rglob("*"))
-        if path.is_file()
-        and path.name not in {".job.lock", ".budget.lock"}
-        and ".tmp" not in path.name
-    ]
+    files: list[Path] = []
+    for path in sorted(job_dir.rglob("*")):
+        if (
+            not path.is_file()
+            or path.name in {".job.lock", ".budget.lock"}
+            or ".tmp" in path.name
+        ):
+            continue
+        relative = path.relative_to(job_dir)
+        if (
+            len(relative.parts) >= 2
+            and relative.parts[0] == "work"
+            and (
+                relative.parts[1] == "milestone_workspace"
+                or (
+                    relative.parts[1] == "project_snapshot"
+                    and len(relative.parts) >= 3
+                    and relative.parts[2] in {"repository", "registry"}
+                )
+            )
+        ):
+            continue
+        files.append(path)
+    return files
 
 
 class GCSJobStore:
@@ -164,11 +272,16 @@ class GCSJobStore:
 
     def upload_outputs(self, job_dir: Path) -> None:
         allowed = {"job.json", "run", "work", "packages"}
-        for source in _local_job_files(job_dir):
-            relative = source.relative_to(job_dir)
-            if relative.parts[0] not in allowed:
-                continue
-            self._replace_or_create(source, relative)
+        files = [
+            source
+            for source in _local_job_files(job_dir)
+            if source.relative_to(job_dir).parts[0] in allowed
+        ]
+        # Publish the terminal job record last. Readers must never observe COMPLETE
+        # before the graph, audit ledger, and immutable result package exist.
+        files.sort(key=lambda source: source.relative_to(job_dir).as_posix() == "job.json")
+        for source in files:
+            self._replace_or_create(source, source.relative_to(job_dir))
 
     def write_completion(self, record: JobRecord) -> None:
         self.bucket.blob(self._name("control/completion.json")).upload_from_string(
@@ -188,9 +301,213 @@ class GCSJobStore:
         except PreconditionFailed:
             pass
 
+    def write_runtime_handoff(self, handoff: RuntimeCapabilityHandoff) -> None:
+        blob = self.bucket.blob(self._name("control/runtime_handoff.json"))
+        payload = handoff.model_dump_json(indent=2)
+        try:
+            blob.upload_from_string(
+                payload,
+                content_type="application/json",
+                if_generation_match=0,
+            )
+        except PreconditionFailed:
+            existing = RuntimeCapabilityHandoff.model_validate_json(
+                blob.download_as_text(encoding="utf-8")
+            )
+            if existing.handoff_id != handoff.handoff_id:
+                raise RuntimeError("a different runtime handoff already exists for this job")
+
+    def read_runtime_handoff(self) -> RuntimeCapabilityHandoff:
+        try:
+            payload = self.bucket.blob(
+                self._name("control/runtime_handoff.json")
+            ).download_as_text(encoding="utf-8")
+        except NotFound as exc:
+            raise FileNotFoundError("cloud job has no approved runtime handoff") from exc
+        return RuntimeCapabilityHandoff.model_validate_json(payload)
+
     def read_job(self) -> JobRecord:
         payload = self.bucket.blob(self._name("job.json")).download_as_text(encoding="utf-8")
         return JobRecord.model_validate_json(payload)
+
+    def read_json(self, relative: str | Path) -> dict[str, Any]:
+        try:
+            payload = self.bucket.blob(self._name(relative)).download_as_text(encoding="utf-8")
+        except NotFound as exc:
+            raise FileNotFoundError(f"job artifact not found: {relative}") from exc
+        value = json.loads(payload)
+        if not isinstance(value, dict):
+            raise ValueError(f"job artifact is not a JSON object: {relative}")
+        return value
+
+    def download_reusable_artifacts(self, destination_work: Path) -> list[str]:
+        """Copy only the fixed resumable allowlist into a newly approved job."""
+        destination_work = destination_work.resolve()
+        destination_work.mkdir(parents=True, exist_ok=True)
+        copied: list[dict[str, str]] = []
+        downloaded: dict[str, bytes] = {}
+        for name in REUSABLE_WORK_ARTIFACTS:
+            source_name = name
+            target_name = (
+                "code_change_set.json"
+                if name.startswith("code_change_set") or name == "development_best_candidate.json"
+                else (
+                    "development_verification_failure.txt"
+                    if name.startswith("development_verification_failure")
+                    or name == "development_best_failure.txt"
+                    else (
+                        "development_pending_promotion.json"
+                        if name == "development_pending_promotion.json"
+                        or name.startswith("development_candidate_promotion_raw_r")
+                        else name
+                    )
+                )
+            )
+            target = (destination_work / target_name).resolve()
+            temporary = destination_work / f".reuse-{source_name}.tmp"
+            if not target.is_relative_to(destination_work):
+                raise ValueError("unsafe reusable artifact destination")
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                self.bucket.blob(self._name(f"work/{source_name}")).download_to_filename(
+                    str(temporary)
+                )
+                downloaded[source_name] = temporary.read_bytes()
+                os.replace(temporary, target)
+            except NotFound:
+                # Several versioned candidate names intentionally map to the
+                # same canonical target. A missing newer candidate must not
+                # erase an older allowlisted candidate already copied.
+                temporary.unlink(missing_ok=True)
+                continue
+            digest = hashlib.sha256(target.read_bytes()).hexdigest()
+            copied.append({"source": source_name, "target": target_name, "sha256": digest})
+        # Milestone receipts and their bounded candidate/evidence artifacts are
+        # durable execution state, not arbitrary model memory. They are restored
+        # under fixed prefixes and validated again by MilestoneStore before use.
+        for prefix in (("milestone_state", "milestones") if hasattr(self.client, "list_blobs") else ()):
+            blob_prefix = self._name(f"work/{prefix}/")
+            for blob in self.client.list_blobs(self.bucket, prefix=blob_prefix):
+                relative_name = blob.name[len(self._name("work/")) :]
+                relative = PurePosixPath(relative_name)
+                if (
+                    not relative.parts
+                    or relative.parts[0] != prefix
+                    or any(part in {"", ".", ".."} for part in relative.parts)
+                    or ".tmp" in relative.name
+                ):
+                    raise ValueError("unsafe reusable milestone artifact")
+                if relative.name in NON_REUSABLE_MILESTONE_ARTIFACTS:
+                    continue
+                if (
+                    relative.parts[0] == "milestones"
+                    and any(
+                        part in NON_REUSABLE_MILESTONE_DIRECTORIES
+                        for part in relative.parts[2:]
+                    )
+                ):
+                    continue
+                if not _reusable_milestone_artifact(relative):
+                    continue
+                target = (destination_work / Path(*relative.parts)).resolve()
+                if not target.is_relative_to(destination_work):
+                    raise ValueError("unsafe reusable milestone artifact destination")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                blob.download_to_filename(str(target))
+                copied.append({
+                    "source": relative.as_posix(),
+                    "target": relative.as_posix(),
+                    "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+                })
+        # Narrative revisions are checkpoints from one prior attempt, not
+        # prepaid future turns in the child. Restore only the most progressed
+        # candidate as round zero so every later round is a newly billed repair
+        # followed by fresh verification.
+        draft_candidates = sorted(
+            (
+                int(name.removeprefix("draft_r").removesuffix(".json")),
+                name,
+            )
+            for name in downloaded
+            if name.startswith("draft_r")
+            and name.endswith(".json")
+            and name.removeprefix("draft_r").removesuffix(".json").isdigit()
+        )
+        if draft_candidates:
+            _round, source_name = draft_candidates[-1]
+            target = destination_work / "draft_r0.json"
+            target.write_bytes(downloaded[source_name])
+            for index in range(1, 13):
+                (destination_work / f"draft_r{index}.json").unlink(missing_ok=True)
+            copied = [
+                item for item in copied
+                if not str(item["target"]).startswith("draft_r")
+            ]
+            copied.append({
+                "source": source_name,
+                "target": "draft_r0.json",
+                "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+                "selection": "most_progressed_narrative_candidate",
+            })
+        # Re-rank every verifier-paired checkpoint even when an explicit best
+        # file exists.  The rank can be improved after a run (for example,
+        # distinguishing static Unity validation from real PlayMode), so an old
+        # explicit checkpoint is advisory rather than permanently authoritative.
+        paired: list[tuple[tuple[int, int], int, str, str]] = []
+        if (
+            "development_best_candidate.json" in downloaded
+            and "development_best_failure.txt" in downloaded
+        ):
+            message = downloaded["development_best_failure.txt"].decode(
+                "utf-8", errors="replace"
+            )
+            paired.append((
+                development_failure_quality(message),
+                -1,
+                "development_best_candidate.json",
+                "development_best_failure.txt",
+            ))
+        for index in range(13):
+            candidate_name = f"code_change_set_r{index}.json"
+            failure_name = f"development_verification_failure_r{index}.txt"
+            if candidate_name in downloaded and failure_name in downloaded:
+                message = downloaded[failure_name].decode("utf-8", errors="replace")
+                paired.append((
+                    development_failure_quality(message),
+                    index,
+                    candidate_name,
+                    failure_name,
+                ))
+        if paired:
+            _quality, _round, candidate_name, failure_name = max(
+                paired, key=lambda item: (item[0], item[1])
+            )
+            for target_name, source_name in (
+                ("development_best_candidate.json", candidate_name),
+                ("development_best_failure.txt", failure_name),
+                ("code_change_set.json", candidate_name),
+                ("development_verification_failure.txt", failure_name),
+            ):
+                target = destination_work / target_name
+                target.write_bytes(downloaded[source_name])
+                digest = hashlib.sha256(target.read_bytes()).hexdigest()
+                copied.append({
+                    "source": source_name,
+                    "target": target.name,
+                    "sha256": digest,
+                    "selection": "derived_best_progress",
+                })
+        if copied:
+            (destination_work / "reuse_manifest.json").write_text(
+                json.dumps({
+                    "schema_version": "onebrief-reuse-manifest-v1",
+                    "source_job_uri": self.location.uri,
+                    "reason": "identical approved request continuation within the original budget ceiling",
+                    "artifacts": copied,
+                }, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        return [item["target"] for item in copied]
 
     def download_result(self, destination: Path) -> Path:
         record = self.read_job()
@@ -275,6 +592,143 @@ def submit_cloud_job(
     )
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def approved_edge_runtime_adapters(job_dir: Path) -> list[str]:
+    """Return desktop-runtime adapters bound into the immutable snapshot."""
+
+    path = job_dir / "inputs" / SNAPSHOT_MANIFEST
+    if not path.is_file():
+        return []
+    manifest = ProjectSnapshotManifest.model_validate_json(path.read_text(encoding="utf-8"))
+    return sorted({
+        item.split(":", 1)[0]
+        for item in manifest.approved_adapters
+        if item.split(":", 1)[0].startswith("unity_")
+    })
+
+
+def required_local_runtime_adapters(job_dir: Path) -> list[str]:
+    """Return approved adapters unavailable in the current execution image.
+
+    Unity is an installed desktop capability, not model reasoning.  A managed
+    Linux worker must hand the exact immutable job to the user's already
+    approved local runner instead of weakening the evidence contract.
+    """
+
+    unity = approved_edge_runtime_adapters(job_dir)
+    if not unity:
+        return []
+    configured = os.environ.get("ONEBRIEF_UNITY_EDITOR")
+    editor_available = bool(configured and Path(configured).is_file())
+    if os.name == "nt" and not editor_available:
+        editor_available = any(
+            Path(r"C:\Program Files\Unity\Hub\Editor").glob("*/Editor/Unity.exe")
+        )
+    return [] if editor_available else unity
+
+
+def build_runtime_handoff(
+    job_dir: Path, *, job_uri: str, required_adapters: list[str],
+) -> RuntimeCapabilityHandoff:
+    record = JobStore(job_dir).read()
+    snapshot = ProjectSnapshotManifest.model_validate_json(
+        (job_dir / "inputs" / SNAPSHOT_MANIFEST).read_text(encoding="utf-8")
+    )
+    input_manifest = job_dir / "inputs" / "input_manifest.json"
+    payload = {
+        "job_uri": job_uri,
+        "job_id": record.job_id,
+        "project_id": snapshot.project_id,
+        "source_head_sha": snapshot.source_head_sha,
+        "required_adapters": sorted(required_adapters),
+        "input_manifest_sha256": _sha256_file(input_manifest),
+        "approved_budget_usd_micros": json.loads(
+            (job_dir / "run" / "approval.json").read_text(encoding="utf-8")
+        )["approved_usd_micros"],
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return RuntimeCapabilityHandoff(
+        handoff_id=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        created_at=datetime.now(UTC).isoformat(),
+        **payload,
+    )
+
+
+def verify_runtime_handoff(
+    job_dir: Path, *, job_uri: str, handoff: RuntimeCapabilityHandoff,
+) -> None:
+    expected = build_runtime_handoff(
+        job_dir,
+        job_uri=job_uri,
+        required_adapters=approved_edge_runtime_adapters(job_dir),
+    )
+    comparable = {
+        key: value
+        for key, value in expected.model_dump(mode="json").items()
+        if key != "created_at"
+    }
+    observed = {
+        key: value
+        for key, value in handoff.model_dump(mode="json").items()
+        if key != "created_at"
+    }
+    if observed != comparable:
+        raise PermissionError("runtime handoff does not match the immutable approved job")
+
+
+def run_local_capability_worker(
+    job_uri: str,
+    *,
+    repository: GCSJobStore | None = None,
+    gateway: object | None = None,
+) -> JobRecord:
+    """Execute an exact managed handoff only where its desktop adapters exist."""
+
+    remote = repository or GCSJobStore(job_uri)
+    local_job: Path | None = None
+    try:
+        runtime_root = Path(
+            os.environ.get("ONEBRIEF_LOCAL_RUNTIME_ROOT", "")
+        ).expanduser() if os.environ.get("ONEBRIEF_LOCAL_RUNTIME_ROOT") else (
+            Path.home() / ".onebrief-runtime"
+        )
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="cap_", dir=runtime_root) as temp:
+            local_job = remote.download_job(Path(temp) / "job")
+            handoff = remote.read_runtime_handoff()
+            verify_runtime_handoff(local_job, job_uri=job_uri, handoff=handoff)
+            unavailable = required_local_runtime_adapters(local_job)
+            if unavailable:
+                raise RuntimeError(
+                    "approved local runtime adapters remain unavailable: "
+                    + ", ".join(unavailable)
+                )
+            remote.acquire_claim()
+            record = run_job(
+                local_job,
+                gateway=gateway,
+                progress_callback=lambda job, _milestone: remote.upload_outputs(job),
+            )
+            remote.upload_outputs(local_job)
+            remote.write_completion(record)
+            return record
+    except Exception as exc:
+        if local_job is not None:
+            try:
+                remote.upload_outputs(local_job)
+            except Exception:
+                pass
+        remote.write_failure(f"{type(exc).__name__}: {exc}")
+        raise
+
+
 def run_cloud_worker(
     job_uri: str,
     *,
@@ -283,15 +737,34 @@ def run_cloud_worker(
 ) -> JobRecord:
     """Download, execute, and publish one claimed cloud job using ephemeral disk."""
     remote = repository or GCSJobStore(job_uri)
-    remote.acquire_claim()
+    local_job: Path | None = None
     try:
         with tempfile.TemporaryDirectory(prefix="onebrief_cloud_") as temp:
             local_job = remote.download_job(Path(temp) / "job")
-            record = run_job(local_job, gateway=gateway)
+            required_adapters = required_local_runtime_adapters(local_job)
+            if required_adapters and os.environ.get("CLOUD_RUN_EXECUTION"):
+                handoff = build_runtime_handoff(
+                    local_job,
+                    job_uri=job_uri,
+                    required_adapters=required_adapters,
+                )
+                remote.write_runtime_handoff(handoff)
+                return JobStore(local_job).read()
+            remote.acquire_claim()
+            record = run_job(
+                local_job,
+                gateway=gateway,
+                progress_callback=lambda job, _milestone: remote.upload_outputs(job),
+            )
             remote.upload_outputs(local_job)
             remote.write_completion(record)
             return record
     except Exception as exc:
+        if local_job is not None:
+            try:
+                remote.upload_outputs(local_job)
+            except Exception:
+                pass
         remote.write_failure(f"{type(exc).__name__}: {exc}")
         raise
 

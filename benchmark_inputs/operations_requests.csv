@@ -1,0 +1,9 @@
+request_id,owner,team,received_date,due_date,status,impact,effort_hours,title
+REQ-001,Kim,Platform,2026-08-01,2026-08-12,in_progress,high,12,Repair customer export validation
+REQ-002,Lee,Operations,2026-08-03,2026-08-09,open,medium,4,Reconcile weekly inventory exceptions
+REQ-003,Park,Platform,2026-08-04,2026-08-16,open,low,3,Update internal runbook links
+REQ-004,Kim,Security,2026-08-05,2026-08-11,blocked,high,8,Review expired service credentials
+REQ-005,Choi,Operations,2026-08-06,2026-08-20,in_progress,medium,16,Prepare month-end staffing plan
+REQ-006,Lee,Operations,2026-08-07,2026-08-13,done,high,5,Correct duplicate fulfillment records
+REQ-007,Park,Support,2026-08-08,2026-08-10,open,high,2,Escalate unresolved priority tickets
+REQ-008,Choi,Support,2026-08-09,2026-08-23,open,low,6,Refresh response template library

@@ -1,15 +1,16 @@
-"""One bounded Gemini 2.5 Flash request grounded with Google Search."""
+"""One bounded Gemini 3.5 Flash request grounded with Google Search."""
 
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from math import ceil
 
 from google.genai import types
 
 from onebrief.execution_limits import PUBLIC_RESEARCH_OUTPUT_CAP
 from onebrief.producer import approximate_tokens
-from onebrief.public_research import PublicResearchResult, web_source
+from onebrief.public_research import PublicResearchResult, resolve_public_source, web_source
 
 
 def run_grounded_research(
@@ -17,24 +18,46 @@ def run_grounded_research(
     *,
     goal: str,
     desired_output: str | None,
+    completion_contract: dict[str, object] | None = None,
+    stage: str = "public_research",
+    prior_research: str | None = None,
+    blocking_issues: list[str] | None = None,
 ) -> PublicResearchResult:
-    """Run exactly one grounded prompt under a fixed worst-case fee reservation."""
-    model = "gemini-2.5-flash"
+    """Run one grounded research or evidence-repair prompt under a fixed reservation."""
+    model = (
+        gateway.model_for(stage)
+        if hasattr(gateway, "model_for")
+        else "gemini-3.5-flash"
+    )
     fixed_cost_cap = 0.035
     system_instruction = (
         "You are OneBrief's public research agent. Use Google Search for current public facts. "
         "Never invent a listing, price, fee, date, or URL. Distinguish an explicitly advertised "
-        "value from an estimate. For lists, return one Markdown table with one item per row and "
-        "include source, checked date, and uncertainty columns. When a requested value is absent, "
-        "write '확인 필요' rather than guessing. Keep high-impact decisions with the user."
+        "value from an estimate. Satisfy the supplied completion contract's evidence requirements, "
+        "not merely the broad goal. For lists, return one Markdown table with one individually named "
+        "item per row and include a direct source URL, checked date, and uncertainty columns. A category "
+        "or market segment is not a named item. Never infer that no equivalent exists merely because a "
+        "candidate is new; search named comparisons and use bounded wording such as 'not identified within "
+        "this search scope'. Never use absolute safety or no-side-effect language. When a requested value is "
+        "absent, write '확인 필요' rather than guessing. Keep high-impact decisions with the user."
     )
     contents = json.dumps(
         {
             "goal": goal,
             "desired_output": desired_output,
+            "completion_contract": completion_contract,
             "instructions": (
                 "Research enough current candidates to answer the goal. Apply every numeric and "
                 "geographic condition exactly. Preserve direct source links in the report."
+            ),
+            "prior_research": prior_research,
+            "blocking_evidence_issues": blocking_issues or [],
+            "repair_instructions": (
+                "When prior research and blocking issues are supplied, replace unsupported evidence "
+                "rather than merely rewriting its wording. Put every required named comparison item "
+                "and its directly inspectable URL on the same Markdown table row. Do not count a "
+                "bibliography, provider homepage, category, or market segment as item-level evidence."
+                if prior_research else None
             ),
         },
         ensure_ascii=False,
@@ -57,7 +80,7 @@ def run_grounded_research(
     observed = int(count.total_tokens or 0)
     input_cap = ceil((observed + approximate_tokens(system_instruction)) * 1.15) + 256
     reservation = gateway.store.reserve_call(
-        stage="public_research",
+        stage=stage,
         model=model,
         input_token_cap=input_cap,
         output_token_cap=PUBLIC_RESEARCH_OUTPUT_CAP,
@@ -110,6 +133,8 @@ def run_grounded_research(
     )
     if not sources:
         raise ValueError("Google Search returned no grounded source URLs.")
+    with ThreadPoolExecutor(max_workers=min(6, len(sources))) as executor:
+        sources = list(executor.map(resolve_public_source, sources))
     entry = getattr(metadata, "search_entry_point", None)
     return PublicResearchResult(
         query=goal,

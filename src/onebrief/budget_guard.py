@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from datetime import UTC, datetime
 from decimal import Decimal, ROUND_CEILING
 from enum import StrEnum
@@ -16,7 +17,18 @@ from filelock import FileLock
 from pydantic import BaseModel, Field, model_validator
 
 from onebrief.producer import PRICE_CARD_VERSION, PRICES
-from onebrief.schemas import BudgetEnvelope
+from onebrief.phase_execution import (
+    PhaseAttemptLedger,
+    PhaseBudgetPolicy,
+    allocate_phase_policy,
+    deterministic_attempt,
+    is_ai_repair_stage,
+    is_authority_preserving_ai_repair_reservation,
+    phase_attempt_ledger_sha256,
+    phase_for_stage,
+    phase_policy_sha256,
+)
+from onebrief.schemas import BudgetEnvelope, ExecutionPhase
 
 MICROS_PER_DOLLAR = 1_000_000
 RESERVATION_SAFETY_FACTOR = Decimal("1.05")
@@ -58,6 +70,9 @@ class ApprovalRecord(BaseModel):
     budget_estimate_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     price_card_version: str
     endpoint: str
+    phase_policy_sha256: str | None = Field(
+        default=None, pattern=r"^[a-f0-9]{64}$"
+    )
 
 
 class CostEntry(BaseModel):
@@ -72,6 +87,7 @@ class CostEntry(BaseModel):
     actual_usd_micros: int = Field(ge=0)
     actual_input_tokens: int = Field(ge=0)
     actual_output_tokens: int = Field(ge=0)
+    phase_reserve_borrowed_usd_micros: int = Field(default=0, ge=0)
     created_at: str
     settled_at: str | None = None
     reason: str | None = None
@@ -172,6 +188,8 @@ class BudgetStore:
         self.run_dir = run_dir
         self.approval_path = run_dir / "approval.json"
         self.ledger_path = run_dir / "cost_ledger.json"
+        self.phase_policy_path = run_dir / "phase_budget_policy.json"
+        self.phase_attempts_path = run_dir / "phase_attempts.json"
         self.lock = FileLock(str(run_dir / ".budget.lock"), timeout=10)
 
     def _integrity(self, ledger: CostLedger) -> str:
@@ -179,6 +197,10 @@ class BudgetStore:
         for entry in payload["entries"]:
             if not entry.get("fixed_cost_cap_micros"):
                 entry.pop("fixed_cost_cap_micros", None)
+            if not entry.get("phase_reserve_borrowed_usd_micros"):
+                entry.pop("phase_reserve_borrowed_usd_micros", None)
+        if not payload["approval"].get("phase_policy_sha256"):
+            payload["approval"].pop("phase_policy_sha256", None)
         canonical = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -200,7 +222,32 @@ class BudgetStore:
         approval = ApprovalRecord.model_validate_json(self.approval_path.read_text(encoding="utf-8"))
         if approval != ledger.approval:
             raise IntegrityError("approval record and ledger disagree")
+        self._load_phase_policy_unlocked(approval)
         return ledger
+
+    def _load_phase_policy_unlocked(
+        self, approval: ApprovalRecord
+    ) -> PhaseBudgetPolicy | None:
+        expected = approval.phase_policy_sha256
+        if expected is None:
+            return None
+        if not self.phase_policy_path.is_file():
+            raise IntegrityError("approved phase budget policy is missing")
+        policy = PhaseBudgetPolicy.model_validate_json(
+            self.phase_policy_path.read_text(encoding="utf-8")
+        )
+        if policy.approval_id != approval.approval_id:
+            raise IntegrityError("phase budget policy belongs to another approval")
+        actual = phase_policy_sha256(policy)
+        if policy.policy_sha256 != actual or expected != actual:
+            raise IntegrityError("phase budget policy integrity check failed")
+        if policy.budget_estimate_sha256 != approval.budget_estimate_sha256:
+            raise IntegrityError("phase budget policy and estimate disagree")
+        if sum(item.approved_usd_micros for item in policy.allocations) != (
+            approval.approved_usd_micros
+        ):
+            raise IntegrityError("phase wallets do not sum to the total approval")
+        return policy
 
     def approve(self, estimate: BudgetEnvelope, approved_usd: float) -> CostLedger:
         approved = dollars_to_micros(approved_usd)
@@ -217,15 +264,26 @@ class BudgetStore:
         with self.lock:
             if self.approval_path.exists() or self.ledger_path.exists():
                 raise BudgetGuardError("run already has an immutable approval")
+            approval_id = str(uuid4())
+            budget_estimate_sha256 = estimate_hash(estimate)
+            phase_policy = allocate_phase_policy(
+                approval_id=approval_id,
+                budget_estimate_sha256=budget_estimate_sha256,
+                approved_usd_micros=approved,
+                estimates=estimate.phase_budgets,
+            )
             approval = ApprovalRecord(
-                approval_id=str(uuid4()),
+                approval_id=approval_id,
                 approved_at=utc_now(),
                 approved_usd_micros=approved,
                 recommended_usd_micros=recommended,
                 minimum_usd_micros=minimum,
-                budget_estimate_sha256=estimate_hash(estimate),
+                budget_estimate_sha256=budget_estimate_sha256,
                 price_card_version=estimate.price_card_version,
                 endpoint=estimate.endpoint,
+                phase_policy_sha256=(
+                    phase_policy.policy_sha256 if phase_policy is not None else None
+                ),
             )
             ledger = CostLedger(
                 run_id=str(uuid4()),
@@ -238,6 +296,10 @@ class BudgetStore:
                 updated_at=utc_now(),
             )
             self._atomic_write(self.approval_path, approval.model_dump(mode="json"))
+            if phase_policy is not None:
+                self._atomic_write(
+                    self.phase_policy_path, phase_policy.model_dump(mode="json")
+                )
             self._save_unlocked(ledger)
             return ledger
 
@@ -263,7 +325,115 @@ class BudgetStore:
                 raise BudgetGuardError(f"run cannot start a call while {ledger.status.value}")
             projected = ledger.actual_usd_micros + ledger.reserved_usd_micros + reserve
             now = utc_now()
-            if projected > ledger.approval.approved_usd_micros:
+            denial_reason: str | None = None
+            phase_policy = self._load_phase_policy_unlocked(ledger.approval)
+            phase = phase_for_stage(stage)
+            phase_reserve_borrowed = 0
+            if phase_policy is not None:
+                allocation = next(
+                    (item for item in phase_policy.allocations if item.phase == phase),
+                    None,
+                )
+                if allocation is None:
+                    denial_reason = f"stage has no approved phase wallet: {phase.value}"
+                else:
+                    phase_entries = [
+                        entry for entry in ledger.entries
+                        if phase_for_stage(entry.stage) == phase
+                    ]
+                    phase_spent = sum(
+                        entry.actual_usd_micros
+                        for entry in phase_entries
+                        if entry.status == CallStatus.SETTLED
+                    ) + sum(
+                        entry.reserved_usd_micros
+                        for entry in phase_entries
+                        if entry.status == CallStatus.RESERVED
+                    )
+                    phase_borrowed = sum(
+                        entry.phase_reserve_borrowed_usd_micros
+                        for entry in phase_entries
+                        if entry.status in {CallStatus.RESERVED, CallStatus.SETTLED}
+                    )
+                    effective_phase_cap = (
+                        allocation.approved_usd_micros + phase_borrowed
+                    )
+                    if phase_spent + reserve > effective_phase_cap:
+                        shortfall = phase_spent + reserve - effective_phase_cap
+                        reserve_allocation = next(
+                            (
+                                item for item in phase_policy.allocations
+                                if item.phase == ExecutionPhase.RESERVE
+                            ),
+                            None,
+                        )
+                        reserve_entries = [
+                            entry for entry in ledger.entries
+                            if phase_for_stage(entry.stage) == ExecutionPhase.RESERVE
+                        ]
+                        reserve_spent = sum(
+                            entry.actual_usd_micros
+                            for entry in reserve_entries
+                            if entry.status == CallStatus.SETTLED
+                        ) + sum(
+                            entry.reserved_usd_micros
+                            for entry in reserve_entries
+                            if entry.status == CallStatus.RESERVED
+                        )
+                        already_borrowed = sum(
+                            entry.phase_reserve_borrowed_usd_micros
+                            for entry in ledger.entries
+                            if entry.status in {CallStatus.RESERVED, CallStatus.SETTLED}
+                        )
+                        reserve_available = max(
+                            0,
+                            (reserve_allocation.approved_usd_micros if reserve_allocation else 0)
+                            - reserve_spent
+                            - already_borrowed,
+                        )
+                        # The owner approved the total hard cap up front.
+                        # A repair that remains inside its existing authority
+                        # may borrow unused reserve instead of stopping over a
+                        # tiny phase-estimation error. A new product stage or
+                        # broader authority still requires a new decision.
+                        # Independent final verification is non-editing and is
+                        # required to settle the completion contract; starving
+                        # it while a non-editing reserve remains would strand a
+                        # candidate after its executable checks already passed.
+                        approved_repair = is_authority_preserving_ai_repair_reservation(
+                            stage
+                        )
+                        approved_non_editing_verification = (
+                            phase == ExecutionPhase.FINAL_VERIFICATION
+                        )
+                        if (
+                            phase != ExecutionPhase.RESERVE
+                            and (approved_repair or approved_non_editing_verification)
+                            and shortfall <= reserve_available
+                        ):
+                            phase_reserve_borrowed = shortfall
+                        else:
+                            denial_reason = (
+                                f"{phase.value} wallet would be exceeded; "
+                                f"phase remaining ${micros_to_dollars(allocation.approved_usd_micros - phase_spent):.6f}"
+                            )
+                    repair_calls = sum(
+                        1 for entry in phase_entries
+                        if entry.status in {CallStatus.RESERVED, CallStatus.SETTLED}
+                        and is_ai_repair_stage(entry.stage)
+                    )
+                    if (
+                        denial_reason is None
+                        and is_ai_repair_stage(stage)
+                        and repair_calls >= allocation.max_ai_repair_calls
+                    ):
+                        denial_reason = (
+                            f"{phase.value} AI repair-call limit is exhausted "
+                            f"({allocation.max_ai_repair_calls})"
+                        )
+            if denial_reason is None and projected > ledger.approval.approved_usd_micros:
+                denial_reason = "worst-case reservation would exceed approved budget"
+            if denial_reason is not None:
                 denied = CostEntry(
                     call_id=str(uuid4()),
                     stage=stage,
@@ -278,13 +448,14 @@ class BudgetStore:
                     actual_output_tokens=0,
                     created_at=now,
                     settled_at=now,
-                    reason="worst-case reservation would exceed approved budget",
+                    reason=denial_reason,
                 )
                 ledger.entries.append(denied)
                 ledger.status = RunStatus.NEEDS_BUDGET
                 self._save_unlocked(ledger)
                 raise BudgetExceeded(
-                    f"call blocked before provider invocation: needs ${micros_to_dollars(reserve):.6f}, "
+                    f"call blocked before provider invocation: {denial_reason}; "
+                    f"needs ${micros_to_dollars(reserve):.6f}, "
                     f"remaining ${micros_to_dollars(ledger.approval.approved_usd_micros - ledger.actual_usd_micros - ledger.reserved_usd_micros):.6f}"
                 )
             entry = CostEntry(
@@ -299,6 +470,7 @@ class BudgetStore:
                 fixed_cost_cap_micros=dollars_to_micros(fixed_cost_usd),
                 actual_input_tokens=0,
                 actual_output_tokens=0,
+                phase_reserve_borrowed_usd_micros=phase_reserve_borrowed,
                 created_at=now,
             )
             ledger.entries.append(entry)
@@ -306,6 +478,100 @@ class BudgetStore:
             ledger.status = RunStatus.RUNNING
             self._save_unlocked(ledger)
             return entry
+
+    def phase_summary(self) -> dict[str, dict[str, int]]:
+        """Return auditable phase caps and current spend without mutating state."""
+
+        with self.lock:
+            ledger = self._load_unlocked()
+            policy = self._load_phase_policy_unlocked(ledger.approval)
+            if policy is None:
+                return {}
+            summary: dict[str, dict[str, int]] = {}
+            for allocation in policy.allocations:
+                entries = [
+                    entry for entry in ledger.entries
+                    if phase_for_stage(entry.stage) == allocation.phase
+                ]
+                summary[allocation.phase.value] = {
+                    "approved_usd_micros": allocation.approved_usd_micros,
+                    "actual_usd_micros": sum(
+                        entry.actual_usd_micros
+                        for entry in entries if entry.status == CallStatus.SETTLED
+                    ),
+                    "reserved_usd_micros": sum(
+                        entry.reserved_usd_micros
+                        for entry in entries if entry.status == CallStatus.RESERVED
+                    ),
+                    "ai_repair_calls": sum(
+                        1 for entry in entries
+                        if entry.status in {CallStatus.RESERVED, CallStatus.SETTLED}
+                        and is_ai_repair_stage(entry.stage)
+                    ),
+                    "max_ai_repair_calls": allocation.max_ai_repair_calls,
+                    "borrowed_from_reserve_usd_micros": sum(
+                        entry.phase_reserve_borrowed_usd_micros
+                        for entry in entries
+                        if entry.status in {CallStatus.RESERVED, CallStatus.SETTLED}
+                    ),
+                }
+            borrowed_total = sum(
+                entry.phase_reserve_borrowed_usd_micros
+                for entry in ledger.entries
+                if entry.status in {CallStatus.RESERVED, CallStatus.SETTLED}
+            )
+            if ExecutionPhase.RESERVE.value in summary:
+                summary[ExecutionPhase.RESERVE.value][
+                    "lent_to_approved_escalations_usd_micros"
+                ] = borrowed_total
+            return summary
+
+    def reserve_deterministic_attempt(
+        self, *, phase: ExecutionPhase, purpose: str
+    ) -> None:
+        """Consume one bounded non-model tool attempt for an execution phase."""
+
+        # Direct unit-level convergence runs do not create an approved budget
+        # ledger. Production execution always does; keep the lower-level loop
+        # independently testable without inventing authority.
+        if not self.ledger_path.is_file():
+            return
+        with self.lock:
+            ledger = self._load_unlocked()
+            policy = self._load_phase_policy_unlocked(ledger.approval)
+            if policy is None:
+                return
+            allocation = next(
+                (item for item in policy.allocations if item.phase == phase), None
+            )
+            if allocation is None:
+                raise BudgetGuardError(
+                    f"deterministic attempt has no approved phase: {phase.value}"
+                )
+            if self.phase_attempts_path.is_file():
+                attempts = PhaseAttemptLedger.model_validate_json(
+                    self.phase_attempts_path.read_text(encoding="utf-8")
+                )
+                if attempts.integrity_sha256 != phase_attempt_ledger_sha256(attempts):
+                    raise IntegrityError("phase attempt ledger integrity check failed")
+                if attempts.policy_sha256 != policy.policy_sha256:
+                    raise IntegrityError("phase attempt ledger and policy disagree")
+            else:
+                attempts = PhaseAttemptLedger(policy_sha256=policy.policy_sha256)
+            used = sum(item.phase == phase for item in attempts.attempts)
+            if used >= allocation.max_deterministic_attempts:
+                raise BudgetExceeded(
+                    f"{phase.value} deterministic-attempt limit is exhausted "
+                    f"({allocation.max_deterministic_attempts})"
+                )
+            attempts.attempts.append(deterministic_attempt(
+                attempt_id=str(uuid4()), phase=phase, purpose=purpose
+            ))
+            attempts.revision += 1
+            attempts.integrity_sha256 = phase_attempt_ledger_sha256(attempts)
+            self._atomic_write(
+                self.phase_attempts_path, attempts.model_dump(mode="json")
+            )
 
     def settle_call(
         self,
@@ -367,6 +633,21 @@ class BudgetStore:
             if ledger.status == RunStatus.NEEDS_BUDGET:
                 raise BudgetGuardError("cannot complete a run waiting for more budget")
             ledger.status = RunStatus.COMPLETE
+            self._save_unlocked(ledger)
+            return ledger
+
+    def fail(self, reason: str = "execution failed") -> CostLedger:
+        """Close a failed run and release any unfinished call reservations."""
+        with self.lock:
+            ledger = self._load_unlocked()
+            now = utc_now()
+            for entry in ledger.entries:
+                if entry.status == CallStatus.RESERVED:
+                    ledger.reserved_usd_micros -= entry.reserved_usd_micros
+                    entry.status = CallStatus.RELEASED
+                    entry.reason = reason[:500]
+                    entry.settled_at = now
+            ledger.status = RunStatus.FAILED
             self._save_unlocked(ledger)
             return ledger
 

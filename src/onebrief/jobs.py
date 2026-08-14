@@ -11,18 +11,48 @@ import sys
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from filelock import FileLock
 from pydantic import BaseModel, Field
 
-from onebrief.budget_guard import BudgetExceeded, BudgetStore
+from onebrief.budget_guard import BudgetExceeded, BudgetStore, micros_to_dollars
+from onebrief.execution_graph import compile_execution_graph, persist_execution_graph
 from onebrief.execution_pipeline import ExecutionPipeline
 from onebrief.execution_schemas import PipelineStatus
+from onebrief.guarded_gemini import BudgetedGeminiClient
+from onebrief.model_policy import (
+    ModelPolicyGateway,
+    evaluate_model_budget,
+    persist_model_approval,
+)
+from onebrief.milestones import (
+    MilestonePlan,
+    build_milestone_plan,
+    canonical_sha256,
+    execute_milestone_plan,
+    prepare_milestone_workspace,
+)
+from onebrief.project_catalog import ProjectCatalog
+from onebrief.project_closure import ProjectClosureManager
+from onebrief.project_continuity import ProjectContinuityStore
+from onebrief.project_snapshot import (
+    create_project_snapshot,
+    record_local_project_provenance,
+    restore_project_snapshot,
+)
 from onebrief.requirements_gate import require_ready_for_estimate
-from onebrief.schemas import BudgetEnvelope, IntakeRequest, InternalSource, RequirementsAnalysis
+from onebrief.recovery_policy import ErrorClass, RecoveryPolicy
+from onebrief.schemas import (
+    BudgetEnvelope,
+    IntakeRequest,
+    InternalSource,
+    RequirementsAnalysis,
+    ToolPackId,
+)
 from onebrief.source_loader import source_records
+from onebrief.team_planning import TeamPlan, TeamPlanningCoordinator
 
 
 def _now() -> str:
@@ -55,6 +85,7 @@ class JobStatus(StrEnum):
     PARTIAL = "partial"
     NEEDS_INFORMATION = "needs_information"
     NEEDS_BUDGET = "needs_budget"
+    NEEDS_AUTHORIZATION = "needs_authorization"
     FAILED = "failed"
 
 
@@ -70,6 +101,7 @@ class JobRecord(BaseModel):
     run_id: str
     result_package: str | None = None
     result_manifest_sha256: str | None = None
+    benchmark_variant: str = "onebrief_convergence"
 
 
 class PackageFile(BaseModel):
@@ -193,6 +225,8 @@ def create_job(
     sources: list[InternalSource],
     estimate: BudgetEnvelope,
     approved_usd: float,
+    benchmark_variant: str = "onebrief_convergence",
+    embed_project_snapshot: bool = True,
 ) -> Path:
     """Create an atomic, self-contained work order with immutable budget approval."""
     requirements = require_ready_for_estimate(
@@ -217,6 +251,12 @@ def create_job(
             [item.model_dump(mode="json") for item in source_records(sources)],
         )
         _atomic_json(inputs / "budget_estimate.json", estimate)
+        if (
+            intake.existing_project_id
+            and ToolPackId.PROJECT_DEVELOPMENT in intake.toolpack_ids
+            and embed_project_snapshot
+        ):
+            create_project_snapshot(intake.existing_project_id, inputs)
         _write_input_snapshot(inputs)
         ledger = BudgetStore(staging / "run").approve(estimate, approved_usd)
         now = _now()
@@ -228,6 +268,7 @@ def create_job(
             attempts=0,
             run_id=ledger.run_id,
             message="Inputs and budget approval were snapshotted; waiting for a worker.",
+            benchmark_variant=benchmark_variant,
         )
         _atomic_json(staging / "job.json", record)
         os.replace(staging, job_dir)
@@ -260,8 +301,23 @@ def build_result_package(
         if work_dir.exists():
             for source in sorted(work_dir.rglob("*")):
                 if source.is_file() and ".tmp" not in source.name:
-                    _copy_if_present(source, temp_dir / "artifacts" / source.relative_to(work_dir))
-        for name in ("approval.json", "cost_ledger.json"):
+                    relative = source.relative_to(work_dir)
+                    if (
+                        len(relative.parts) >= 2
+                        and relative.parts[0] == "project_snapshot"
+                        and relative.parts[1] in {"repository", "registry"}
+                    ):
+                        continue
+                    if relative.parts and relative.parts[0] == "milestone_workspace":
+                        continue
+                    _copy_if_present(source, temp_dir / "artifacts" / relative)
+        for name in (
+            "approval.json",
+            "cost_ledger.json",
+            "model_execution_policy.json",
+            "phase_budget_policy.json",
+            "phase_attempts.json",
+        ):
             _copy_if_present(job_dir / "run" / name, temp_dir / "audit" / name)
         _copy_if_present(
             job_dir / "inputs" / "source_manifest.json",
@@ -299,60 +355,312 @@ def _pipeline_status(status: PipelineStatus) -> JobStatus:
         PipelineStatus.PARTIAL: JobStatus.PARTIAL,
         PipelineStatus.NEEDS_INFORMATION: JobStatus.NEEDS_INFORMATION,
         PipelineStatus.NEEDS_BUDGET: JobStatus.NEEDS_BUDGET,
+        PipelineStatus.NEEDS_AUTHORIZATION: JobStatus.NEEDS_AUTHORIZATION,
         PipelineStatus.FAILED: JobStatus.FAILED,
         PipelineStatus.RUNNING: JobStatus.RUNNING,
     }[status]
 
 
-def run_job(job_dir: Path, *, gateway: object | None = None) -> JobRecord:
+def _record_project_continuity(job_dir: Path, intake: IntakeRequest | None) -> None:
+    if intake is None or not intake.existing_project_id:
+        return
+    try:
+        project = ProjectCatalog().get(intake.existing_project_id)
+        ProjectContinuityStore(project, job_dir.parent).record_terminal_job(job_dir)
+    except Exception:
+        # Project state is advisory memory and must never corrupt a completed work package.
+        return
+
+
+def _persist_governance_projections(
+    job_dir: Path, *, status: str, stage: str, message: str,
+) -> None:
+    """Advisory projections must never replace or mask the authoritative outcome."""
+    try:
+        from onebrief.lineage import persist_run_lineage
+        from onebrief.resume_capsule import persist_resume_capsule
+
+        persist_run_lineage(job_dir)
+        persist_resume_capsule(job_dir, status=status, stage=stage, message=message)
+    except Exception:
+        return
+
+def run_job(
+    job_dir: Path,
+    *,
+    gateway: object | None = None,
+    progress_callback: Callable[[Path, str], None] | None = None,
+) -> JobRecord:
     """Claim and execute one job. The persisted checkpoint makes model work resumable."""
     job_dir = job_dir.resolve()
     store = JobStore(job_dir)
     claimed = store.claim(os.getpid())
+    intake: IntakeRequest | None = None
     try:
         verify_input_snapshot(job_dir)
         intake = IntakeRequest.model_validate_json(
             (job_dir / "inputs" / "intake.json").read_text(encoding="utf-8")
         )
+        project_registry_root = None
+        if intake.existing_project_id:
+            restored = restore_project_snapshot(job_dir, intake.existing_project_id)
+            if restored is not None:
+                project_registry_root = job_dir / "work" / "project_snapshot" / "registry"
+            elif ToolPackId.PROJECT_DEVELOPMENT in intake.toolpack_ids:
+                record_local_project_provenance(job_dir, intake.existing_project_id)
         requirements = RequirementsAnalysis.model_validate_json(
             (job_dir / "inputs" / "requirements.json").read_text(encoding="utf-8")
         )
         sources_payload = json.loads((job_dir / "inputs" / "sources.json").read_text(encoding="utf-8"))
         sources = [InternalSource.model_validate(item) for item in sources_payload]
-        checkpoint = ExecutionPipeline(job_dir / "run", gateway=gateway).run(
+        run_dir = job_dir / "run"
+        workspace_root = job_dir / "work" / "workspace"
+        raw_gateway = gateway or BudgetedGeminiClient(run_dir)
+        TeamPlanningCoordinator(raw_gateway, workspace_root).plan_and_deploy(
+            project_id=claimed.job_id,
             intake=intake,
             requirements=requirements,
             sources=sources,
-            output_dir=job_dir / "work",
         )
+        project_dir = workspace_root / "projects" / claimed.job_id
+        plan = TeamPlan.model_validate_json(
+            (project_dir / "02_plan_and_teams" / "team_plan.json").read_text(encoding="utf-8")
+        )
+        active_intake = intake.model_copy(update={"toolpack_ids": plan.toolpack_ids})
+        execution_graph = compile_execution_graph(plan, plan.toolpack_ids)
+        persist_execution_graph(
+            execution_graph,
+            project_dir / "02_plan_and_teams" / "execution_graph.json",
+        )
+        estimate = BudgetEnvelope.model_validate_json(
+            (job_dir / "inputs" / "budget_estimate.json").read_text(encoding="utf-8")
+        )
+        approved_usd = micros_to_dollars(BudgetStore(run_dir).read().approval.approved_usd_micros)
+        continuation_manifest = job_dir / "work" / "continuation_manifest.json"
+        continuation_cost_stages = (
+            {"long_form_draft", "independent_verification", "final_approval"}
+            if continuation_manifest.is_file()
+            else None
+        )
+        model_decision, model_policy = evaluate_model_budget(
+            estimate,
+            plan,
+            approved_usd=approved_usd,
+            cost_stage_names=continuation_cost_stages,
+        )
+        persist_model_approval(
+            run_dir=run_dir,
+            project_dir=project_dir,
+            decision=model_decision,
+            policy=model_policy,
+        )
+        policy_gateway = ModelPolicyGateway(raw_gateway, model_policy)
+        stage_models = {
+            stage: model.value for stage, model in model_policy.stage_models.items()
+        }
+        stage_skills = {
+            stage: list(
+                next(
+                    member for member in plan.members
+                    if member.instance_id == owner_id
+                ).packs.skill_packs
+            )
+            for stage, owner_id in plan.stage_owners.items()
+        }
+
+        def pipeline_for(registry_root: Path | None) -> ExecutionPipeline:
+            return ExecutionPipeline(
+                run_dir,
+                gateway=policy_gateway,
+                stage_models=stage_models,
+                stage_skills=stage_skills,
+                execution_graph=execution_graph,
+                project_registry_root=registry_root,
+                # The job may execute several milestone pipelines against one
+                # immutable approval. Only the job owns the terminal budget
+                # transition; an individual slice must not close the ledger.
+                finalize_budget_on_finish=False,
+            )
+
+        persisted_milestone_plan = (
+            job_dir / "work" / "milestone_state" / "milestone_plan.json"
+        )
+        use_milestones = bool(
+            active_intake.existing_project_id
+            and ToolPackId.PROJECT_DEVELOPMENT in active_intake.toolpack_ids
+            and project_registry_root is not None
+            and requirements.completion_contract is not None
+            and len(requirements.completion_contract.quality_criteria) >= 4
+            and (
+                not continuation_manifest.is_file()
+                or persisted_milestone_plan.is_file()
+            )
+        )
+        if use_milestones:
+            workspace = prepare_milestone_workspace(
+                work_dir=job_dir / "work",
+                project_id=active_intake.existing_project_id,
+                baseline_registry_root=project_registry_root,
+            )
+            milestone_plan = (
+                MilestonePlan.model_validate_json(
+                    persisted_milestone_plan.read_text(encoding="utf-8")
+                )
+                if persisted_milestone_plan.is_file()
+                else build_milestone_plan(
+                    project_id=active_intake.existing_project_id,
+                    goal=active_intake.goal,
+                    requirements=requirements,
+                    source_revision=workspace.source_revision,
+                    minimum_cost_usd=estimate.minimum_cost_usd,
+                    maximum_cost_usd=estimate.maximum_cost_usd,
+                )
+            )
+            if (
+                milestone_plan.goal_digest
+                != canonical_sha256({"goal": active_intake.goal})
+                or milestone_plan.completion_contract_digest
+                != canonical_sha256(requirements.completion_contract)
+                or milestone_plan.source_revision != workspace.source_revision
+            ):
+                raise RuntimeError("resumed milestone plan no longer matches its approved inputs")
+            checkpoint = execute_milestone_plan(
+                plan=milestone_plan,
+                requirements=requirements,
+                work_dir=job_dir / "work",
+                workspace=workspace,
+                pipeline_factory=pipeline_for,
+                intake=active_intake,
+                sources=sources,
+                checkpoint_callback=(
+                    (lambda milestone_id: progress_callback(job_dir, milestone_id))
+                    if progress_callback is not None
+                    else None
+                ),
+            )
+        else:
+            checkpoint = pipeline_for(project_registry_root).run(
+                intake=active_intake,
+                requirements=requirements,
+                sources=sources,
+                output_dir=job_dir / "work",
+            )
+        BudgetStore(run_dir).complete()
         status = _pipeline_status(checkpoint.status)
+        from onebrief.evaluation import persist_execution_evaluation
+
+        persist_execution_evaluation(job_dir, status)
+        _persist_governance_projections(
+            job_dir, status=status.value, stage=checkpoint.current_stage, message=checkpoint.message
+        )
+        ProjectClosureManager(workspace_root / "pack_registry").close(
+            project_id=claimed.job_id,
+            project_dir=project_dir,
+            work_dir=job_dir / "work",
+            terminal_status=status.value,
+        )
         package, digest = build_result_package(job_dir, status=status, attempt=claimed.attempts)
-        return store.finish(
+        finished = store.finish(
             status,
             stage=checkpoint.current_stage,
             message=checkpoint.message,
             result_package=package,
             manifest_sha256=digest,
         )
+        _record_project_continuity(job_dir, intake)
+        return finished
     except BudgetExceeded as exc:
+        from onebrief.evaluation import persist_execution_evaluation
+
+        persist_execution_evaluation(job_dir, JobStatus.NEEDS_BUDGET)
+        _persist_governance_projections(
+            job_dir, status=JobStatus.NEEDS_BUDGET.value, stage="budget_gate", message=str(exc)
+        )
         package, digest = build_result_package(
             job_dir,
             status=JobStatus.NEEDS_BUDGET,
             attempt=claimed.attempts,
         )
-        return store.finish(
+        finished = store.finish(
             JobStatus.NEEDS_BUDGET,
             stage="budget_gate",
             message=str(exc),
             result_package=package,
             manifest_sha256=digest,
         )
+        _record_project_continuity(job_dir, intake)
+        return finished
+    except PermissionError as exc:
+        from onebrief.evaluation import persist_execution_evaluation
+
+        recovery = RecoveryPolicy().decide(exc, context="pipeline")
+        if recovery.error_class != ErrorClass.PLATFORM_POLICY:
+            persist_execution_evaluation(job_dir, JobStatus.FAILED)
+            _persist_governance_projections(
+                job_dir,
+                status=JobStatus.FAILED.value,
+                stage=recovery.error_class.value,
+                message=f"{type(exc).__name__}: {exc}",
+            )
+            package, digest = build_result_package(
+                job_dir,
+                status=JobStatus.FAILED,
+                attempt=claimed.attempts,
+            )
+            finished = store.finish(
+                JobStatus.FAILED,
+                stage=recovery.error_class.value,
+                message=f"{type(exc).__name__}: {exc}",
+                result_package=package,
+                manifest_sha256=digest,
+            )
+            _record_project_continuity(job_dir, intake)
+            return finished
+
+        persist_execution_evaluation(job_dir, JobStatus.NEEDS_AUTHORIZATION)
+        _persist_governance_projections(
+            job_dir, status=JobStatus.NEEDS_AUTHORIZATION.value,
+            stage="authorization_gate", message=str(exc)
+        )
+        package, digest = build_result_package(
+            job_dir,
+            status=JobStatus.NEEDS_AUTHORIZATION,
+            attempt=claimed.attempts,
+        )
+        finished = store.finish(
+            JobStatus.NEEDS_AUTHORIZATION,
+            stage="authorization_gate",
+            message=(
+                "The approved capability boundary is insufficient. "
+                f"Return to stage 1 and approve an amended plan: {exc}"
+            ),
+            result_package=package,
+            manifest_sha256=digest,
+        )
+        _record_project_continuity(job_dir, intake)
+        return finished
     except Exception as exc:
-        return store.finish(
+        from onebrief.evaluation import persist_execution_evaluation
+
+        persist_execution_evaluation(job_dir, JobStatus.FAILED)
+        _persist_governance_projections(
+            job_dir, status=JobStatus.FAILED.value, stage="failed",
+            message=f"{type(exc).__name__}: {exc}",
+        )
+        package, digest = build_result_package(
+            job_dir,
+            status=JobStatus.FAILED,
+            attempt=claimed.attempts,
+        )
+        finished = store.finish(
             JobStatus.FAILED,
             stage="failed",
             message=f"{type(exc).__name__}: {exc}",
+            result_package=package,
+            manifest_sha256=digest,
         )
+        _record_project_continuity(job_dir, intake)
+        return finished
 
 
 def start_background_job(job_dir: Path) -> JobRecord:

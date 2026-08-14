@@ -4,16 +4,24 @@ import shutil
 from pathlib import Path
 
 import pytest
+from google.api_core.exceptions import NotFound
 
 from onebrief.cloud_jobs import (
+    GCSJobStore,
+    RuntimeCapabilityHandoff,
     execute_cloud_run_job,
     parse_gcs_job_uri,
+    run_local_capability_worker,
     run_cloud_worker,
+    verify_runtime_handoff,
 )
+from onebrief.dynamic_role_agents import GovernanceDecision
 from onebrief.execution_schemas import AnalysisPackage, DraftArtifact, VerificationReport
 from onebrief.jobs import JobRecord, JobStatus, JobStore, create_job
 from onebrief.producer import estimate_budget
 from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis, SourcePriority
+
+from team_plan_support import minimal_team_plan
 
 
 class FakeGateway:
@@ -57,11 +65,17 @@ class FakeGateway:
                 revision_instructions=[],
                 missing_information=[],
             ),
-        ]
+            GovernanceDecision(
+                verdict="PASS",
+                rationale="Verified result satisfies the contract.",
+            ),        ]
         self.calls: list[str] = []
 
-    def generate_json(self, *, stage: str, schema: type, **_: object):
+    def generate_json(self, *, stage: str, schema: type, **kwargs: object):
         self.calls.append(stage)
+        if stage == "team_planning":
+            request = json.loads(str(kwargs["contents"]))
+            return minimal_team_plan(request["project_id"])
         value = self.outputs.pop(0)
         assert isinstance(value, schema)
         return value
@@ -110,6 +124,8 @@ class LocalCloudRepository:
         self.claimed = False
         self.completed: JobRecord | None = None
         self.failure: str | None = None
+        self.handoffs: list[RuntimeCapabilityHandoff] = []
+        self.upload_count = 0
 
     def acquire_claim(self) -> None:
         if self.claimed:
@@ -121,6 +137,7 @@ class LocalCloudRepository:
         return destination
 
     def upload_outputs(self, job_dir: Path) -> None:
+        self.upload_count += 1
         for name in ("job.json", "run", "work", "packages"):
             source = job_dir / name
             target = self.remote_job / name
@@ -134,6 +151,14 @@ class LocalCloudRepository:
 
     def write_failure(self, message: str) -> None:
         self.failure = message
+
+    def write_runtime_handoff(self, handoff: RuntimeCapabilityHandoff) -> None:
+        self.handoffs.append(handoff)
+
+    def read_runtime_handoff(self) -> RuntimeCapabilityHandoff:
+        if not self.handoffs:
+            raise FileNotFoundError("no runtime handoff")
+        return self.handoffs[-1]
 
 
 def test_cloud_worker_round_trip_publishes_remote_result(tmp_path: Path) -> None:
@@ -157,10 +182,119 @@ def test_cloud_worker_round_trip_publishes_remote_result(tmp_path: Path) -> None
     assert JobStore(remote_job).read().status == JobStatus.COMPLETE
     assert (remote_job / record.result_package / "package_manifest.json").exists()
     assert gateway.calls == [
+        "team_planning",
         "evidence_analysis",
         "long_form_draft",
         "independent_verification_r0",
+        "final_approval",
     ]
+
+
+def test_managed_worker_hands_edge_only_runtime_to_approved_local_runner(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    local_job = _create_job(tmp_path / "source")
+    remote_job = tmp_path / "remote" / local_job.name
+    remote_job.parent.mkdir()
+    shutil.copytree(local_job, remote_job)
+    repository = LocalCloudRepository(remote_job)
+    gateway = FakeGateway()
+    handoff = RuntimeCapabilityHandoff(
+        handoff_id="a" * 64,
+        job_uri="gs://onebrief-test/jobs/example",
+        job_id=JobStore(remote_job).read().job_id,
+        project_id="julpae",
+        source_head_sha="b" * 40,
+        required_adapters=["unity_compile", "unity_playmode_visual_tests"],
+        input_manifest_sha256="c" * 64,
+        approved_budget_usd_micros=1_000_000,
+        created_at="2026-08-13T00:00:00+00:00",
+    )
+    monkeypatch.setenv("CLOUD_RUN_EXECUTION", "managed-execution")
+    monkeypatch.setattr(
+        "onebrief.cloud_jobs.required_local_runtime_adapters",
+        lambda _job: ["unity_compile", "unity_playmode_visual_tests"],
+    )
+    monkeypatch.setattr(
+        "onebrief.cloud_jobs.build_runtime_handoff", lambda *_args, **_kwargs: handoff
+    )
+
+    record = run_cloud_worker(
+        "gs://onebrief-test/jobs/example",
+        repository=repository,
+        gateway=gateway,
+    )
+
+    assert record.status == JobStatus.QUEUED
+    assert not repository.claimed
+    assert repository.handoffs == [handoff]
+    assert repository.upload_count == 0
+    assert gateway.calls == []
+
+
+def test_runtime_handoff_verification_is_digest_and_scope_bound(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    expected = RuntimeCapabilityHandoff(
+        handoff_id="a" * 64,
+        job_uri="gs://onebrief-test/jobs/example",
+        job_id="job-1",
+        project_id="julpae",
+        source_head_sha="b" * 40,
+        required_adapters=["unity_compile"],
+        input_manifest_sha256="c" * 64,
+        approved_budget_usd_micros=30_000_000,
+        created_at="2026-08-13T00:00:00+00:00",
+    )
+    monkeypatch.setattr("onebrief.cloud_jobs.build_runtime_handoff", lambda *_a, **_k: expected)
+    monkeypatch.setattr(
+        "onebrief.cloud_jobs.approved_edge_runtime_adapters",
+        lambda _job: ["unity_compile"],
+    )
+    verify_runtime_handoff(
+        tmp_path, job_uri=expected.job_uri, handoff=expected.model_copy(
+            update={"created_at": "2026-08-13T00:01:00+00:00"}
+        ),
+    )
+    with pytest.raises(PermissionError, match="immutable approved job"):
+        verify_runtime_handoff(
+            tmp_path,
+            job_uri=expected.job_uri,
+            handoff=expected.model_copy(update={"approved_budget_usd_micros": 31_000_000}),
+        )
+
+
+def test_local_capability_worker_rejects_handoff_before_claim(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    local_job = _create_job(tmp_path / "source")
+    remote_job = tmp_path / "remote" / local_job.name
+    remote_job.parent.mkdir()
+    shutil.copytree(local_job, remote_job)
+    repository = LocalCloudRepository(remote_job)
+    repository.handoffs.append(RuntimeCapabilityHandoff(
+        handoff_id="a" * 64,
+        job_uri="gs://onebrief-test/jobs/example",
+        job_id=JobStore(remote_job).read().job_id,
+        project_id="julpae",
+        source_head_sha="b" * 40,
+        required_adapters=["unity_compile"],
+        input_manifest_sha256="c" * 64,
+        approved_budget_usd_micros=1_000_000,
+        created_at="2026-08-13T00:00:00+00:00",
+    ))
+    monkeypatch.setattr(
+        "onebrief.cloud_jobs.verify_runtime_handoff",
+        lambda *_a, **_k: (_ for _ in ()).throw(PermissionError("tampered")),
+    )
+
+    with pytest.raises(PermissionError, match="tampered"):
+        run_local_capability_worker(
+            "gs://onebrief-test/jobs/example", repository=repository
+        )
+
+    assert not repository.claimed
+    assert repository.failure == "PermissionError: tampered"
 
 
 def test_execute_cloud_run_job_passes_only_the_job_uri_override() -> None:
@@ -201,3 +335,323 @@ def test_execute_cloud_run_job_passes_only_the_job_uri_override() -> None:
 def test_parse_gcs_job_uri_rejects_unsafe_values(uri: str) -> None:
     with pytest.raises(ValueError):
         parse_gcs_job_uri(uri)
+
+def test_upload_outputs_publishes_terminal_job_record_last(tmp_path: Path, monkeypatch) -> None:
+    class Client:
+        def bucket(self, _name):
+            return object()
+
+    job_dir = tmp_path / "job"
+    (job_dir / "work").mkdir(parents=True)
+    (job_dir / "run").mkdir()
+    (job_dir / "job.json").write_text("{}", encoding="utf-8")
+    (job_dir / "work" / "execution_graph_state.json").write_text("{}", encoding="utf-8")
+    (job_dir / "run" / "cost_ledger.json").write_text("{}", encoding="utf-8")
+    snapshot = job_dir / "work" / "project_snapshot"
+    (snapshot / "repository" / "Assets").mkdir(parents=True)
+    (snapshot / "registry" / "project").mkdir(parents=True)
+    (snapshot / "repository" / "Assets" / "large.asset").write_text("ephemeral")
+    (snapshot / "registry" / "project" / "toolpack.json").write_text("ephemeral")
+    (snapshot / "restore_evidence.json").write_text("{}", encoding="utf-8")
+    uploaded = []
+    repository = GCSJobStore("gs://onebrief-test/jobs/ordered", client=Client())
+    monkeypatch.setattr(
+        repository,
+        "_replace_or_create",
+        lambda _source, relative: uploaded.append(relative.as_posix()),
+    )
+
+    repository.upload_outputs(job_dir)
+
+    assert uploaded[-1] == "job.json"
+    assert "work/execution_graph_state.json" in uploaded[:-1]
+    assert "work/project_snapshot/restore_evidence.json" in uploaded[:-1]
+    assert not any("project_snapshot/repository" in item for item in uploaded)
+    assert not any("project_snapshot/registry" in item for item in uploaded)
+
+
+def test_budget_amendment_downloads_only_allowlisted_cloud_artifacts(tmp_path: Path) -> None:
+    objects = {
+        "jobs/prior/work/analysis.json": b'{"objective":"grounded"}',
+        "jobs/prior/work/public_research.md": b"# Sources\n",
+        "jobs/prior/work/secret.txt": b"must not copy",
+    }
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+        def download_to_filename(self, filename):
+            if self.name not in objects:
+                raise NotFound("missing")
+            Path(filename).write_bytes(objects[self.name])
+
+    class Bucket:
+        def blob(self, name):
+            return Blob(name)
+
+    class Client:
+        def bucket(self, _name):
+            return Bucket()
+
+    work = tmp_path / "new-job" / "work"
+    copied = GCSJobStore(
+        "gs://onebrief-test/jobs/prior", client=Client()
+    ).download_reusable_artifacts(work)
+
+    assert copied == ["public_research.md", "analysis.json"]
+    assert (work / "analysis.json").is_file()
+    assert (work / "public_research.md").is_file()
+    assert not (work / "secret.txt").exists()
+    manifest = json.loads((work / "reuse_manifest.json").read_text(encoding="utf-8"))
+    assert {item["target"] for item in manifest["artifacts"]} == {
+        "analysis.json", "public_research.md"
+    }
+
+
+def test_budget_amendment_restores_only_latest_narrative_candidate_as_round_zero(
+    tmp_path: Path,
+) -> None:
+    objects = {
+        "jobs/prior/work/draft_r0.json": b'{"title":"old"}',
+        "jobs/prior/work/draft_r4.json": b'{"title":"latest"}',
+    }
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+        def download_to_filename(self, filename):
+            if self.name not in objects:
+                raise NotFound("missing")
+            Path(filename).write_bytes(objects[self.name])
+
+    class Client:
+        def bucket(self, _name):
+            return type("Bucket", (), {"blob": lambda _self, name: Blob(name)})()
+
+    work = tmp_path / "work"
+    copied = GCSJobStore(
+        "gs://onebrief-test/jobs/prior", client=Client()
+    ).download_reusable_artifacts(work)
+
+    assert copied == ["draft_r0.json"]
+    assert json.loads((work / "draft_r0.json").read_text("utf-8"))["title"] == "latest"
+    assert not (work / "draft_r4.json").exists()
+    manifest = json.loads((work / "reuse_manifest.json").read_text("utf-8"))
+    assert manifest["artifacts"] == [{
+        "source": "draft_r4.json",
+        "target": "draft_r0.json",
+        "sha256": hashlib.sha256(objects["jobs/prior/work/draft_r4.json"]).hexdigest(),
+        "selection": "most_progressed_narrative_candidate",
+    }]
+
+
+def test_continuation_reuses_milestone_evidence_but_not_parent_execution_graph(
+    tmp_path: Path,
+) -> None:
+    objects = {
+        "jobs/prior/work/milestones/M01/completion_ledger.json": b'{"complete":false}',
+        "jobs/prior/work/milestones/M01/execution_graph_state.json": b'{"team_plan":"parent"}',
+        "jobs/prior/work/milestones/M01/execution_checkpoint.json": b'{"status":"failed"}',
+        "jobs/prior/work/milestones/M01/development/development_run.json": b'{"head":"parent"}',
+        "jobs/prior/work/milestones/M01/toolpacks/project_development/evidence/repository_inspection.json": b'{"head":"parent"}',
+        "jobs/prior/work/milestones/M01/handoffs/WH-parent.json": b'{"source":"parent"}',
+        "jobs/prior/work/milestones/M01/adk_convergence_trace.json": b'{"session":"parent"}',
+        "jobs/prior/work/milestones/M01/verification_r0.json": b'{"verdict":"stale"}',
+        "jobs/prior/work/milestones/M01/final_verification.json": b'{"verdict":"stale"}',
+    }
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+        def download_to_filename(self, filename):
+            if self.name not in objects:
+                raise NotFound("missing")
+            Path(filename).write_bytes(objects[self.name])
+
+    class Bucket:
+        def blob(self, name):
+            return Blob(name)
+
+    class Client:
+        def bucket(self, _name):
+            return Bucket()
+
+        def list_blobs(self, _bucket, *, prefix):
+            return [
+                Blob(name) for name in objects
+                if name.startswith(prefix)
+            ]
+
+    work = tmp_path / "work"
+    copied = GCSJobStore(
+        "gs://onebrief-test/jobs/prior", client=Client()
+    ).download_reusable_artifacts(work)
+
+    assert "milestones/M01/completion_ledger.json" in copied
+    assert (work / "milestones/M01/completion_ledger.json").is_file()
+    assert not (work / "milestones/M01/execution_graph_state.json").exists()
+    assert not (work / "milestones/M01/execution_checkpoint.json").exists()
+    assert not (work / "milestones/M01/development").exists()
+    assert not (work / "milestones/M01/toolpacks").exists()
+    assert not (work / "milestones/M01/handoffs").exists()
+    assert not (work / "milestones/M01/adk_convergence_trace.json").exists()
+    assert not (work / "milestones/M01/verification_r0.json").exists()
+    assert not (work / "milestones/M01/final_verification.json").exists()
+
+
+def test_missing_newer_code_candidate_does_not_delete_base_candidate(tmp_path: Path) -> None:
+    objects = {
+        "jobs/prior/work/code_change_set.json": b'{"summary":"base"}',
+    }
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+        def download_to_filename(self, filename):
+            if self.name not in objects:
+                raise NotFound("missing")
+            Path(filename).write_bytes(objects[self.name])
+
+    class Client:
+        def bucket(self, _name):
+            return type("Bucket", (), {"blob": lambda _self, name: Blob(name)})()
+
+    work = tmp_path / "work"
+    copied = GCSJobStore(
+        "gs://onebrief-test/jobs/prior", client=Client()
+    ).download_reusable_artifacts(work)
+
+    assert "code_change_set.json" in copied
+    assert json.loads((work / "code_change_set.json").read_text("utf-8"))["summary"] == "base"
+
+
+def test_latest_numbered_revision_overwrites_base_candidate(tmp_path: Path) -> None:
+    objects = {
+        "jobs/prior/work/code_change_set.json": b'{"summary":"base"}',
+        "jobs/prior/work/code_change_set_r1.json": b'{"summary":"revision"}',
+    }
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+        def download_to_filename(self, filename):
+            if self.name not in objects:
+                raise NotFound("missing")
+            Path(filename).write_bytes(objects[self.name])
+
+    class Client:
+        def bucket(self, _name):
+            return type("Bucket", (), {"blob": lambda _self, name: Blob(name)})()
+
+    work = tmp_path / "work"
+    GCSJobStore("gs://onebrief-test/jobs/prior", client=Client()).download_reusable_artifacts(work)
+    assert json.loads((work / "code_change_set.json").read_text("utf-8"))["summary"] == "revision"
+
+
+def test_latest_development_failure_becomes_canonical_resume_feedback(tmp_path: Path) -> None:
+    objects = {
+        "jobs/prior/work/development_verification_failure_r0.txt": b"lint failed",
+        "jobs/prior/work/development_verification_failure_r1.txt": b"language control failed",
+        "jobs/prior/work/development_verification_failure.txt": b"english copy leaked",
+    }
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+        def download_to_filename(self, filename):
+            if self.name not in objects:
+                raise NotFound("missing")
+            Path(filename).write_bytes(objects[self.name])
+
+    class Client:
+        def bucket(self, _name):
+            return type("Bucket", (), {"blob": lambda _self, name: Blob(name)})()
+
+    work = tmp_path / "work"
+    copied = GCSJobStore(
+        "gs://onebrief-test/jobs/prior", client=Client()
+    ).download_reusable_artifacts(work)
+
+    assert "development_verification_failure.txt" in copied
+    assert (work / "development_verification_failure.txt").read_text("utf-8") == (
+        "english copy leaked"
+    )
+
+
+def test_resume_derives_most_progressed_candidate_from_older_run(tmp_path: Path) -> None:
+    objects = {
+        "jobs/prior/work/code_change_set_r0.json": b'{"summary":"lint"}',
+        "jobs/prior/work/development_verification_failure_r0.txt": b"development verification failed: lint",
+        "jobs/prior/work/code_change_set_r1.json": b'{"summary":"working-language-control"}',
+        "jobs/prior/work/development_verification_failure_r1.txt": b"web observation failed: cjk leaked | labels identical",
+        "jobs/prior/work/code_change_set_r2.json": b'{"summary":"regressed"}',
+        "jobs/prior/work/development_verification_failure_r2.txt": b"web observation failed: no control | text same | lang same | one state",
+    }
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+        def download_to_filename(self, filename):
+            if self.name not in objects:
+                raise NotFound("missing")
+            Path(filename).write_bytes(objects[self.name])
+
+    class Client:
+        def bucket(self, _name):
+            return type("Bucket", (), {"blob": lambda _self, name: Blob(name)})()
+
+    work = tmp_path / "work"
+    GCSJobStore("gs://onebrief-test/jobs/prior", client=Client()).download_reusable_artifacts(work)
+
+    assert json.loads((work / "code_change_set.json").read_text("utf-8"))["summary"] == (
+        "working-language-control"
+    )
+    assert (work / "development_verification_failure.txt").read_text("utf-8") == (
+        "web observation failed: cjk leaked | labels identical"
+    )
+
+
+def test_resume_replaces_stale_explicit_best_with_playmode_checkpoint(
+    tmp_path: Path,
+) -> None:
+    objects = {
+        "jobs/prior/work/development_best_candidate.json": b'{"summary":"static"}',
+        "jobs/prior/work/development_best_failure.txt": (
+            b"development verification failed: Unity visual test contract rejected"
+        ),
+        "jobs/prior/work/code_change_set_r3.json": b'{"summary":"playmode"}',
+        "jobs/prior/work/development_verification_failure_r3.txt": (
+            b"development verification failed: unity_playmode_visual_tests "
+            b"UNITY TEST FAILURES SettingsButton was null"
+        ),
+    }
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+        def download_to_filename(self, filename):
+            if self.name not in objects:
+                raise NotFound("missing")
+            Path(filename).write_bytes(objects[self.name])
+
+    class Client:
+        def bucket(self, _name):
+            return type("Bucket", (), {"blob": lambda _self, name: Blob(name)})()
+
+    work = tmp_path / "work"
+    GCSJobStore("gs://onebrief-test/jobs/prior", client=Client()).download_reusable_artifacts(work)
+
+    assert json.loads((work / "development_best_candidate.json").read_text("utf-8"))[
+        "summary"
+    ] == "playmode"
+    assert json.loads((work / "code_change_set.json").read_text("utf-8"))[
+        "summary"
+    ] == "playmode"

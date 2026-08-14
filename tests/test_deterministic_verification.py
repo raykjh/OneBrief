@@ -1,5 +1,6 @@
 from onebrief.deterministic_verification import (
     GroundingIssueKind,
+    append_authoritative_csv_tables,
     apply_deterministic_override,
     validate_draft_grounding,
 )
@@ -98,6 +99,16 @@ def test_changed_csv_value_forces_revise_even_when_model_passes() -> None:
     assert final.revision_instructions
 
 
+def test_reference_csv_does_not_force_a_full_table_when_contract_does_not_require_it() -> None:
+    result = validate_draft_grounding(
+        [_csv()],
+        _draft("# Playbook\n\nUse the examples as guidance without reproducing every record."),
+        require_full_csv_preservation=False,
+    )
+    assert result.checked_rows == 0
+    assert result.issues == []
+
+
 def test_missing_csv_row_forces_revise() -> None:
     draft = _draft(
         "# Result\n\n"
@@ -116,6 +127,19 @@ def test_missing_csv_row_forces_revise() -> None:
         issue.kind == GroundingIssueKind.CSV_ROW_MISSING and issue.record_id == "A2"
         for issue in result.issues
     )
+
+
+def test_spreadsheet_csv_appendix_is_idempotent_and_preserves_all_rows() -> None:
+    first = append_authoritative_csv_tables(
+        [_csv()], _draft("# Workbook\n\nA verified operational workbook result.")
+    )
+    second = append_authoritative_csv_tables([_csv()], first)
+
+    assert first.body_markdown == second.body_markdown
+    assert first.body_markdown.count("<!-- onebrief-authoritative-csv-appendix -->") == 1
+    result = validate_draft_grounding([_csv()], second)
+    assert result.checked_rows == 2
+    assert result.issues == []
 
 
 def test_unsupported_scoring_conversion_forces_needs_information() -> None:

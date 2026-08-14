@@ -1,11 +1,34 @@
 # OneBrief
 
-OneBrief turns one goal and an authoritative source package into a validated
-long-form deliverable with minimal user interruption.
+OneBrief manages completion criteria and their evidence so AI work converges to a
+genuinely completed state. A non-expert describes a goal once; OneBrief defines what
+"done" means, assigns AI workers, rejects unsupported results, returns failures to the
+accountable maker, and releases only evidence-backed work.
+
+The product contract is defined in `docs/PRODUCT_IDENTITY.md`. Example projects and
+domain ToolPacks are validation cases; they do not define the product.
+
+The user experience has two stages: OneBrief first creates the completion criteria,
+capability pack, permission manifest, and cost envelope for one exact approval; it then
+works autonomously until the approved criteria are proven. See
+`docs/TWO_STAGE_WORKFLOW.md`.
+
+The stage-one intake includes **SixSense**: one Gemini inspection pre-generates at most
+five material choices, then the browser presents them one at a time with no network wait
+between questions. Recommended defaults are preselected, so a novice can turn a short
+goal into a complete work contract in about 30 seconds. See `docs/SIXSENSE.md`.
 
 ## Implemented milestones
 
 - Requirements Analyst built with Google ADK and Gemini 3.5 Flash
+- SixSense rapid sequential intake with one-pass question generation and recommended defaults
+- ADK-native Accountable Maker -> Independent Verifier -> original-maker revision loop
+- criterion-scoped repair plans that freeze passing behavior, fingerprint repeated
+  failures, decompose the second attempt, and stop blind third retries
+- standard-first product delivery when no distinctive visual direction is requested
+- criterion-level completion ledger showing pending, failed, revised, and proven work
+- software convergence with isolated ToolPack build/test execution before independent review
+- deterministic grounding, completion-evidence, and reality gates that can overrule model PASS
 - mandatory versus optional information classification
 - local text-source upload with SHA-256 source manifests
 - semantic reinspection after upload
@@ -16,7 +39,7 @@ long-form deliverable with minimal user interruption.
 - versioned result packages containing artifacts, evidence manifests, and cost audit data
 - asynchronous Cloud Run Job execution with a dedicated service identity
 - Cloud Storage job transport and verified result-package delivery
-- one bounded Gemini 2.5 Flash Google Search grounding step with preserved source URLs
+- one bounded Gemini 3.5 Flash Google Search grounding step with preserved source URLs
 - deterministic Markdown-table to `.xlsx` export with a separate public-source sheet
 - fixed grounded-search fee reservation inside the same immutable user budget
 
@@ -46,8 +69,15 @@ After supplying the requested sources:
 
 See `docs/WORKFLOW.md` for the gate behavior and generated artifacts.
 
+See `docs/COMPLETION_CONVERGENCE.md` for the fixed product scope, system boundary, and
+the evidence-driven convergence state machine.
+
 See `docs/JOB_SYSTEM.md` for job creation, detached execution, status polling,
 and result package structure.
 
 See `docs/CLOUD_RUN_JOBS.md` for cloud deployment, submission, observation, and
 result retrieval.
+
+See `docs/PARALLEL_TEST_CAMPAIGNS.md` for the frozen-baseline architecture that runs
+three evidence-only test lanes and permits only one integration lane to patch common
+code and promote a fully revalidated candidate.

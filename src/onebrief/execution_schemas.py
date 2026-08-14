@@ -6,6 +6,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
 
+from onebrief.handoff_protocol import EvidenceBinding
 from onebrief.temperament import TemperamentDecision
 
 
@@ -54,12 +55,29 @@ class Verdict(StrEnum):
     PASS = "PASS"
     REVISE = "REVISE"
     NEEDS_INFORMATION = "NEEDS_INFORMATION"
+    UNVERIFIABLE = "UNVERIFIABLE"
 
 
 class CriterionCheck(BaseModel):
+    criterion_id: str | None = Field(default=None, pattern=r"^Q[0-9]{2}$")
     criterion: str
     passed: bool
     evidence: str
+    evidence_bindings: list[EvidenceBinding] = Field(default_factory=list, max_length=32)
+
+    @model_validator(mode="after")
+    def bindings_match_criterion(self) -> "CriterionCheck":
+        mismatched = [
+            item.binding_id
+            for item in self.evidence_bindings
+            if item.criterion_id is not None and item.criterion_id != self.criterion_id
+        ]
+        if mismatched:
+            raise ValueError(
+                "criterion check contains evidence bound to a different criterion: "
+                + ", ".join(mismatched)
+            )
+        return self
 
 
 class VerificationReport(BaseModel):
@@ -78,6 +96,8 @@ class VerificationReport(BaseModel):
             raise ValueError("PASS cannot retain blocking issues or missing information")
         if self.verdict == Verdict.REVISE and not self.revision_instructions:
             raise ValueError("REVISE requires instructions")
+        if self.verdict == Verdict.UNVERIFIABLE and not self.blocking_issues:
+            raise ValueError("UNVERIFIABLE requires a blocking issue")
         return self
 
 
@@ -103,6 +123,7 @@ class PipelineStatus(StrEnum):
     PARTIAL = "partial"
     NEEDS_INFORMATION = "needs_information"
     NEEDS_BUDGET = "needs_budget"
+    NEEDS_AUTHORIZATION = "needs_authorization"
     FAILED = "failed"
 
 
@@ -110,7 +131,6 @@ class ExecutionCheckpoint(BaseModel):
     status: PipelineStatus
     current_stage: str
     completed_stages: list[str]
-    revision_round: int = Field(ge=0, le=2)
+    revision_round: int = Field(ge=0, le=6)
     final_verdict: Verdict | None = None
     message: str = ""
-

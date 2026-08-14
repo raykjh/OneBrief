@@ -1,0 +1,23 @@
+{
+  "schema_version": "onebrief-parallel-lane-submission-v1",
+  "campaign_id": "onebrief-stabilization-20260811",
+  "lane_id": "exchange-existing",
+  "baseline_commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+  "baseline_image_digest": "sha256:87c307cb079b52cadb754778d1a25457f48b65fa548a92903f162b5b088f8f6b",
+  "case_sha256": "19c51442398c1fedebad18b02c8ca18be0935218fbd3fe3a78e1e8bb92e51c7c",
+  "approved_execution_usd": 3.339,
+  "reserved_intake_usd": 0.2,
+  "lane_total_cap_usd": 6.5,
+  "session_id": "retry-exchange-existing",
+  "dispatch": {
+    "status": "queued",
+    "event_count": 2
+  },
+  "execution": {
+    "session_id": "retry-exchange-existing",
+    "job_uri": "gs://onebrief-agent-20260805-jobs/jobs/48218835-dfac-4799-a67e-923aeb7670fc",
+    "operation_name": "projects/onebrief-agent-20260805/locations/asia-northeast3/operations/c671c9eb-b820-47df-90b9-16969267187a",
+    "agent_engine_resource": "projects/1077683695702/locations/asia-northeast3/reasoningEngines/665354068385857536",
+    "agent_engine_session": "ephemeral-543b7ea1-dc0a-40b1-82b6-19de0a09507c"
+  }
+}

@@ -4,14 +4,19 @@ param(
     [string]$Bucket = "onebrief-agent-20260805-jobs",
     [string]$Repository = "onebrief",
     [string]$JobName = "onebrief-worker",
-    [string]$ImageTag = "cloud-v2"
+    [string]$ImageTag = "cloud-v2",
+    [string]$Cpu = "2",
+    [string]$Memory = "4Gi"
 )
 
-$ErrorActionPreference = "Stop"
+# gcloud writes informational provider details to stderr even when it exits 0.
+# Every native command below has an explicit LASTEXITCODE guard, so PowerShell
+# must not convert harmless stderr into a terminating script exception.
+$ErrorActionPreference = "Continue"
 $serviceAccount = "$JobName@$ProjectId.iam.gserviceaccount.com"
 $image = "$Region-docker.pkg.dev/$ProjectId/$Repository/worker`:$ImageTag"
 
-gcloud services enable `
+gcloud.cmd services enable `
     run.googleapis.com `
     cloudbuild.googleapis.com `
     artifactregistry.googleapis.com `
@@ -21,9 +26,9 @@ gcloud services enable `
     --quiet
 if ($LASTEXITCODE -ne 0) { throw "API activation failed" }
 
-gcloud storage buckets describe "gs://$Bucket" --project=$ProjectId --format="value(name)" 2>$null
+gcloud.cmd storage buckets describe "gs://$Bucket" --project=$ProjectId --format="value(name)" 2>$null
 if ($LASTEXITCODE -ne 0) {
-    gcloud storage buckets create "gs://$Bucket" `
+    gcloud.cmd storage buckets create "gs://$Bucket" `
         --project=$ProjectId `
         --location=$Region `
         --uniform-bucket-level-access `
@@ -31,20 +36,20 @@ if ($LASTEXITCODE -ne 0) {
     if ($LASTEXITCODE -ne 0) { throw "Bucket creation failed" }
 }
 
-gcloud iam service-accounts describe $serviceAccount --project=$ProjectId --format="value(email)" 2>$null
+gcloud.cmd iam service-accounts describe $serviceAccount --project=$ProjectId --format="value(email)" 2>$null
 if ($LASTEXITCODE -ne 0) {
-    gcloud iam service-accounts create $JobName `
+    gcloud.cmd iam service-accounts create $JobName `
         --project=$ProjectId `
         --display-name="OneBrief Cloud Run worker"
     if ($LASTEXITCODE -ne 0) { throw "Service account creation failed" }
 }
 
-gcloud artifacts repositories describe $Repository `
+gcloud.cmd artifacts repositories describe $Repository `
     --project=$ProjectId `
     --location=$Region `
     --format="value(name)" 2>$null
 if ($LASTEXITCODE -ne 0) {
-    gcloud artifacts repositories create $Repository `
+    gcloud.cmd artifacts repositories create $Repository `
         --project=$ProjectId `
         --location=$Region `
         --repository-format=docker `
@@ -52,21 +57,21 @@ if ($LASTEXITCODE -ne 0) {
     if ($LASTEXITCODE -ne 0) { throw "Artifact Registry creation failed" }
 }
 
-gcloud storage buckets add-iam-policy-binding "gs://$Bucket" `
+gcloud.cmd storage buckets add-iam-policy-binding "gs://$Bucket" `
     --member="serviceAccount:$serviceAccount" `
     --role="roles/storage.objectUser" `
     --project=$ProjectId `
     --quiet
 if ($LASTEXITCODE -ne 0) { throw "Bucket IAM update failed" }
 
-gcloud projects add-iam-policy-binding $ProjectId `
+gcloud.cmd projects add-iam-policy-binding $ProjectId `
     --member="serviceAccount:$serviceAccount" `
     --role="roles/aiplatform.user" `
     --condition=None `
     --quiet
 if ($LASTEXITCODE -ne 0) { throw "Vertex AI IAM update failed" }
 
-gcloud builds submit `
+gcloud.cmd builds submit `
     --project=$ProjectId `
     --region=$Region `
     --tag=$image `
@@ -74,7 +79,7 @@ gcloud builds submit `
     --quiet
 if ($LASTEXITCODE -ne 0) { throw "Container build failed" }
 
-gcloud run jobs deploy $JobName `
+gcloud.cmd run jobs deploy $JobName `
     --project=$ProjectId `
     --region=$Region `
     --image=$image `
@@ -83,8 +88,8 @@ gcloud run jobs deploy $JobName `
     --parallelism=1 `
     --max-retries=0 `
     --task-timeout=3600s `
-    --cpu=1 `
-    --memory=1Gi `
+    --cpu=$Cpu `
+    --memory=$Memory `
     --set-env-vars="GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_PROJECT=$ProjectId,GOOGLE_CLOUD_LOCATION=global" `
     --quiet
 if ($LASTEXITCODE -ne 0) { throw "Cloud Run Job deployment failed" }

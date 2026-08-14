@@ -9,5 +9,12 @@ tests
 docs
 samples
 scripts
+agent_runtime
+benchmarks
+benchmark_cases
+.test-tmp
+independent_observations
+manual-julpae-verification-v3
+manual-julpae-verification-v4
 *.md
 !README.md

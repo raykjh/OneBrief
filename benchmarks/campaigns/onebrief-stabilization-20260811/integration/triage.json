@@ -1,0 +1,90 @@
+{
+  "aggregate": {
+    "automatic_recovery_rate": 0.0,
+    "completion_rate": 0.2,
+    "lane_count": 5,
+    "median_elapsed_seconds": 1355.057,
+    "p95_elapsed_seconds": 1410.338,
+    "total_actual_cost_usd": 2.269806,
+    "total_user_interventions": 1,
+    "verified_complete_count": 1
+  },
+  "baseline": {
+    "commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+    "frozen_at": "2026-08-11T06:29:14.747516+00:00",
+    "image_digest": "sha256:87c307cb079b52cadb754778d1a25457f48b65fa548a92903f162b5b088f8f6b",
+    "source_ref": "onebrief-stabilization-20260811",
+    "tree_sha": "2604d938c80a5b6c1db320d8d3cf236124a1a241"
+  },
+  "campaign_id": "onebrief-stabilization-20260811",
+  "common_failure_clusters": [],
+  "common_fix_authority": "integration_lane_only",
+  "created_at": "2026-08-11T06:54:47.805610+00:00",
+  "evidence_ids": [
+    "ed4f2e41-b276-4718-a406-4b8f80debc82",
+    "602f3f81-d290-4692-8421-fffb69473f26",
+    "51622ce4-f2ea-4cf9-8fe2-6962f2b813b0",
+    "78d56d30-2e63-447f-93ff-7eb90e195aec",
+    "35c37394-31a3-4ea6-b1f4-fdbcddeceaa4"
+  ],
+  "lane_specific_failure_clusters": [
+    {
+      "eligible_for_common_fix": false,
+      "fingerprint": "70c2ec515c939930b64ab93e8baf167017b6c57d5953e42cbdac1e933485c05a",
+      "lane_ids": [
+        "exchange-existing"
+      ],
+      "occurrences": 1,
+      "summaries": [
+        "ValueError: exact search text must occur once in approved source: web/app/page.tsx"
+      ]
+    },
+    {
+      "eligible_for_common_fix": false,
+      "fingerprint": "741f1c6381d322a8c45647dc26bc1ef1e9f74d21768cbcdb48ce904e8bfa7928",
+      "lane_ids": [
+        "public-data-greenfield"
+      ],
+      "occurrences": 1,
+      "summaries": [
+        "A required independent observation capability was unavailable; the result was not accepted as complete."
+      ]
+    },
+    {
+      "eligible_for_common_fix": false,
+      "fingerprint": "a16ab1763bd80e622ac97f8f243478a8e46c50e8c0ccd4048e2277ffa6479f43",
+      "lane_ids": [
+        "service-dashboard"
+      ],
+      "occurrences": 1,
+      "summaries": [
+        "call blocked before provider invocation: needs $0.137821, remaining $0.051226"
+      ]
+    },
+    {
+      "eligible_for_common_fix": false,
+      "fingerprint": "d8cf44e8c558296366c34bfb5c7f9c8761d19040c75a9ebe3a4e648c0ea0137c",
+      "lane_ids": [
+        "incident-playbook"
+      ],
+      "occurrences": 1,
+      "summaries": [
+        "Revision limit reached before verification passed."
+      ]
+    }
+  ],
+  "promotion_blockers": [
+    "incident-playbook is not verified complete",
+    "service-dashboard is not verified complete",
+    "public-data-greenfield is not verified complete",
+    "exchange-existing is not verified complete"
+  ],
+  "regression_lane_ids": [
+    "incident-playbook",
+    "operations-workbook",
+    "service-dashboard",
+    "public-data-greenfield",
+    "exchange-existing"
+  ],
+  "schema_version": "onebrief-integration-batch-v1"
+}

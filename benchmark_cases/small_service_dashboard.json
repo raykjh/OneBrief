@@ -1,0 +1,27 @@
+{
+  "schema_version": "onebrief-benchmark-case-v1",
+  "case_id": "small-service-dashboard-20260811",
+  "goal": "제공된 서비스 요청 CSV와 규칙만 사용하여 담당자·상태·카테고리로 필터링하고 전체·미완료·기한초과 건수를 같은 행 집합에서 계산하는 작은 반응형 웹 프로그램을 만든다. 모든 원본 행을 확인할 수 있어야 하며 임의 점수·예측·외부 API·모의 자료를 추가하지 않는다.",
+  "acceptance_criteria": [
+    "CSV의 모든 요청 행과 고유 request_id가 화면 자료에 보존된다.",
+    "담당자·상태·카테고리 필터가 표와 모든 요약 카드에 동시에 반영된다.",
+    "기한초과는 제공된 기준일과 규칙만으로 계산되고 완료 항목은 제외된다.",
+    "모바일과 데스크톱에서 필터·표·요약 카드의 핵심 흐름이 실제로 동작한다.",
+    "자동 테스트·프로덕션 빌드·실제 서버 HTTP 검증이 통과한다.",
+    "설치·실행·검증 방법과 입력 자료 갱신 방법을 문서화한다."
+  ],
+  "verification_commands": ["npm test", "npm run build", "HTTP rendered-state verification"],
+  "execution_rules": {
+    "no_midrun_user_feedback": true,
+    "allow_user_call_only_for": ["missing_authoritative_information", "missing_permission", "insufficient_approved_budget"],
+    "protect_original_worktree": true,
+    "safe_apply_required": false
+  },
+  "intake": {
+    "output_target": "web_app",
+    "desired_output": "self-contained responsive web application with tests, production build, and run instructions",
+    "upload_paths": ["benchmark_inputs/service_requests.csv", "benchmark_inputs/service_dashboard_rules.md"],
+    "supplement": "The uploaded CSV and rules are complete and authoritative. Use no public research, external API, prediction, or mock data."
+  }
+}
+

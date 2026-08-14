@@ -1,0 +1,11 @@
+{
+  "sources": [
+    {
+      "path": "exchange_capability.md",
+      "requirement_keys": ["exchange_toolpack"],
+      "priority": "mandatory",
+      "summary": "Authority and safety contract for the Exchange read-only ToolPack."
+    }
+  ]
+}
+

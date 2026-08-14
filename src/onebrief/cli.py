@@ -11,6 +11,7 @@ from pathlib import Path
 from onebrief.budget_guard import BudgetStore, micros_to_dollars
 from onebrief.cloud_jobs import (
     GCSJobStore,
+    run_local_capability_worker,
     run_cloud_worker,
     submit_cloud_job,
 )
@@ -41,6 +42,16 @@ def _ledger_summary(store: BudgetStore) -> dict[str, object]:
         "reserved_usd": micros_to_dollars(ledger.reserved_usd_micros),
         "remaining_usd": micros_to_dollars(remaining),
         "calls": len(ledger.entries),
+        "phases": {
+            phase: {
+                key: (
+                    micros_to_dollars(value)
+                    if key.endswith("usd_micros") else value
+                )
+                for key, value in values.items()
+            }
+            for phase, values in store.phase_summary().items()
+        },
     }
 
 
@@ -162,6 +173,12 @@ def main() -> None:
         help="Cloud Run Job entry point; downloads, executes, and uploads one job",
     )
     cloud_worker.add_argument("--job-uri")
+
+    capability_worker = subparsers.add_parser(
+        "capability-worker",
+        help="verify a managed runtime handoff and execute its approved local adapters",
+    )
+    capability_worker.add_argument("job_uri")
 
     status = subparsers.add_parser("status", help="show approved, used, reserved, and remaining")
     status.add_argument("run_dir", type=Path)
@@ -321,6 +338,13 @@ def main() -> None:
             raise SystemExit(1)
         return
 
+    if args.command == "capability-worker":
+        record = run_local_capability_worker(args.job_uri)
+        print(record.model_dump_json(indent=2))
+        if record.status == JobStatus.FAILED:
+            raise SystemExit(1)
+        return
+
     if args.command == "status":
         print(json.dumps(_ledger_summary(BudgetStore(args.run_dir)), indent=2))
         return
@@ -342,4 +366,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

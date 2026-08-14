@@ -17,7 +17,7 @@ from onebrief.schemas import BudgetEnvelope, BudgetStatus, StageEstimate
 
 def _estimate(recommended: float = 0.10) -> BudgetEnvelope:
     return BudgetEnvelope(
-        price_card_version="google-agent-platform-global-standard-search-2026-08-05",
+        price_card_version="google-agent-platform-global-standard-search-2026-08-12",
         price_source_url="https://example.test/pricing",
         endpoint="global-standard",
         estimated_source_tokens=100,
@@ -67,6 +67,25 @@ def test_approval_is_immutable_and_settlement_stays_below_cap(tmp_path: Path) ->
     assert ledger.entries[0].status == CallStatus.SETTLED
 
 
+def test_failed_run_closes_ledger_and_releases_reservations(tmp_path: Path) -> None:
+    store = BudgetStore(tmp_path)
+    store.approve(_estimate(), 0.10)
+    store.reserve_call(
+        stage="draft",
+        model="gemini-3.5-flash",
+        input_token_cap=1000,
+        output_token_cap=1000,
+    )
+
+    ledger = store.fail("repository precondition failed")
+
+    assert ledger.status == RunStatus.FAILED
+    assert ledger.reserved_usd_micros == 0
+    assert ledger.entries[0].status == CallStatus.RELEASED
+    assert ledger.entries[0].reason == "repository precondition failed"
+
+
+
 def test_call_is_denied_before_reservation_can_exceed_budget(tmp_path: Path) -> None:
     store = BudgetStore(tmp_path)
     store.approve(_estimate(0.001), 0.001)
@@ -114,4 +133,3 @@ def test_concurrent_reservations_cannot_double_spend(tmp_path: Path) -> None:
     assert outcomes == ["blocked", "reserved"]
     ledger = store.read()
     assert ledger.actual_usd_micros + ledger.reserved_usd_micros <= ledger.approval.approved_usd_micros
-

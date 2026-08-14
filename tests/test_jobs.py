@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from onebrief.dynamic_role_agents import GovernanceDecision
 from onebrief.execution_schemas import (
     AnalysisPackage,
     DraftArtifact,
@@ -13,14 +14,19 @@ from onebrief.jobs import JobStatus, JobStore, create_job, run_job, start_backgr
 from onebrief.producer import estimate_budget
 from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis, SourcePriority
 
+from team_plan_support import minimal_team_plan
+
 
 class FakeGateway:
     def __init__(self, outputs: list[object]):
         self.outputs = outputs
         self.calls: list[str] = []
 
-    def generate_json(self, *, stage: str, schema: type, **_: object):
+    def generate_json(self, *, stage: str, schema: type, **kwargs: object):
         self.calls.append(stage)
+        if stage == "team_planning":
+            request = json.loads(str(kwargs["contents"]))
+            return minimal_team_plan(request["project_id"])
         value = self.outputs.pop(0)
         assert isinstance(value, schema)
         return value
@@ -89,7 +95,10 @@ def _gateway() -> FakeGateway:
                 revision_instructions=[],
                 missing_information=[],
             ),
-        ]
+            GovernanceDecision(
+                verdict="PASS",
+                rationale="Verified result satisfies the contract.",
+            ),        ]
     )
 
 
@@ -123,9 +132,11 @@ def test_job_runs_to_immutable_result_package(tmp_path: Path) -> None:
 
     assert completed.status == JobStatus.COMPLETE
     assert gateway.calls == [
+        "team_planning",
         "evidence_analysis",
         "long_form_draft",
         "independent_verification_r0",
+        "final_approval",
     ]
     assert completed.result_package is not None
     package = job_dir / completed.result_package
@@ -134,6 +145,10 @@ def test_job_runs_to_immutable_result_package(tmp_path: Path) -> None:
     assert (package / "audit" / "cost_ledger.json").exists()
     assert (package / "evidence" / "source_manifest.json").exists()
     assert not (package / "inputs" / "sources.json").exists()
+    team_plans = list((package / "artifacts" / "workspace" / "projects").glob(
+        "*/02_plan_and_teams/team_plan.json"
+    ))
+    assert len(team_plans) == 1
     manifest_path = package / "package_manifest.json"
     assert hashlib.sha256(manifest_path.read_bytes()).hexdigest() == completed.result_manifest_sha256
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -161,6 +176,27 @@ def test_changed_input_is_blocked_before_any_agent_call(tmp_path: Path) -> None:
     assert failed.status == JobStatus.FAILED
     assert "changed after approval" in failed.message
     assert gateway.calls == []
+    assert failed.result_package is not None
+    assert (job_dir / "work" / "evaluation_metrics.json").is_file()
+    assert (job_dir / failed.result_package / "artifacts" / "evaluation_metrics.json").is_file()
+
+
+def test_windows_sharing_violation_does_not_request_more_authority(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    job_dir = _create(tmp_path)
+
+    def fail_with_sharing_violation(*_args, **_kwargs):
+        error = PermissionError(13, "[WinError 32] file is being used by another process")
+        error.winerror = 32
+        raise error
+
+    monkeypatch.setattr("onebrief.jobs.ExecutionPipeline.run", fail_with_sharing_violation)
+    failed = run_job(job_dir, gateway=_gateway())
+
+    assert failed.status == JobStatus.FAILED
+    assert failed.current_stage == "verification_setup"
+    assert "approved capability boundary" not in failed.message
 
 
 def test_background_start_returns_without_running_pipeline(tmp_path: Path, monkeypatch) -> None:

@@ -9,7 +9,7 @@ from pathlib import Path
 from onebrief.schemas import InternalSource, SourceRecord, UploadManifest
 
 ALLOWED_SUFFIXES = {".txt", ".md", ".json", ".csv", ".yaml", ".yml"}
-MAX_FILE_BYTES = 500_000
+MAX_FILE_BYTES = 1_000_000
 
 
 def load_uploads(manifest: UploadManifest, manifest_dir: Path) -> list[InternalSource]:

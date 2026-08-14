@@ -13,6 +13,86 @@ class SourcePriority(StrEnum):
     OPTIONAL = "optional"
 
 
+class ToolPackId(StrEnum):
+    EXCHANGE = "exchange"
+    EXCHANGE_DEVELOPMENT = "exchange_development"
+    PROJECT_DEVELOPMENT = "project_development"
+    GREENFIELD_WEB_DEVELOPMENT = "greenfield_web_development"
+
+
+class OutputTarget(StrEnum):
+    """The native form the user expects to receive and use."""
+
+    AUTO = "auto"
+    EXISTING_PROJECT = "existing_project"
+    WEB_APP = "web_app"
+    UNITY_APP = "unity_app"
+    SPREADSHEET = "spreadsheet"
+    DOCUMENT = "document"
+    TEXT_FILE = "text_file"
+
+
+class EvaluationMode(StrEnum):
+    """How a completion criterion can be proven."""
+
+    DETERMINISTIC = "deterministic"
+    INDEPENDENT_REVIEW = "independent_review"
+
+
+class QualityCriterion(BaseModel):
+    criterion_id: Annotated[str, Field(pattern=r"^Q[0-9]{2}$")]
+    description: Annotated[str, Field(min_length=3, max_length=300)]
+    evaluation_mode: EvaluationMode = EvaluationMode.INDEPENDENT_REVIEW
+    evidence_required: Annotated[str, Field(min_length=3, max_length=300)]
+    required: bool = True
+
+
+class CompletionContract(BaseModel):
+    """Observable definition of done, independent of any example or agent roster."""
+
+    target_state: Annotated[str, Field(min_length=3, max_length=1000)]
+    quality_criteria: list[QualityCriterion] = Field(min_length=1, max_length=12)
+    pass_condition: Annotated[str, Field(min_length=3, max_length=300)] = (
+        "All required criteria pass with the specified evidence."
+    )
+
+
+class SixSenseOption(BaseModel):
+    """One fast, user-facing decision with a disclosed working default."""
+
+    option_id: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")]
+    label: Annotated[str, Field(min_length=1, max_length=120)]
+    decision: Annotated[str, Field(min_length=1, max_length=300)]
+    recommended: bool = False
+
+
+class SixSenseQuestion(BaseModel):
+    """A material decision shown as one tap in the rapid SixSense sequence."""
+
+    question_id: Annotated[str, Field(pattern=r"^S0[2-6]$")]
+    dimension: Annotated[str, Field(min_length=1, max_length=80)]
+    prompt: Annotated[str, Field(min_length=3, max_length=300)]
+    reason: Annotated[str, Field(min_length=3, max_length=300)]
+    options: list[SixSenseOption] = Field(min_length=2, max_length=4)
+    allow_custom: bool = True
+
+    @model_validator(mode="after")
+    def one_recommended_default(self) -> "SixSenseQuestion":
+        if sum(option.recommended for option in self.options) != 1:
+            raise ValueError("SixSense questions require exactly one recommended option")
+        if len({option.option_id for option in self.options}) != len(self.options):
+            raise ValueError("SixSense option IDs must be unique inside a question")
+        return self
+
+
+class SixSensePlan(BaseModel):
+    """One model pass, then an instant client-side sequence of at most five choices."""
+
+    standard_profile: Annotated[str, Field(min_length=3, max_length=800)]
+    questions: list[SixSenseQuestion] = Field(default_factory=list, max_length=5)
+    interaction_target_seconds: Annotated[int, Field(ge=10, le=90)] = 30
+
+
 class InternalSource(BaseModel):
     """Private or authoritative evidence supplied by the user."""
 
@@ -23,7 +103,7 @@ class InternalSource(BaseModel):
         max_length=10,
     )
     summary: Annotated[str, Field(max_length=2000)] = ""
-    content: Annotated[str, Field(max_length=500_000)] = ""
+    content: Annotated[str, Field(max_length=1_000_000)] = ""
     media_type: Annotated[str, Field(max_length=100)] = "text/plain"
     size_bytes: Annotated[int, Field(ge=0)] = 0
     sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")] | None = None
@@ -31,12 +111,16 @@ class InternalSource(BaseModel):
 
 class IntakeRequest(BaseModel):
     goal: Annotated[str, Field(min_length=3, max_length=8000)]
+    output_target: OutputTarget = OutputTarget.AUTO
+    existing_project_id: Annotated[
+        str | None, Field(pattern=r"^[a-z][a-z0-9_-]{1,63}$")
+    ] = None
     desired_output: Annotated[str | None, Field(max_length=2000)] = None
     internal_sources: list[InternalSource] = Field(default_factory=list, max_length=50)
     public_research_allowed: bool = False
     budget_limit_usd: Annotated[float | None, Field(gt=0)] = None
-    max_revision_rounds: Annotated[int, Field(ge=0, le=2)] = 2
-
+    max_revision_rounds: Annotated[int, Field(ge=0, le=6)] = 6
+    toolpack_ids: list[ToolPackId] = Field(default_factory=list, max_length=5)
 
 class InformationRequirement(BaseModel):
     key: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")]
@@ -62,6 +146,8 @@ class RequirementsAnalysis(BaseModel):
         min_length=1,
         max_length=12,
     )
+    completion_contract: CompletionContract | None = None
+    sixsense: SixSensePlan | None = None
     assumptions: list[Annotated[str, Field(min_length=1, max_length=300)]] = Field(max_length=10)
     consolidated_questions: list[Annotated[str, Field(min_length=3, max_length=500)]] = Field(
         max_length=10
@@ -76,6 +162,20 @@ class RequirementsAnalysis(BaseModel):
             raise ValueError("missing mandatory information blocks estimation")
         if self.mandatory_information and not self.consolidated_questions:
             raise ValueError("mandatory gaps must be surfaced in one question set")
+        if self.completion_contract is None:
+            self.completion_contract = CompletionContract(
+                target_state=(
+                    f"{self.normalized_goal} The listed deliverables are usable in their requested form."
+                ),
+                quality_criteria=[
+                    QualityCriterion(
+                        criterion_id=f"Q{index:02d}",
+                        description=criterion,
+                        evidence_required="Independent evidence showing the criterion is satisfied.",
+                    )
+                    for index, criterion in enumerate(self.acceptance_criteria, start=1)
+                ],
+            )
         return self
 
 
@@ -109,6 +209,14 @@ class BudgetStatus(StrEnum):
     NEEDS_BUDGET = "needs_budget"
 
 
+class ExecutionPhase(StrEnum):
+    SHARED_CONTEXT = "shared_context"
+    PRODUCT_IMPLEMENTATION = "product_implementation"
+    EVIDENCE_CONSTRUCTION = "evidence_construction"
+    FINAL_VERIFICATION = "final_verification"
+    RESERVE = "reserve"
+
+
 class StageEstimate(BaseModel):
     stage: str
     model: str
@@ -122,6 +230,18 @@ class StageEstimate(BaseModel):
     maximum_cost_usd: float
     estimated_minutes_per_call: int
     fixed_cost_usd_per_call: float = 0.0
+
+
+class PhaseBudgetEstimate(BaseModel):
+    """A separately enforced wallet inside the user's total approval."""
+
+    phase: ExecutionPhase
+    minimum_cost_usd: float = Field(ge=0)
+    recommended_cost_usd: float = Field(ge=0)
+    maximum_cost_usd: float = Field(ge=0)
+    max_ai_repair_calls: int = Field(default=0, ge=0, le=24)
+    max_deterministic_attempts: int = Field(default=0, ge=0, le=100)
+    editable_scope: list[str] = Field(default_factory=list, max_length=24)
 
 
 class BudgetEnvelope(BaseModel):
@@ -141,4 +261,4 @@ class BudgetEnvelope(BaseModel):
     estimated_minutes_recommended: int
     estimated_minutes_maximum: int
     notes: list[str]
-
+    phase_budgets: list[PhaseBudgetEstimate] = Field(default_factory=list)

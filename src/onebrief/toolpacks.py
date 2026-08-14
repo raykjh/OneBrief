@@ -1,0 +1,451 @@
+"""Deterministic, authority-bounded executable ToolPacks."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import time
+from pathlib import Path
+from typing import Callable
+
+from pydantic import BaseModel, Field
+
+from onebrief.development_toolpack import ExchangeDevelopmentToolPack
+from onebrief.generic_development_toolpack import ApprovedProjectDevelopmentToolPack
+from onebrief.greenfield_web_toolpack import GreenfieldWebDevelopmentToolPack
+from onebrief.schemas import InternalSource, OutputTarget, SourcePriority, ToolPackId
+
+
+class ToolCommandResult(BaseModel):
+    command_id: str
+    argv: list[str]
+    exit_code: int
+    duration_seconds: float = Field(ge=0)
+    output_tail: str
+
+
+class ToolEvidence(BaseModel):
+    source_path: str
+    packaged_path: str
+    size_bytes: int = Field(ge=0)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class ToolPackRun(BaseModel):
+    schema_version: str = "onebrief-toolpack-run-v1"
+    toolpack_id: ToolPackId
+    readonly: bool = True
+    status: str
+    commands: list[ToolCommandResult]
+    evidence: list[ToolEvidence]
+    safety_boundary: list[str]
+
+
+CommandRunner = Callable[[list[str], Path, int], ToolCommandResult]
+
+
+EXCHANGE_EVIDENCE = (
+    "docs/PROJECT_CURRENT.md",
+    "docs/ACTIVE_CHECKPOINT.md",
+    "reports/2026-07-26_ecb_data_quality.json",
+    "reports/2026-07-26_bok_ecb_cross_check.json",
+    "web/public/data-status.json",
+    "web/public/model-performance.json",
+)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _command_runner(argv: list[str], cwd: Path, timeout_seconds: int) -> ToolCommandResult:
+    started = time.monotonic()
+    allowed_environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key.casefold() in {"path", "systemroot", "temp", "tmp", "comspec", "pathext"}
+    }
+    allowed_environment.update({"CI": "1", "NO_COLOR": "1"})
+    completed = subprocess.run(
+        argv,
+        cwd=cwd,
+        env=allowed_environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout_seconds,
+        shell=False,
+        check=False,
+    )
+    output = (completed.stdout + "\n" + completed.stderr).strip()
+    result = ToolCommandResult(
+        command_id="pending",
+        argv=argv,
+        exit_code=completed.returncode,
+        duration_seconds=round(time.monotonic() - started, 3),
+        output_tail=output[-20_000:],
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"ToolPack command failed ({completed.returncode}): {' '.join(argv)}")
+    return result
+
+
+def toolpack_descriptor(toolpack_id: ToolPackId) -> InternalSource:
+    if toolpack_id == ToolPackId.PROJECT_DEVELOPMENT:
+        content = (
+            "Project Development is an exact-hash-approved imported-project ToolPack. It reads only "
+            "bounded committed text, applies base-hash-checked changes in a disposable Git clone, and "
+            "runs only validation adapters generated and approved for that project. It cannot modify "
+            "the source repository, install dependencies, deploy, push, access secrets or run arbitrary commands."
+        )
+        summary = "Approved isolated development for the selected imported project."
+    elif toolpack_id == ToolPackId.GREENFIELD_WEB_DEVELOPMENT:
+        content = (
+            "Greenfield Web Development supplies a dependency-free disposable web scaffold. "
+            "It permits bounded product-source edits, fixed tests and build, a real local HTTP probe, "
+            "and independent headless-browser observation. It cannot install packages, deploy, access "
+            "credentials, or modify an existing project."
+        )
+        summary = "Disposable web creation with fixed HTTP and browser verification."
+    elif toolpack_id == ToolPackId.EXCHANGE_DEVELOPMENT:
+        content = (
+            "Exchange Development is an approved isolated source-development ToolPack. It may read "
+            "tracked source files, propose bounded text changes with exact base hashes, edit only an "
+            "isolated clone, and run fixed repository tests, web tests, and web build. It returns a "
+            "reviewable patch and changed files. It cannot modify the original repository, push, "
+            "deploy, access credentials or accounts, execute trades, or run arbitrary commands."
+        )
+        summary = "Approved isolated Exchange source editing, test, build, and patch capability."
+    elif toolpack_id == ToolPackId.EXCHANGE:
+        content = (
+            "Exchange is an approved read-only executable ToolPack. It provides official-source FX "
+            "data status, data-quality checks, BOK/ECB cross-check evidence, walk-forward model "
+            "performance, and reproducible repository tests. It cannot place trades, connect accounts, "
+            "handle credentials, issue personalized buy/sell instructions, or promise profit. During "
+            "execution OneBrief runs only the fixed integrity commands and packages fixed evidence files."
+        )
+        summary = "Approved Exchange read-only data and verification capability."
+    else:
+        raise ValueError(f"unsupported ToolPack: {toolpack_id}")
+    content_bytes = content.encode("utf-8")
+    return InternalSource(
+        name=f"toolpack-{toolpack_id.value}-capability.md",
+        priority=SourcePriority.MANDATORY,
+        requirement_keys=[f"{toolpack_id.value}_toolpack"],
+        summary=summary,
+        content=content,
+        media_type="text/markdown",
+        size_bytes=len(content_bytes),
+        sha256=hashlib.sha256(content_bytes).hexdigest(),
+    )
+
+
+def route_toolpack_candidates(intake):
+    """Select only internally relevant capabilities; the Project Owner makes the final choice."""
+    if intake.toolpack_ids:
+        return intake
+    if intake.existing_project_id == "exchange":
+        return intake.model_copy(update={
+            "toolpack_ids": [ToolPackId.EXCHANGE_DEVELOPMENT]
+        })
+    if intake.existing_project_id:
+        return intake.model_copy(update={
+            "toolpack_ids": [ToolPackId.PROJECT_DEVELOPMENT]
+        })
+    if intake.output_target == OutputTarget.WEB_APP:
+        return intake.model_copy(update={
+            "toolpack_ids": [ToolPackId.GREENFIELD_WEB_DEVELOPMENT]
+        })
+    text = "\n".join((intake.goal, intake.desired_output or "")).casefold()
+    exchange_markers = (
+        "exchange", "fx", "foreign exchange", "currency", "환율", "외환", "원화",
+        r"c:\exchange",
+    )
+    if not any(marker in text for marker in exchange_markers):
+        return intake
+    development_markers = (
+        "개선", "개발", "수정", "기능", "코드", "웹프로그램", "web app",
+        "develop", "improve", "modify", "code",
+    )
+    wants_development = (
+        intake.output_target == OutputTarget.EXISTING_PROJECT
+        or any(marker in text for marker in development_markers)
+    )
+    candidate = (
+        ToolPackId.EXCHANGE_DEVELOPMENT if wants_development else ToolPackId.EXCHANGE
+    )
+    return intake.model_copy(update={"toolpack_ids": [candidate]})
+
+
+def attach_toolpack_descriptors(intake):
+    """Attach bounded capability evidence before requirements inspection."""
+    existing = {source.name for source in intake.internal_sources}
+    additions = [
+        toolpack_descriptor(toolpack_id)
+        for toolpack_id in intake.toolpack_ids
+        if f"toolpack-{toolpack_id.value}-capability.md" not in existing
+    ]
+    return intake.model_copy(update={"internal_sources": [*intake.internal_sources, *additions]})
+
+
+class ExchangeToolPack:
+    """Read-only adapter over the existing Exchange repository."""
+
+    def __init__(self, root: Path | None = None, runner: CommandRunner | None = None):
+        configured = root or Path(
+            os.environ.get(
+                "ONEBRIEF_EXCHANGE_ROOT",
+                r"C:\exchange" if os.name == "nt" else "/opt/onebrief/toolpacks/exchange",
+            )
+        )
+        self.root = configured.resolve()
+        self.runner = runner or _command_runner
+
+    def _validate_root(self) -> None:
+        required = [self.root / "package.json", *(self.root / item for item in EXCHANGE_EVIDENCE)]
+        missing = [str(path) for path in required if not path.is_file()]
+        if missing:
+            raise FileNotFoundError(
+                "Exchange ToolPack is unavailable or incomplete: " + ", ".join(missing[:3])
+            )
+
+    def _run_command(self, command_id: str, args: list[str]) -> ToolCommandResult:
+        npm = "npm.cmd" if os.name == "nt" else "npm"
+        result = self.runner([npm, *args], self.root, 180)
+        return result.model_copy(update={"command_id": command_id})
+
+    def execute(self, output_dir: Path) -> tuple[ToolPackRun, list[InternalSource]]:
+        self._validate_root()
+        commands = [
+            self._run_command("repository_tests", ["test"]),
+            self._run_command("transfer_integrity", ["run", "verify:transfer"]),
+        ]
+        pack_dir = output_dir / ToolPackId.EXCHANGE.value
+        evidence_dir = pack_dir / "evidence"
+        evidence: list[ToolEvidence] = []
+        sources: list[InternalSource] = []
+        for relative in EXCHANGE_EVIDENCE:
+            source = (self.root / relative).resolve()
+            if not source.is_relative_to(self.root) or source.is_symlink():
+                raise PermissionError(f"unsafe Exchange evidence path: {relative}")
+            destination = evidence_dir / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+            digest = _sha256(destination)
+            evidence.append(ToolEvidence(
+                source_path=relative,
+                packaged_path=destination.relative_to(output_dir.parent).as_posix(),
+                size_bytes=destination.stat().st_size,
+                sha256=digest,
+            ))
+            if destination.stat().st_size <= 120_000:
+                content = destination.read_text(encoding="utf-8")
+                sources.append(InternalSource(
+                    name=f"exchange/{relative}",
+                    priority=SourcePriority.MANDATORY,
+                    requirement_keys=["exchange_toolpack"],
+                    summary="Evidence produced by the approved read-only Exchange ToolPack.",
+                    content=content,
+                    media_type="application/json" if destination.suffix == ".json" else "text/markdown",
+                    size_bytes=destination.stat().st_size,
+                    sha256=digest,
+                ))
+        run = ToolPackRun(
+            toolpack_id=ToolPackId.EXCHANGE,
+            status="passed",
+            commands=commands,
+            evidence=evidence,
+            safety_boundary=[
+                "read-only fixed commands and fixed evidence paths",
+                "no trading, account connection, credentials, or personal portfolio data",
+                "no personalized buy/sell instruction or profit guarantee",
+            ],
+        )
+        pack_dir.mkdir(parents=True, exist_ok=True)
+        (pack_dir / "toolpack_run.json").write_text(
+            run.model_dump_json(indent=2) + "\n", encoding="utf-8"
+        )
+        return run, sources
+
+
+def _execute_exchange_development(
+    output_dir: Path,
+) -> tuple[ToolPackRun, list[InternalSource]]:
+    pack_dir = output_dir / ToolPackId.EXCHANGE_DEVELOPMENT.value
+    evidence_root = pack_dir / "evidence"
+    inspection, sources = ExchangeDevelopmentToolPack().inspect(evidence_root)
+    evidence: list[ToolEvidence] = []
+    inspection_path = evidence_root / "repository_inspection.json"
+    evidence.append(ToolEvidence(
+        source_path="repository_inspection.json",
+        packaged_path=inspection_path.relative_to(output_dir.parent).as_posix(),
+        size_bytes=inspection_path.stat().st_size,
+        sha256=_sha256(inspection_path),
+    ))
+    for item in inspection.context_files:
+        path = evidence_root / "repository_context" / item.path
+        evidence.append(ToolEvidence(
+            source_path=f"repository_context/{item.path}",
+            packaged_path=path.relative_to(output_dir.parent).as_posix(),
+            size_bytes=path.stat().st_size,
+            sha256=_sha256(path),
+        ))
+    run = ToolPackRun(
+        toolpack_id=ToolPackId.EXCHANGE_DEVELOPMENT,
+        readonly=False,
+        status="ready",
+        commands=[],
+        evidence=evidence,
+        safety_boundary=inspection.safety_boundary,
+    )
+    pack_dir.mkdir(parents=True, exist_ok=True)
+    (pack_dir / "toolpack_run.json").write_text(
+        run.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
+    return run, sources
+
+def _execute_project_development(
+    project_id: str, output_dir: Path, focus_text: str = "",
+    registry_root: Path | None = None,
+) -> tuple[ToolPackRun, list[InternalSource]]:
+    pack_dir = output_dir / ToolPackId.PROJECT_DEVELOPMENT.value
+    evidence_root = pack_dir / "evidence"
+    inspection, sources = ApprovedProjectDevelopmentToolPack(
+        project_id, registry_root=registry_root
+    ).inspect(evidence_root, focus_text)
+    inspection_path = evidence_root / "repository_inspection.json"
+    evidence = [ToolEvidence(
+        source_path="repository_inspection.json",
+        packaged_path=inspection_path.relative_to(output_dir.parent).as_posix(),
+        size_bytes=inspection_path.stat().st_size,
+        sha256=_sha256(inspection_path),
+    )]
+    for item in inspection.context_files:
+        path = evidence_root / "repository_context" / item.path
+        evidence.append(ToolEvidence(
+            source_path=f"repository_context/{item.path}",
+            packaged_path=path.relative_to(output_dir.parent).as_posix(),
+            size_bytes=path.stat().st_size,
+            sha256=_sha256(path),
+        ))
+    run = ToolPackRun(
+        toolpack_id=ToolPackId.PROJECT_DEVELOPMENT,
+        readonly=False,
+        status="ready",
+        commands=[],
+        evidence=evidence,
+        safety_boundary=inspection.safety_boundary,
+    )
+    pack_dir.mkdir(parents=True, exist_ok=True)
+    (pack_dir / "toolpack_run.json").write_text(
+        run.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
+    return run, sources
+
+
+def _execute_greenfield_web_development(
+    output_dir: Path,
+) -> tuple[ToolPackRun, list[InternalSource]]:
+    pack_dir = output_dir / ToolPackId.GREENFIELD_WEB_DEVELOPMENT.value
+    evidence_root = pack_dir / "evidence"
+    inspection, sources = GreenfieldWebDevelopmentToolPack(
+        pack_dir / "scaffold"
+    ).inspect(evidence_root)
+    evidence: list[ToolEvidence] = []
+    for relative in [
+        "repository_inspection.json",
+        *(f"repository_context/{item.path}" for item in inspection.context_files),
+    ]:
+        path = evidence_root / relative
+        evidence.append(ToolEvidence(
+            source_path=relative,
+            packaged_path=path.relative_to(output_dir.parent).as_posix(),
+            size_bytes=path.stat().st_size,
+            sha256=_sha256(path),
+        ))
+    run = ToolPackRun(
+        toolpack_id=ToolPackId.GREENFIELD_WEB_DEVELOPMENT,
+        readonly=False,
+        status="ready",
+        commands=[],
+        evidence=evidence,
+        safety_boundary=inspection.safety_boundary,
+    )
+    pack_dir.mkdir(parents=True, exist_ok=True)
+    (pack_dir / "toolpack_run.json").write_text(
+        run.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
+    return run, sources
+
+
+def execute_toolpacks(
+    toolpack_ids: list[ToolPackId], output_dir: Path, project_id: str | None = None,
+    focus_text: str = "", registry_root: Path | None = None,
+) -> tuple[list[ToolPackRun], list[InternalSource]]:
+    existing_manifest = output_dir / "toolpack_execution.json"
+    if existing_manifest.exists():
+        payload = json.loads(existing_manifest.read_text(encoding="utf-8"))
+        runs = [ToolPackRun.model_validate(item) for item in payload.get("runs", [])]
+        sources: list[InternalSource] = []
+        for run in runs:
+            for evidence in run.evidence:
+                path = output_dir / run.toolpack_id.value / "evidence" / evidence.source_path
+                if not path.is_file():
+                    raise FileNotFoundError(f"packaged ToolPack evidence is missing: {evidence.source_path}")
+                if _sha256(path) != evidence.sha256:
+                    raise RuntimeError(f"packaged ToolPack evidence changed: {evidence.source_path}")
+                if path.is_file() and path.stat().st_size <= 120_000:
+                    content = path.read_text(encoding="utf-8")
+                    source_name = f"{run.toolpack_id.value}/{evidence.source_path}"
+                    if evidence.source_path.startswith("repository_context/"):
+                        relative = evidence.source_path.removeprefix("repository_context/")
+                        if run.toolpack_id == ToolPackId.PROJECT_DEVELOPMENT:
+                            source_name = f"project-source/{relative}"
+                        elif run.toolpack_id == ToolPackId.EXCHANGE_DEVELOPMENT:
+                            source_name = f"exchange-source/{relative}"
+                        elif run.toolpack_id == ToolPackId.GREENFIELD_WEB_DEVELOPMENT:
+                            source_name = f"greenfield-source/{relative}"
+                    sources.append(InternalSource(
+                        name=source_name, priority=SourcePriority.MANDATORY,
+                        requirement_keys=[f"{run.toolpack_id.value}_toolpack"], content=content,
+                        media_type="application/json" if path.suffix == ".json" else "text/markdown",
+                        size_bytes=path.stat().st_size, sha256=_sha256(path),
+                    ))
+        return runs, sources
+    runs: list[ToolPackRun] = []
+    sources: list[InternalSource] = []
+    for toolpack_id in toolpack_ids:
+        if toolpack_id == ToolPackId.EXCHANGE:
+            run, generated = ExchangeToolPack().execute(output_dir)
+        elif toolpack_id == ToolPackId.EXCHANGE_DEVELOPMENT:
+            run, generated = _execute_exchange_development(output_dir)
+        elif toolpack_id == ToolPackId.PROJECT_DEVELOPMENT:
+            if not project_id:
+                raise ValueError("project_development requires an imported project id")
+            run, generated = _execute_project_development(
+                project_id, output_dir, focus_text, registry_root
+            )
+        elif toolpack_id == ToolPackId.GREENFIELD_WEB_DEVELOPMENT:
+            run, generated = _execute_greenfield_web_development(output_dir)
+        else:
+            raise ValueError(f"unsupported ToolPack: {toolpack_id}")
+        runs.append(run)
+        sources.extend(generated)
+    manifest = {
+        "schema_version": "onebrief-toolpack-execution-v1",
+        "runs": [run.model_dump(mode="json") for run in runs],
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "toolpack_execution.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return runs, sources

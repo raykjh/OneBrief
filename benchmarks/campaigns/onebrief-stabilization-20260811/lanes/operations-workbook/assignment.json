@@ -1,0 +1,22 @@
+{
+  "allows_common_code_changes": false,
+  "allows_safe_apply": false,
+  "baseline": {
+    "commit_sha": "8deb1977f6fb8d2ba809d9d9c0a818d3745e7415",
+    "frozen_at": "2026-08-11T06:29:14.747516+00:00",
+    "image_digest": "sha256:87c307cb079b52cadb754778d1a25457f48b65fa548a92903f162b5b088f8f6b",
+    "source_ref": "onebrief-stabilization-20260811",
+    "tree_sha": "2604d938c80a5b6c1db320d8d3cf236124a1a241"
+  },
+  "campaign_id": "onebrief-stabilization-20260811",
+  "case_path": "benchmark_cases/structured_operations_workbook.json",
+  "case_sha256": "d9d8af27fd66911c15411644c0d4e2889aadb3a6eeddd835f52c75f6715fb6af",
+  "contract_sha256": "e5f7f045b6879ef9dea12d8b301e2cd1c330fb5a2d9dd16d10242333d2a0ec28",
+  "goal_sha256": "7093f9e7df0897210765045aeac6be997cfe2a7221682f0ba0cb6e529702ea85",
+  "kind": "structured_artifact",
+  "lane_id": "operations-workbook",
+  "max_budget_usd": 2.5,
+  "output_root": "runs/operations-workbook",
+  "project_id": null,
+  "schema_version": "onebrief-parallel-lane-spec-v1"
+}
