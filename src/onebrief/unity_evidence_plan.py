@@ -208,6 +208,25 @@ class UnityEvidenceJourneyPlan(BaseModel):
                 raise ValueError(
                     "a later destination must follow a real shipped-control interaction"
                 )
+        for index, step in enumerate(self.steps):
+            if not (
+                step.action == "click_button"
+                and _target_contains(step, ("directenter",))
+            ):
+                continue
+            account_selected = any(
+                prior.action == "select_dropdown_index"
+                and _target_contains(
+                    prior,
+                    ("testaccount", "account", "profile", "auth", "session", "user"),
+                )
+                for prior in self.steps[:index]
+            )
+            if not account_selected:
+                raise ValueError(
+                    "direct-enter authentication requires a preceding approved account/profile "
+                    "dropdown selection"
+                )
         return self
 
 

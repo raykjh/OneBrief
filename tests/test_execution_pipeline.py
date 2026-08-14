@@ -203,6 +203,21 @@ def test_declarative_unity_journey_does_not_certify_start_click_as_authenticatio
     assert "ONEBRIEF_AUTHENTICATION_PRECONDITION_V1" not in rendered.playmode_test_source
 
 
+def test_declarative_unity_journey_rejects_direct_enter_without_account_selection() -> None:
+    with pytest.raises(ValidationError, match="direct-enter authentication requires"):
+        UnityEvidenceJourneyPlan.model_validate({
+            "summary": "Incomplete direct-enter authentication proof.",
+            "test_directory": "Assets/JULPAE/Tests/PlayMode",
+            "steps": [
+                {"action": "load_scene", "scene_name": "LoginScene_All"},
+                {"action": "capture", "scenario_id": "login"},
+                {"action": "click_button", "target": "DirectEnterButton"},
+                {"action": "wait_for_scene", "scene_name": "LobbyScene_All"},
+                {"action": "capture", "scenario_id": "lobby"},
+            ],
+        })
+
+
 def test_declarative_unity_journey_rejects_direct_destination_load() -> None:
     with pytest.raises(ValidationError, match="only the initial scene"):
         UnityEvidenceJourneyPlan.model_validate({
