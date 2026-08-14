@@ -639,13 +639,19 @@ def normalize_atomic_unity_evidence_bundle(
     must rehydrate the exact schema before applying the indivisible pair.
     """
 
-    if isinstance(raw, UnityEvidenceJourneyPlan) or (
+    serialized_journey = bool(
         isinstance(raw, dict)
-        and raw.get("schema_version") == "onebrief-unity-evidence-journey-plan-v1"
-    ):
+        and isinstance(raw.get("steps"), list)
+        and isinstance(raw.get("test_directory"), str)
+        and not raw.get("changes")
+    )
+    if isinstance(raw, UnityEvidenceJourneyPlan) or serialized_journey:
         plan = (
             raw if isinstance(raw, UnityEvidenceJourneyPlan)
-            else UnityEvidenceJourneyPlan.model_validate(raw)
+            else UnityEvidenceJourneyPlan.model_validate({
+                **raw,
+                "schema_version": "onebrief-unity-evidence-journey-plan-v1",
+            })
         )
         existing_test, existing_assembly = _existing_unity_evidence_paths(
             current_payload
@@ -2866,8 +2872,9 @@ class ExecutionPipeline:
             raw = normalize_atomic_unity_evidence_bundle(raw, previous_change_set)
             if isinstance(raw_provider_payload, UnityEvidenceJourneyPlan) or (
                 isinstance(raw_provider_payload, dict)
-                and raw_provider_payload.get("schema_version")
-                == "onebrief-unity-evidence-journey-plan-v1"
+                and isinstance(raw_provider_payload.get("steps"), list)
+                and isinstance(raw_provider_payload.get("test_directory"), str)
+                and not raw_provider_payload.get("changes")
             ):
                 plan_text = (
                     raw_provider_payload.model_dump_json(indent=2)

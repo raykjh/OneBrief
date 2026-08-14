@@ -481,6 +481,28 @@ def test_declarative_unity_journey_reuses_existing_evidence_paths() -> None:
     ]
 
 
+def test_declarative_unity_journey_recovers_compatible_transport_shape() -> None:
+    raw = {
+        "schema_version": "onebrief-unity-journey-plan-v1",
+        "summary": "Transport-compatible login proof.",
+        "test_directory": "Assets/JULPAE/Tests/PlayMode",
+        "steps": [
+            {"action": "load_scene", "scene_name": "LoginScene_All"},
+            {"action": "assert_active", "target": "StartButton"},
+            {"action": "capture", "scenario_id": "login"},
+        ],
+        "changes": [],
+    }
+
+    normalized = normalize_atomic_unity_evidence_bundle(raw)
+
+    assert isinstance(normalized, ProjectCodeChangeSet)
+    assert [item.path for item in normalized.changes] == [
+        "Assets/JULPAE/Tests/PlayMode/OneBriefGeneratedJourneyTest.cs",
+        "Assets/JULPAE/Tests/PlayMode/OneBrief.Generated.Visual.Tests.asmdef",
+    ]
+
+
 def test_trusted_declarative_journey_can_compile_beyond_provider_transport_cap() -> None:
     steps = [
         {"action": "load_scene", "scene_name": "LoginScene_All"},
