@@ -1895,7 +1895,7 @@ def test_unity_visual_preflight_rejects_protected_destination_without_auth_preco
     tests = clone / "Assets" / "Tests" / "PlayMode"
     tests.mkdir(parents=True)
     (tests / "OneBriefVisualTests.cs").write_text(
-        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        "namespace OneBrief.Visual { [UnityTest] public void TestLoginToLobbyTransition() { "
         'SceneManager.LoadScene("Login"); var startButton = GameObject.Find("StartButton")'
         ".GetComponent<Button>(); startButton.onClick.Invoke(); "
         'Assert.AreEqual("Lobby", SceneManager.GetActiveScene().name); '

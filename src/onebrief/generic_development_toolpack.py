@@ -2304,8 +2304,8 @@ class ApprovedProjectDevelopmentToolPack:
             )
             authentication_precondition = bool(
                 re.search(
-                    r"(?:dev(?:elopment)?|test|mock)[a-z0-9_]*(?:account|user|profile|login|auth|session)"
-                    r"|(?:account|user|profile|login|auth|session)[a-z0-9_]*(?:dev|test|mock)"
+                    r"(?:dev(?:elopment)?|test|mock)[a-z0-9_]*(?:account|user|profile|auth|session)"
+                    r"|(?:account|user|profile|auth|session)[a-z0-9_]*(?:dev|test|mock)"
                     r"|directenter|authenticated|authenticate|signin|sign_in|"
                     r"setauth|createsession|sessiontoken|userkey|acceptterms|termscheckbox|"
                     r"username|emailfield|passwordfield",
