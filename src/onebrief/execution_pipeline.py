@@ -630,9 +630,45 @@ def _existing_unity_evidence_paths(
     return test_path, assembly_path
 
 
+def approved_unity_evidence_bundle_bindings(development_pack: object) -> dict[str, str]:
+    """Bind one previously committed trusted journey bundle to the active HEAD."""
+
+    _profile, head = development_pack._validate_root()
+    tracked = [
+        path.replace("\\", "/")
+        for path in development_pack._git("ls-files").splitlines()
+    ]
+    by_directory: dict[str, dict[str, str]] = {}
+    for path in tracked:
+        pure = PurePosixPath(path)
+        if "/tests/playmode/" not in f"/{path.casefold()}":
+            continue
+        name = pure.name.casefold()
+        kind = (
+            "test"
+            if name == "onebriefgeneratedjourneytest.cs"
+            else "assembly"
+            if name == "onebrief.generated.visual.tests.asmdef"
+            else None
+        )
+        if kind is not None:
+            by_directory.setdefault(str(pure.parent), {})[kind] = path
+    complete = [
+        paths for paths in by_directory.values()
+        if set(paths) == {"test", "assembly"}
+    ]
+    if len(complete) != 1:
+        return {}
+    return {
+        path: hashlib.sha256(development_pack._blob(head, path)).hexdigest()
+        for path in complete[0].values()
+    }
+
+
 def normalize_atomic_unity_evidence_bundle(
     raw: object,
     current_payload: object | None = None,
+    approved_existing_evidence: dict[str, str] | None = None,
 ) -> object:
     """Restore the typed atomic contract after ADK state serialization.
 
@@ -658,6 +694,17 @@ def normalize_atomic_unity_evidence_bundle(
         existing_test, existing_assembly = _existing_unity_evidence_paths(
             current_payload
         )
+        approved_paths = approved_existing_evidence or {}
+        if existing_test is None:
+            existing_test = next(
+                (path for path in approved_paths if path.casefold().endswith(".cs")),
+                None,
+            )
+        if existing_assembly is None:
+            existing_assembly = next(
+                (path for path in approved_paths if path.casefold().endswith(".asmdef")),
+                None,
+            )
         rendered = render_unity_evidence_journey(
             plan,
             existing_test_path=existing_test,
@@ -673,13 +720,13 @@ def normalize_atomic_unity_evidence_bundle(
             changes=[
                 {
                     "path": rendered.playmode_test_path,
-                    "base_sha256": None,
+                    "base_sha256": approved_paths.get(rendered.playmode_test_path),
                     "content": rendered.playmode_test_source,
                     "reason": "Trusted OneBrief compilation of the declarative Unity journey.",
                 },
                 {
                     "path": rendered.test_assembly_path,
-                    "base_sha256": None,
+                    "base_sha256": approved_paths.get(rendered.test_assembly_path),
                     "content": rendered.test_assembly_source,
                     "reason": "Trusted sibling TestAssemblies wrapper for the generated journey.",
                 },
@@ -2172,6 +2219,10 @@ class ExecutionPipeline:
             isinstance(development_pack, ApprovedProjectDevelopmentToolPack)
             and development_pack._uses_unity_runtime(development_pack._profile())
         )
+        approved_existing_evidence = (
+            approved_unity_evidence_bundle_bindings(development_pack)
+            if unity_runtime else {}
+        )
         if isinstance(development_pack, ApprovedProjectDevelopmentToolPack):
             runtime_authority = approved_runtime_authority_source(development_pack)
             if runtime_authority is not None:
@@ -2883,7 +2934,11 @@ class ExecutionPipeline:
                 if active_contract_payload else None
             )
             raw_provider_payload = raw
-            raw = normalize_atomic_unity_evidence_bundle(raw, previous_change_set)
+            raw = normalize_atomic_unity_evidence_bundle(
+                raw,
+                previous_change_set,
+                approved_existing_evidence,
+            )
             if isinstance(raw_provider_payload, UnityEvidenceJourneyPlan) or (
                 isinstance(raw_provider_payload, dict)
                 and isinstance(raw_provider_payload.get("steps"), list)

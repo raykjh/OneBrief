@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -42,6 +43,7 @@ from onebrief.execution_pipeline import (
     is_development_product_target_failure,
     missing_unity_evidence_bundle_paths,
     normalize_atomic_unity_evidence_bundle,
+    approved_unity_evidence_bundle_bindings,
     rollback_detached_development_changes,
     should_preserve_unity_evidence_checkpoint,
     is_unity_localization_product_failure,
@@ -497,6 +499,49 @@ def test_declarative_unity_journey_reuses_existing_evidence_paths() -> None:
         "Assets/JULPAE/Tests/PlayMode/ExistingJourney.cs",
         "Assets/JULPAE/Tests/PlayMode/ExistingJourney.asmdef",
     ]
+
+
+def test_declarative_unity_journey_reuses_committed_bundle_across_milestones() -> None:
+    raw = {
+        "summary": "Verify the next milestone with the established proof bundle.",
+        "test_directory": "Assets/Tests/PlayMode",
+        "steps": [
+            {"action": "load_scene", "scene_name": "LoginScene_All"},
+            {"action": "assert_active", "target": "LanguageDropdown"},
+            {"action": "capture", "scenario_id": "settings_language_changed"},
+        ],
+    }
+    bindings = {
+        "Assets/JULPAE/Tests/PlayMode/OneBriefGeneratedJourneyTest.cs": "a" * 64,
+        "Assets/JULPAE/Tests/PlayMode/OneBrief.Generated.Visual.Tests.asmdef": "b" * 64,
+    }
+
+    normalized = normalize_atomic_unity_evidence_bundle(
+        raw, approved_existing_evidence=bindings
+    )
+
+    assert [(item.path, item.base_sha256) for item in normalized.changes] == list(
+        bindings.items()
+    )
+
+
+def test_committed_unity_evidence_bundle_requires_one_complete_tracked_pair() -> None:
+    blobs = {
+        "Assets/JULPAE/Tests/PlayMode/OneBriefGeneratedJourneyTest.cs": b"test",
+        "Assets/JULPAE/Tests/PlayMode/OneBrief.Generated.Visual.Tests.asmdef": b"assembly",
+    }
+    pack = SimpleNamespace(
+        _validate_root=lambda: (object(), "c" * 40),
+        _git=lambda *_args: "\n".join(blobs),
+        _blob=lambda _head, path: blobs[path],
+    )
+
+    bindings = approved_unity_evidence_bundle_bindings(pack)
+
+    assert bindings == {
+        path: hashlib.sha256(content).hexdigest()
+        for path, content in blobs.items()
+    }
 
 
 def test_declarative_unity_journey_recovers_compatible_transport_shape() -> None:
