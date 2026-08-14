@@ -540,6 +540,27 @@ def test_revision_is_always_reverified_through_same_gateway(tmp_path: Path) -> N
     assert retry_payload["verification_feedback"]["verdict"] == "REVISE"
 
 
+def test_milestone_pipeline_leaves_shared_budget_open_for_next_slice(tmp_path: Path) -> None:
+    intake = IntakeRequest(goal="Create a guide.", max_revision_rounds=1)
+    source = _source()
+    run_dir = _approve(tmp_path, intake, source)
+    gateway = FakeGateway([_analysis(), _draft(), _verification("PASS")])
+
+    result = ExecutionPipeline(
+        run_dir,
+        gateway=gateway,
+        finalize_budget_on_finish=False,
+    ).run(
+        intake=intake,
+        requirements=_requirements(),
+        sources=[source],
+        output_dir=tmp_path / "milestone-output",
+    )
+
+    assert result.status == PipelineStatus.COMPLETE
+    assert BudgetStore(run_dir).read().status in {RunStatus.APPROVED, RunStatus.RUNNING}
+
+
 def test_production_gateway_selects_adk_convergence_without_legacy_writer_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

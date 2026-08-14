@@ -1956,6 +1956,40 @@ def test_unity_visual_preflight_rejects_protected_destination_without_auth_preco
     assert any("precondition-free click test" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_rejects_declared_destination_without_runtime_assertion(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-destination-declaration-only"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'SceneManager.LoadScene("Login"); var startButton = GameObject.Find("StartButton")'
+        ".GetComponent<Button>(); startButton.onClick.Invoke(); "
+        'var receipt = OneBriefAtomicScreenshot.CaptureScenario("lobby", "Lobby", '
+        '"start click", 1, "lobby.png", Camera.main, 1280, 720, canvases); '
+        "OneBriefAtomicScreenshot.WriteManifestAtomically(receipt); } }",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile,
+        clone,
+        "Preserve the authentication/server transition and verify Login -> Lobby.",
+    )
+
+    assert any("must assert the actual destination state" in issue for issue in issues)
+    assert any("precondition-free click test" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_accepts_existing_test_account_authentication_path(
     tmp_path: Path,
 ) -> None:

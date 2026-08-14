@@ -1829,12 +1829,26 @@ class ApprovedProjectDevelopmentToolPack:
                 item for item in tracked if item.casefold() == folded_path
             )
             committed_data = self._blob(head, relative)
-            if committed_data != data:
+            # A clean Windows checkout may materialize CRLF while Git stores
+            # the authoritative blob with LF. Treat newline conversion as the
+            # same tracked text, but reject any other byte-level content drift
+            # before exposing the committed excerpt.
+            local_text = (
+                data.decode("utf-8", errors="replace")
+                .replace("\r\n", "\n")
+                .replace("\r", "\n")
+            )
+            committed_text = (
+                committed_data.decode("utf-8", errors="replace")
+                .replace("\r\n", "\n")
+                .replace("\r", "\n")
+            )
+            if committed_text != local_text:
                 raise RuntimeError(
                     f"diagnostic context changed after clean revision validation: {relative}"
                 )
             data = committed_data
-            text = data.decode("utf-8", errors="replace")
+            text = committed_text
             lines = text.splitlines()
             windows: list[tuple[int, int]] = []
             for _line_score, index in sorted(scored_lines, key=lambda item: (-item[0], item[1])):
@@ -2555,7 +2569,20 @@ class ApprovedProjectDevelopmentToolPack:
             if (
                 preserved_flow_requested
                 and invokes_product_control
-                and asserts_destination
+                and "login" in requested_surfaces
+                and protected_destinations
+                and not asserts_destination
+            ):
+                issues.append(
+                    "protected destination evidence must assert the actual destination state after "
+                    "invoking the shipped product control; a labelled screenshot or declared observed_state "
+                    "does not prove that the requested navigation occurred"
+                )
+            if (
+                preserved_flow_requested
+                and invokes_product_control
+                and "login" in requested_surfaces
+                and protected_destinations
                 and not authentication_precondition
             ):
                 issues.append(

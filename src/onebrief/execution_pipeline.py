@@ -890,6 +890,7 @@ class ExecutionPipeline:
         stage_skills: dict[str, list[str]] | None = None,
         execution_graph: ExecutionGraph | None = None,
         project_registry_root: Path | None = None,
+        finalize_budget_on_finish: bool = True,
     ):
         self.run_dir = run_dir
         self.gateway = gateway or BudgetedGeminiClient(run_dir)
@@ -899,6 +900,11 @@ class ExecutionPipeline:
         self.stage_skills = assigned_skills
         self.execution_graph = execution_graph
         self.project_registry_root = project_registry_root
+        # A standalone pipeline owns the whole run and closes its ledger. A
+        # milestone pipeline is only one slice of a durable run, so the job
+        # orchestrator must keep the shared ledger open until every slice and
+        # the final integration proof have finished.
+        self.finalize_budget_on_finish = finalize_budget_on_finish
         self.analyst = AnalystAgent(
             self.gateway, selected.get("evidence_analysis", "gemini-3.5-flash"), assigned_skills.get("evidence_analysis")
         )
@@ -4863,7 +4869,8 @@ class ExecutionPipeline:
                 output_dir / "temperament_decisions.json",
                 json.dumps(self._temperament_audit(output_dir), ensure_ascii=False, indent=2),
             )
-            BudgetStore(self.run_dir).complete()
+            if self.finalize_budget_on_finish:
+                BudgetStore(self.run_dir).complete()
             self._persist_recoveries(output_dir)
             self._checkpoint(
                 output_dir,

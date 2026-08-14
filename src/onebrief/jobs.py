@@ -476,6 +476,10 @@ def run_job(
                 stage_skills=stage_skills,
                 execution_graph=execution_graph,
                 project_registry_root=registry_root,
+                # The job may execute several milestone pipelines against one
+                # immutable approval. Only the job owns the terminal budget
+                # transition; an individual slice must not close the ledger.
+                finalize_budget_on_finish=False,
             )
 
         persisted_milestone_plan = (
@@ -541,6 +545,7 @@ def run_job(
                 sources=sources,
                 output_dir=job_dir / "work",
             )
+        BudgetStore(run_dir).complete()
         status = _pipeline_status(checkpoint.status)
         from onebrief.evaluation import persist_execution_evaluation
 
