@@ -35,6 +35,7 @@ from onebrief.execution_pipeline import (
     relevant_product_repair_sources,
     product_failure_edit_anchors,
     active_exact_edit_anchors,
+    candidate_first_edit_anchors,
     is_unity_evidence_contract_feedback,
     is_development_product_target_failure,
     missing_unity_evidence_bundle_paths,
@@ -2237,6 +2238,16 @@ def test_runtime_product_failure_uses_one_bounded_exact_repair() -> None:
     ) is True
     assert development_maker_schema_for(report, None) is ExactRepairProjectCodeChangeSet
 
+    anchors = [{
+        "path": "Assets/Scripts/LoginBinder.cs",
+        "anchors": [{
+            "anchor_id": "A0123456789ab",
+            "text": "button.onClick.AddListener(UnsafeTransition);",
+        }],
+    }]
+    selected = development_maker_schema_for(report, None, anchors)
+    assert issubclass(selected, CatalogAnchoredProductRepair)
+
 
 def test_runtime_product_source_discovery_is_bounded_and_phase_safe() -> None:
     sources = [{
@@ -2285,6 +2296,17 @@ def test_runtime_product_source_discovery_is_bounded_and_phase_safe() -> None:
         "path": "Assets/Game/Scripts/Login/LoginController.cs",
         "anchors": [{"anchor_id": "invented", "text": "x"}],
     }]) == anchors
+
+    candidate = [{
+        "path": "Assets/Game/Scripts/Login/LoginController.cs",
+        "anchors": [{"anchor_id": "A111111111111", "text": "unsafe candidate"}],
+    }]
+    merged = candidate_first_edit_anchors(candidate, anchors)
+    assert merged[0] == candidate[0]
+    assert [item["path"] for item in merged] == [
+        "Assets/Game/Scripts/Login/LoginController.cs",
+        "Assets/Game/Scripts/Common/SceneRouter.cs",
+    ]
 
 
 def test_duplicate_unity_screenshot_feedback_requires_capture_at_each_real_state() -> None:

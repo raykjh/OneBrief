@@ -439,6 +439,24 @@ def active_exact_edit_anchors(
     return validated or current
 
 
+def candidate_first_edit_anchors(
+    candidate_catalog: list[dict[str, object]],
+    source_catalog: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Prefer windows from the current candidate over stale HEAD windows."""
+
+    candidate_paths = {
+        str(group.get("path", "")) for group in candidate_catalog
+    }
+    return [
+        *candidate_catalog,
+        *(
+            group for group in source_catalog
+            if str(group.get("path", "")) not in candidate_paths
+        ),
+    ]
+
+
 def unity_evidence_contract_target_allowed(path: str) -> bool:
     """Allow evidence-topology repairs only in the executed PlayMode harness."""
 
@@ -542,7 +560,9 @@ def normalize_atomic_unity_evidence_bundle(raw: object) -> object:
 
 
 def development_maker_schema_for(
-    report: VerificationReport | None, current_payload: object | None,
+    report: VerificationReport | None,
+    current_payload: object | None,
+    exact_edit_anchors: list[dict[str, object]] | None = None,
 ) -> type | None:
     """Select the next bounded software response contract from current state."""
 
@@ -571,6 +591,14 @@ def development_maker_schema_for(
     ):
         return AtomicUnityEvidenceBundle
     if is_development_product_target_failure(feedback):
+        bounded_unity_product_repair = any(marker in normalized_feedback for marker in (
+            "unity_playmode_visual_tests",
+            "unity test failures",
+            "preserved authentication/server journey",
+            "directly to scenemanager.loadscene",
+        ))
+        if exact_edit_anchors and bounded_unity_product_repair:
+            return catalog_bound_product_repair_schema(exact_edit_anchors)
         return ExactRepairProjectCodeChangeSet
     requested_pair = (
         "Unity visual test contract: add a discoverable Unity PlayMode test | "
@@ -2430,12 +2458,22 @@ class ExecutionPipeline:
             if prior_failure.is_file()
             else None
         )
-        exact_edit_anchors = developer.exact_edit_anchors(
+        candidate_edit_anchors = developer.exact_edit_anchors(
             previous_change_set, repair_feedback
         )
+        exact_edit_anchors = candidate_edit_anchors
         if product_target_repair:
-            exact_edit_anchors = product_failure_edit_anchors(
+            source_edit_anchors = product_failure_edit_anchors(
                 prepared_sources, prior_failure_text
+            )
+            # A verifier can reject behavior introduced only in the current
+            # uncommitted candidate.  Candidate windows are then the sole
+            # authoritative selectors for that path; replacing them with
+            # windows from approved HEAD forces a costly full-file rewrite and
+            # can discard prior milestone progress.  Source windows only fill
+            # paths the candidate catalog does not already own.
+            exact_edit_anchors = candidate_first_edit_anchors(
+                candidate_edit_anchors, source_edit_anchors
             )
             anchor_paths = {
                 str(group.get("path", "")) for group in exact_edit_anchors
@@ -3696,23 +3734,10 @@ class ExecutionPipeline:
             report: VerificationReport | None, _ctx, _round_number: int
         ) -> type | None:
             selected = development_maker_schema_for(
-                report, _ctx.session.state.get(MAKER_STATE_KEY)
+                report,
+                _ctx.session.state.get(MAKER_STATE_KEY),
+                _ctx.session.state.get(EXACT_EDIT_ANCHORS_STATE_KEY),
             )
-            feedback = " ".join([
-                *(report.blocking_issues if report else []),
-                *(report.revision_instructions if report else []),
-            ]).casefold()
-            if (
-                selected is ExactRepairProjectCodeChangeSet
-                and _ctx.session.state.get(EXACT_EDIT_ANCHORS_STATE_KEY)
-                and (
-                    "unity_playmode_visual_tests" in feedback
-                    or "unity test failures" in feedback
-                )
-            ):
-                return catalog_bound_product_repair_schema(
-                    _ctx.session.state.get(EXACT_EDIT_ANCHORS_STATE_KEY) or []
-                )
             return selected
         agent = build_text_convergence_agent(
             gateway=self.gateway,
