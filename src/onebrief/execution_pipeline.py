@@ -766,6 +766,12 @@ def development_maker_schema_for(
         if exact_edit_anchors and bounded_unity_product_repair:
             return catalog_bound_product_repair_schema(exact_edit_anchors)
         return ExactRepairProjectCodeChangeSet
+    if (
+        exact_edit_anchors
+        and "existing file was not included in approved model context"
+        in normalized_feedback
+    ):
+        return catalog_bound_product_repair_schema(exact_edit_anchors)
     requested_pair = (
         "Unity visual test contract: add a discoverable Unity PlayMode test | "
         "Unity visual test contract: add a Unity test .asmdef"
@@ -2237,6 +2243,7 @@ class ExecutionPipeline:
                 "protected destination evidence",
                 "precondition-free click test",
                 "inspect the approved repository context",
+                "existing file was not included in approved model context",
             )):
                 return []
             context = development_pack.inspect_diagnostic_context(
@@ -2521,7 +2528,9 @@ class ExecutionPipeline:
             )
             return plan
 
-        maker_sources = prepared_sources
+        # Provider-visible context must stay separate from full trusted
+        # baselines loaded later for anchored promotion of a large source.
+        maker_sources = list(prepared_sources)
         prior_failure = output_dir / "development_verification_failure.txt"
         prior_failure_text = (
             prior_failure.read_text("utf-8") if prior_failure.is_file() else ""
@@ -3389,9 +3398,93 @@ class ExecutionPipeline:
                             )
                         ]
                     })
-            candidate = self._bind_project_change_set(
-                intake, development_pack, candidate, output_dir
-            )
+            try:
+                candidate = self._bind_project_change_set(
+                    intake, development_pack, candidate, output_dir
+                )
+            except PermissionError as exc:
+                feedback = " ".join(str(exc).split())
+                if (
+                    not isinstance(development_pack, ApprovedProjectDevelopmentToolPack)
+                    or "existing file was not included in approved model context"
+                    not in feedback.casefold()
+                ):
+                    raise
+                proposed_existing_paths = list(dict.fromkeys(re.findall(
+                    r"approved model context:\s*([^\s|]+)",
+                    feedback,
+                    re.IGNORECASE,
+                )))
+                if not proposed_existing_paths:
+                    raise
+                for path in proposed_existing_paths:
+                    baseline = development_pack.trusted_promotion_source(path)
+                    if not any(
+                        str(item.get("repository_path", "")) == path
+                        for item in prepared_sources
+                    ):
+                        prepared_sources.append(baseline)
+                diagnostic = development_pack.inspect_diagnostic_context(
+                    output_dir / "diagnostic_repository_context" / f"r{round_number:02d}",
+                    feedback + " | " + json.dumps(contract, ensure_ascii=False),
+                )
+                current_exact_edit_anchors = [
+                    {
+                        "path": str(item["path"]),
+                        "anchors": list(item.get("anchors", [])),
+                    }
+                    for item in diagnostic
+                    if item.get("anchors")
+                    and str(item.get("path", "")) in proposed_existing_paths
+                ]
+                if not current_exact_edit_anchors:
+                    raise
+                _ctx.session.state[MAKER_DIAGNOSTIC_CONTEXT_STATE_KEY] = diagnostic
+                _ctx.session.state[EXACT_EDIT_ANCHORS_STATE_KEY] = current_exact_edit_anchors
+                convergence_contract = record_convergence_failure(
+                    context="development_candidate_promotion",
+                    failure_text=feedback,
+                    attempt_number=round_number + 1,
+                    execution_round=round_number,
+                    affected_paths=proposed_existing_paths,
+                    strategy_fingerprint=development_change_strategy_fingerprint(raw),
+                )
+                if not convergence_contract.execution_allowed:
+                    raise RuntimeError(
+                        "convergence progress gate blocked a non-learning source-binding repair: "
+                        + convergence_contract.rationale
+                    ) from exc
+                report = VerificationReport(
+                    verdict=Verdict.REVISE,
+                    criterion_checks=[{
+                        "criterion": "Safe structural edit promotion",
+                        "passed": False,
+                        "evidence": feedback,
+                    }],
+                    blocking_issues=[feedback],
+                    revision_instructions=[
+                        "Select one supplied exact_edit_anchors ID and replace only that displayed committed source window.",
+                        "Do not return the complete existing file or request broader authority.",
+                    ],
+                    missing_information=[],
+                )
+                repair_plan = prepare_repair(report, round_number)
+                return {
+                    MAKER_STATE_KEY: (
+                        previous_change_set.model_dump(mode="json")
+                        if previous_change_set is not None
+                        else raw.model_dump(mode="json")
+                        if isinstance(raw, BaseModel)
+                        else raw
+                    ),
+                    VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
+                    **({
+                        REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
+                    } if repair_plan is not None else {}),
+                    REPAIR_CONTRACT_STATE_KEY: convergence_contract.model_dump(mode="json"),
+                    EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
+                    SKIP_VERIFIER_STATE_KEY: True,
+                }
             if (
                 prior_candidate is not None
                 and not reverify_existing

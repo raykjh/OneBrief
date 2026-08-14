@@ -1927,6 +1927,18 @@ class ApprovedProjectDevelopmentToolPack:
                 "sha256": hashlib.sha256(data).hexdigest(),
                 "source_role": "read_only_diagnostic_context",
                 "content_excerpt": excerpt,
+                "anchors": [
+                    {
+                        "anchor_id": "A" + hashlib.sha256(
+                            (relative + "\0" + "\n".join(lines[start:end])).encode("utf-8")
+                        ).hexdigest()[:12],
+                        "start_line": start + 1,
+                        "end_line": end,
+                        "text": "\n".join(lines[start:end]),
+                    }
+                    for start, end in windows
+                    if "\n".join(lines[start:end]).strip()
+                ],
             }
             records.append(record)
             total_chars += len(excerpt)
@@ -1952,6 +1964,25 @@ class ApprovedProjectDevelopmentToolPack:
         )
         os.replace(temporary, output_dir / "manifest.json")
         return records
+
+    def trusted_promotion_source(self, path: str) -> dict[str, object]:
+        """Load one exact approved baseline without exposing the full file to the model."""
+
+        normalized = self.approved_edit_path(path)
+        if normalized is None:
+            raise PermissionError(f"path is outside the approved project source area: {path}")
+        _profile, head = self._validate_root()
+        data = self._blob(head, normalized)
+        if len(data) > 1_500_000:
+            raise ValueError(f"approved source is too large for bounded promotion: {normalized}")
+        return {
+            "name": f"project-source/{normalized}",
+            "repository_path": normalized,
+            "source_revision": head,
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "source_role": "trusted_promotion_baseline",
+            "content": data.decode("utf-8", errors="replace"),
+        }
 
     def _commands(
         self, profile, clone: Path, goal_text: str

@@ -2760,6 +2760,24 @@ def test_runtime_product_failure_uses_one_bounded_exact_repair() -> None:
     assert issubclass(selected, CatalogAnchoredProductRepair)
 
 
+def test_unseen_large_source_binding_uses_catalog_anchored_repair() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "existing file was not included in approved model context: "
+        "Assets/JULPAE/Scripts/Lobby/LobbyPopupController.cs"
+    )
+    anchors = [{
+        "path": "Assets/JULPAE/Scripts/Lobby/LobbyPopupController.cs",
+        "anchors": [{
+            "anchor_id": "A0123456789ab",
+            "text": "private void BindSettings() {}",
+        }],
+    }]
+
+    selected = development_maker_schema_for(report, None, anchors)
+
+    assert issubclass(selected, CatalogAnchoredProductRepair)
+
+
 def test_runtime_product_source_discovery_is_bounded_and_phase_safe() -> None:
     sources = [{
         "repository_path": "Assets/Game/Scripts/Common/SceneRouter.cs",

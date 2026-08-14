@@ -667,6 +667,14 @@ def test_diagnostic_context_discovers_existing_auth_fixture_without_edit_authori
     assert matched["source_role"] == "read_only_diagnostic_context"
     assert "repository_path" not in matched
     assert "directEnterButton" in matched["content_excerpt"]
+    assert matched["anchors"]
+    assert matched["anchors"][0]["anchor_id"].startswith("A")
+    baseline = ApprovedProjectDevelopmentToolPack(
+        "generic-node", registry
+    ).trusted_promotion_source("src/Login/AuthenticationController.js")
+    assert baseline["source_role"] == "trusted_promotion_baseline"
+    assert baseline["repository_path"] == "src/Login/AuthenticationController.js"
+    assert "createAuthenticatedSession" in baseline["content"]
     manifest = json.loads((tmp_path / "diagnostic" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["read_only"] is True
 
