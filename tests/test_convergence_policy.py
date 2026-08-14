@@ -124,6 +124,22 @@ def test_batchmode_system_framebuffer_readback_is_evidence_topology() -> None:
     assert observation.layer == FailureLayer.EVIDENCE_TOPOLOGY
 
 
+def test_missing_authentication_precondition_is_evidence_topology_not_product() -> None:
+    observation = ConvergencePolicy().observe(
+        context="development_verification",
+        failure_text=(
+            "Unity visual test contract: protected destination evidence must establish an "
+            "approved authenticated/test state or exercise the complete authentication UI; "
+            "a precondition-free click test must not drive product navigation repairs"
+        ),
+        attempt_number=1,
+        affected_paths=["Assets/Tests/PlayMode/LoginFlowTest.cs"],
+    )
+
+    assert observation.layer == FailureLayer.EVIDENCE_TOPOLOGY
+    assert observation.owner == FailureOwner.EVIDENCE
+
+
 def test_unchanged_requested_unity_locale_is_a_semantic_product_failure() -> None:
     observation = ConvergencePolicy().observe(
         context="development_verification",

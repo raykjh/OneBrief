@@ -166,6 +166,49 @@ def requested_ui_transition(text: str) -> list[str]:
     return max(normalized_chains, key=len)
 
 
+def responsive_unity_viewport_issue(
+    measured: list[tuple[int, int]], goal_text: str
+) -> str | None:
+    """Explain why viewport evidence cannot prove the requested responsive UI.
+
+    Mobile Unity products are not necessarily portrait applications. A generic
+    mobile/desktop contract therefore requires two materially different
+    viewport shapes, while an explicitly requested orientation remains
+    binding.
+    """
+
+    viewports = sorted({
+        (width, height)
+        for width, height in measured
+        if width >= 16 and height >= 16
+    })
+    if len(viewports) < 2:
+        return (
+            "responsive Unity visual evidence must define and capture two measured "
+            "viewport shapes for the requested mobile and desktop surfaces"
+        )
+    lowered = goal_text.casefold()
+    portrait_requested = bool(re.search(r"(?:\bportrait\b|세로)", lowered))
+    landscape_requested = bool(re.search(r"(?:\blandscape\b|가로)", lowered))
+    if portrait_requested and not any(width < height for width, height in viewports):
+        return (
+            "responsive Unity visual evidence explicitly requests portrait coverage but "
+            "does not include a measured portrait viewport"
+        )
+    if landscape_requested and not any(width > height for width, height in viewports):
+        return (
+            "responsive Unity visual evidence explicitly requests landscape coverage but "
+            "does not include a measured landscape viewport"
+        )
+    aspect_ratios = [width / height for width, height in viewports]
+    if max(aspect_ratios) - min(aspect_ratios) < 0.10:
+        return (
+            "responsive Unity visual evidence reuses effectively the same viewport shape; "
+            "capture materially different mobile and desktop aspect ratios"
+        )
+    return None
+
+
 def _contains_ordered_surface_journey(observed: list[str], requested: list[str]) -> bool:
     if not requested:
         return True
@@ -395,12 +438,9 @@ def validate_and_copy_unity_visual_evidence(
             for item in manifest.scenarios
             if item.viewport_width is not None and item.viewport_height is not None
         ]
-        if not any(width < height for width, height in measured) or not any(
-            width >= height for width, height in measured
-        ):
-            raise RuntimeError(
-                "Unity visual evidence must include measured mobile/portrait and desktop/landscape captures"
-            )
+        viewport_issue = responsive_unity_viewport_issue(measured, goal_text)
+        if viewport_issue:
+            raise RuntimeError(viewport_issue)
 
     destination.mkdir(parents=True, exist_ok=True)
     shutil.copy2(results_path, destination / "test-results.xml")

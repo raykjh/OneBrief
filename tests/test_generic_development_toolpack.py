@@ -1558,7 +1558,7 @@ def test_unity_visual_preflight_rejects_overlay_ui_rendered_without_canvas_routi
     assert any("does not capture ScreenSpaceOverlay UI" in issue for issue in issues)
 
 
-def test_unity_visual_preflight_requires_portrait_and_landscape_evidence(
+def test_unity_visual_preflight_requires_two_distinct_responsive_viewports(
     tmp_path: Path,
 ) -> None:
     _root, registry = _approved_node_project(tmp_path)
@@ -1585,7 +1585,7 @@ def test_unity_visual_preflight_requires_portrait_and_landscape_evidence(
         "Modernize the Unity UI and verify it on mobile and desktop.",
     )
 
-    assert any("mobile/portrait viewport" in issue for issue in issues)
+    assert any("two measured viewport shapes" in issue for issue in issues)
 
 
 def test_unity_visual_preflight_accepts_paired_measured_viewport_arrays(
@@ -1620,7 +1620,40 @@ def test_unity_visual_preflight_accepts_paired_measured_viewport_arrays(
         "Modernize the Unity UI and verify it on mobile and desktop.",
     )
 
-    assert not any("mobile/portrait viewport" in issue for issue in issues)
+    assert not any("responsive Unity visual evidence" in issue for issue in issues)
+
+
+def test_unity_visual_preflight_accepts_mobile_landscape_and_desktop_viewports(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    tests = tmp_path / "unity-landscape-responsive" / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'UnityEngine.SceneManagement.SceneManager.LoadScene("Lobby"); '
+        'var desktop = OneBriefAtomicScreenshot.CaptureScenario("desktop", "Lobby desktop", '
+        '"load", 1, "desktop.png", Camera.main, 1280, 720, canvases); '
+        'var mobile = OneBriefAtomicScreenshot.CaptureScenario("mobile", "Lobby mobile landscape", '
+        '"resize", 1, "mobile.png", Camera.main, 2340, 1080, canvases); '
+        "OneBriefAtomicScreenshot.WriteManifestAtomically(desktop, mobile); } }",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile,
+        tests.parents[2],
+        "Modernize the Unity UI and verify it on mobile and desktop landscape.",
+    )
+
+    assert not any("responsive Unity visual evidence" in issue for issue in issues)
 
 
 def test_unity_visual_preflight_requires_exact_real_settings_scene(tmp_path: Path) -> None:
@@ -1851,6 +1884,78 @@ def test_unity_visual_preflight_rejects_direct_destination_load_after_click(
     )
 
     assert any("must not directly load the destination scene after invoking" in issue for issue in issues)
+
+
+def test_unity_visual_preflight_rejects_protected_destination_without_auth_precondition(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-auth-precondition-missing"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'SceneManager.LoadScene("Login"); var startButton = GameObject.Find("StartButton")'
+        ".GetComponent<Button>(); startButton.onClick.Invoke(); "
+        'Assert.AreEqual("Lobby", SceneManager.GetActiveScene().name); '
+        'var receipt = OneBriefAtomicScreenshot.CaptureScenario("lobby", "Lobby", '
+        '"start click", 1, "lobby.png", Camera.main, 1280, 720, canvases); '
+        "OneBriefAtomicScreenshot.WriteManifestAtomically(receipt); } }",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile,
+        clone,
+        "Preserve the authentication/server transition and verify Login -> Lobby.",
+    )
+
+    assert any("protected destination evidence" in issue for issue in issues)
+    assert any("precondition-free click test" in issue for issue in issues)
+
+
+def test_unity_visual_preflight_accepts_existing_test_account_authentication_path(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-auth-precondition-present"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    tests.mkdir(parents=True)
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'SceneManager.LoadScene("Login"); var testAccountDropdown = '
+        'GameObject.Find("TestAccountDropdown").GetComponent<TMP_Dropdown>(); '
+        "testAccountDropdown.value = 0; var directEnterButton = "
+        'GameObject.Find("DirectEnterButton").GetComponent<Button>(); '
+        "directEnterButton.onClick.Invoke(); "
+        'Assert.AreEqual("Lobby", SceneManager.GetActiveScene().name); '
+        'var receipt = OneBriefAtomicScreenshot.CaptureScenario("lobby", "Lobby", '
+        '"test account authenticated login", 1, "lobby.png", Camera.main, 1280, 720, canvases); '
+        "OneBriefAtomicScreenshot.WriteManifestAtomically(receipt); } }",
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile,
+        clone,
+        "Preserve the authentication/server transition and verify Login -> Lobby.",
+    )
+
+    assert not any("protected destination evidence" in issue for issue in issues)
 
 
 def test_unity_visual_preflight_requires_one_atomic_manifest_for_all_scenarios(

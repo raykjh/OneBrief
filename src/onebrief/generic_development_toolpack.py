@@ -42,6 +42,7 @@ from onebrief.handoff_protocol import (
 from onebrief.unity_runtime_evidence import (
     requested_ui_surfaces,
     requested_ui_transition,
+    responsive_unity_viewport_issue,
     validate_and_copy_unity_visual_evidence,
 )
 from onebrief.unity_layout_diagnostics import (
@@ -114,6 +115,16 @@ def _declared_unity_viewports(source: str) -> list[tuple[int, int]]:
         for width, height in re.findall(
             r"\b[A-Za-z_][A-Za-z0-9_]*(?:capture|screenshot)[A-Za-z0-9_]*\s*\(\s*"
             r'"[^"\r\n]*\.png"\s*,\s*(\d{2,5})\s*,\s*(\d{2,5})\s*\)',
+            source,
+            re.IGNORECASE,
+        )
+    )
+    measured.extend(
+        (int(width), int(height))
+        for width, height in re.findall(
+            r"capturescenario\s*\(\s*\"[^\"\r\n]+\"\s*,\s*\"[^\"\r\n]+\"\s*,\s*"
+            r"\"[^\"\r\n]+\"\s*,\s*\d+\s*,\s*\"[^\"\r\n]+\.png\"\s*,\s*"
+            r"[^,()]+\s*,\s*(\d{2,5})\s*,\s*(\d{2,5})\s*,",
             source,
             re.IGNORECASE,
         )
@@ -1885,6 +1896,20 @@ class ApprovedProjectDevelopmentToolPack:
                 test_sources.append(content)
 
         issues: list[str] = []
+        preserved_flow_requested = bool(
+            re.search(
+                r"(?:\bpreserv(?:e|es|ed|ing)\b|보존|유지).{0,140}?"
+                r"(?:auth(?:entication)?|server|network|communication|transition|인증|서버|통신|전환)",
+                intent_text,
+                re.IGNORECASE | re.DOTALL,
+            )
+            or re.search(
+                r"(?:auth(?:entication)?|server|network|communication|transition|인증|서버|통신|전환)"
+                r".{0,140}?(?:\bpreserv(?:e|es|ed|ing)\b|보존|유지)",
+                intent_text,
+                re.IGNORECASE | re.DOTALL,
+            )
+        )
         if changed_paths and re.search(
             r"(?:\bui\b|screen|visual|layout|responsive|surface|scene|transition|"
             r"navigation|login|lobby|settings|로그인|로비|설정|화면|장면|전환)",
@@ -1902,20 +1927,6 @@ class ApprovedProjectDevelopmentToolPack:
                     "under the approved project source before claiming UI modernization"
                 )
             else:
-                preserved_flow_requested = bool(
-                    re.search(
-                        r"(?:\bpreserv(?:e|es|ed|ing)\b|보존|유지).{0,140}?"
-                        r"(?:auth(?:entication)?|server|network|communication|transition|인증|서버|통신|전환)",
-                        intent_text,
-                        re.IGNORECASE | re.DOTALL,
-                    )
-                    or re.search(
-                        r"(?:auth(?:entication)?|server|network|communication|transition|인증|서버|통신|전환)"
-                        r".{0,140}?(?:\bpreserv(?:e|es|ed|ing)\b|보존|유지)",
-                        intent_text,
-                        re.IGNORECASE | re.DOTALL,
-                    )
-                )
                 direct_click_route = re.compile(
                     r"\.\s*onClick\s*\.\s*AddListener\s*\(.{0,900}?"
                     r"(?:UnityEngine\s*\.\s*SceneManagement\s*\.\s*)?"
@@ -2161,13 +2172,9 @@ class ApprovedProjectDevelopmentToolPack:
             )
             if responsive_requested:
                 measured = _declared_unity_viewports(combined_source)
-                if not any(width < height for width, height in measured) or not any(
-                    width >= height for width, height in measured
-                ):
-                    issues.append(
-                        "responsive Unity visual evidence must define and capture both a measured "
-                        "mobile/portrait viewport and a desktop/landscape viewport before PlayMode execution"
-                    )
+                viewport_issue = responsive_unity_viewport_issue(measured, intent_text)
+                if viewport_issue:
+                    issues.append(viewport_issue + " before PlayMode execution")
                 if (
                     "screen.setresolution" in structural
                     and _uses_screen_sized_render_target(structural)
@@ -2285,6 +2292,39 @@ class ApprovedProjectDevelopmentToolPack:
                         + "; alternatively reach it through a real UI action and assert the active scene"
                     )
             requested_surfaces = requested_ui_surfaces(intent_text)
+            requested_transition = requested_ui_transition(intent_text)
+            invokes_product_control = any(token in structural for token in (
+                ".onclick.invoke", "executeevents.execute", "pointerclickevent",
+                "submitevent",
+            ))
+            asserts_destination = bool(
+                len(requested_transition) >= 2
+                and re.search(r"\bAssert\s*\.", structural, re.IGNORECASE)
+                and any(surface in combined for surface in requested_transition[1:])
+            )
+            authentication_precondition = bool(
+                re.search(
+                    r"(?:dev(?:elopment)?|test|mock)[a-z0-9_]*(?:account|user|profile|login|auth|session)"
+                    r"|(?:account|user|profile|login|auth|session)[a-z0-9_]*(?:dev|test|mock)"
+                    r"|directenter|authenticated|authenticate|signin|sign_in|"
+                    r"setauth|createsession|sessiontoken|userkey|acceptterms|termscheckbox|"
+                    r"username|emailfield|passwordfield",
+                    structural,
+                    re.IGNORECASE,
+                )
+            )
+            if (
+                preserved_flow_requested
+                and invokes_product_control
+                and asserts_destination
+                and not authentication_precondition
+            ):
+                issues.append(
+                    "protected destination evidence must establish an approved authenticated/test state "
+                    "or exercise the complete authentication UI before asserting the destination; a "
+                    "precondition-free click test can misclassify a valid product journey and must not "
+                    "drive product navigation repairs"
+                )
             # Invoking ``Button.onClick`` is not proof when the test first
             # deletes the product listeners or installs its own destination
             # loader. Reject that evidence bypass before another Unity import.
@@ -2380,7 +2420,6 @@ class ApprovedProjectDevelopmentToolPack:
                             "was invoked before that evidence row; do not relabel a direct scene load as a click"
                         )
                         break
-            requested_transition = requested_ui_transition(intent_text)
             if requested_transition and literal_scenarios and not _contains_ordered_literals(
                 [state for state, _interaction, _start, _end in literal_scenarios],
                 requested_transition,

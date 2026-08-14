@@ -62,6 +62,36 @@ namespace OneBrief.Visual
             public float planeDistance;
         }
 
+        private static void RequireDeterministicVisualSignal(Texture2D texture)
+        {
+            var colors = new HashSet<uint>();
+            float minimumLuminance = 1f;
+            float maximumLuminance = 0f;
+            int visibleSamples = 0;
+            int columns = Math.Min(32, texture.width);
+            int rows = Math.Min(18, texture.height);
+            for (int y = 0; y < rows; y++)
+            {
+                int sampleY = Math.Min(texture.height - 1, (y * texture.height) / rows);
+                for (int x = 0; x < columns; x++)
+                {
+                    int sampleX = Math.Min(texture.width - 1, (x * texture.width) / columns);
+                    Color32 pixel = texture.GetPixel(sampleX, sampleY);
+                    if (pixel.a < 8) continue;
+                    visibleSamples++;
+                    uint key = ((uint)pixel.r << 24) | ((uint)pixel.g << 16)
+                        | ((uint)pixel.b << 8) | pixel.a;
+                    colors.Add(key);
+                    float luminance = (0.2126f * pixel.r + 0.7152f * pixel.g + 0.0722f * pixel.b) / 255f;
+                    minimumLuminance = Math.Min(minimumLuminance, luminance);
+                    maximumLuminance = Math.Max(maximumLuminance, luminance);
+                }
+            }
+            if (visibleSamples < 4 || (colors.Count < 4 && maximumLuminance - minimumLuminance < 0.08f))
+                throw new InvalidOperationException(
+                    "Rendered PNG is blank or has no deterministic visual signal.");
+        }
+
         public static CaptureReceipt Capture(
             string relativePath,
             Camera sceneCamera,
@@ -116,6 +146,7 @@ namespace OneBrief.Visual
                 sceneCamera.Render();
                 texture.ReadPixels(new Rect(0, 0, width, height), 0, 0, false);
                 texture.Apply(false, false);
+                RequireDeterministicVisualSignal(texture);
                 byte[] png = ImageConversion.EncodeToPNG(texture);
                 if (png == null || png.Length < 1024)
                     throw new InvalidOperationException("Rendered PNG is empty or too small.");

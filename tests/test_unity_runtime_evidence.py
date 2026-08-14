@@ -206,6 +206,43 @@ def test_general_unity_ui_evidence_does_not_require_fake_locale_fields(tmp_path:
     assert summary.observed_states == ["lobby-desktop", "login-mobile", "settings-desktop"]
 
 
+def test_responsive_unity_evidence_accepts_mobile_landscape(tmp_path: Path) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results)
+    write_evidence(tmp_path, [
+        ui_scenario("login-desktop", width=1280, height=720),
+        ui_scenario("lobby-mobile-landscape", width=2340, height=1080, interaction="login click"),
+    ])
+
+    summary = validate_and_copy_unity_visual_evidence(
+        tmp_path,
+        results,
+        tmp_path / "packaged",
+        "Modernize login and lobby UI for mobile and desktop landscape.",
+    )
+
+    assert summary.scenario_count == 2
+
+
+def test_responsive_unity_evidence_rejects_same_aspect_ratio_at_two_resolutions(
+    tmp_path: Path,
+) -> None:
+    results = tmp_path / "results.xml"
+    write_results(results)
+    write_evidence(tmp_path, [
+        ui_scenario("login-desktop", width=1280, height=720),
+        ui_scenario("lobby-mobile", width=1920, height=1080, interaction="login click"),
+    ])
+
+    with pytest.raises(RuntimeError, match="same viewport shape"):
+        validate_and_copy_unity_visual_evidence(
+            tmp_path,
+            results,
+            tmp_path / "packaged",
+            "Modernize login and lobby UI for mobile and desktop.",
+        )
+
+
 def test_general_unity_ui_evidence_requires_every_requested_surface(tmp_path: Path) -> None:
     results = tmp_path / "results.xml"
     write_results(results)
