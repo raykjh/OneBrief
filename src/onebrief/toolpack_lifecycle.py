@@ -89,6 +89,8 @@ class ApprovedRuntimeArgument(BaseModel):
     value: Literal["onebrief-evidence"]
     source_paths: list[str] = Field(min_length=2, max_length=2)
     source_digest_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    authentication_selector: Literal["DevPanel/TestAccountDropdown"] | None = None
+    authentication_submit: Literal["DevPanel/DirectEnterButton"] | None = None
 
     @model_validator(mode="after")
     def validate_allowlisted_sources(self) -> "ApprovedRuntimeArgument":
@@ -98,6 +100,8 @@ class ApprovedRuntimeArgument(BaseModel):
         ]
         if self.source_paths != expected:
             raise ValueError("runtime argument sources are not on the trusted allowlist")
+        if (self.authentication_selector is None) != (self.authentication_submit is None):
+            raise ValueError("runtime authentication controls must be bound as one complete pair")
         return self
 
 
@@ -335,12 +339,25 @@ class ProjectToolPackLifecycle:
             digest.update(b"\0")
             digest.update(blob)
             digest.update(b"\0")
+        authentication_controls = (
+            (
+                "DevPanel/TestAccountDropdown",
+                "DevPanel/DirectEnterButton",
+            )
+            if all(token in login_source for token in (
+                '"DevPanel/TestAccountDropdown"',
+                '"DevPanel/DirectEnterButton"',
+            ))
+            else (None, None)
+        )
         return [ApprovedRuntimeArgument(
             adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
             argument="--julpae-recording-profile",
             value="onebrief-evidence",
             source_paths=source_paths,
             source_digest_sha256=digest.hexdigest(),
+            authentication_selector=authentication_controls[0],
+            authentication_submit=authentication_controls[1],
         )]
 
     def generate_and_qualify(self) -> ToolPackLifecycleState:

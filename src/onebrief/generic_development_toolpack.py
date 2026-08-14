@@ -2636,6 +2636,31 @@ class ApprovedProjectDevelopmentToolPack:
                     re.IGNORECASE,
                 )
             )
+            recording_authentication_contracts = [
+                (str(selector), str(submit))
+                for binding in getattr(profile, "runtime_arguments", [])
+                if (
+                    (selector := getattr(binding, "authentication_selector", None))
+                    and (submit := getattr(binding, "authentication_submit", None))
+                )
+            ]
+            if (
+                preserved_flow_requested
+                and invokes_product_control
+                and "login" in requested_surfaces
+                and protected_destinations
+                and recording_authentication_contracts
+            ):
+                selector, submit = recording_authentication_contracts[0]
+                selector_at = structural.find(selector.casefold())
+                submit_at = structural.find(submit.casefold())
+                if selector_at < 0 or submit_at <= selector_at:
+                    issues.append(
+                        "protected destination evidence under the approved recording profile must "
+                        f"execute its committed authentication contract in order: {selector} -> {submit}; "
+                        "a different onboarding or generic Start path is not the ToolPack-bound "
+                        "deterministic authentication fixture"
+                    )
             if (
                 preserved_flow_requested
                 and invokes_product_control

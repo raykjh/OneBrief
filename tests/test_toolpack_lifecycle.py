@@ -132,7 +132,9 @@ def test_julpae_recording_argument_is_bound_to_committed_source_and_approval_dig
     )
     (login / "LoginSceneController.cs").write_text(
         "class LoginSceneController { bool Enabled() => "
-        "JulpaeRecordingProfile.HasDevOrRecordingCommandLineArgs(); }\n",
+        "JulpaeRecordingProfile.HasDevOrRecordingCommandLineArgs(); "
+        'string Selector = "DevPanel/TestAccountDropdown"; '
+        'string Submit = "DevPanel/DirectEnterButton"; }\n',
         encoding="utf-8",
     )
     _git(root, "add", "Assets/JULPAE")
@@ -153,6 +155,8 @@ def test_julpae_recording_argument_is_bound_to_committed_source_and_approval_dig
             "Assets/JULPAE/Scripts/Login/LoginSceneController.cs",
         ],
         "source_digest_sha256": state.generated.runtime_arguments[0].source_digest_sha256,
+        "authentication_selector": "DevPanel/TestAccountDropdown",
+        "authentication_submit": "DevPanel/DirectEnterButton",
     }]
     assert lifecycle.approve(state.generated.sha256).execution_ready is True
 

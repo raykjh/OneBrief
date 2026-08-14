@@ -1459,6 +1459,16 @@ class ExecutionPipeline:
                     "create any replacement control inside the test."
                 )
             if (
+                "approved recording profile" in lowered
+                and "committed authentication contract" in lowered
+            ):
+                return (
+                    "Use the exact ToolPack-bound deterministic authentication journey named in the "
+                    "failure: select DevPanel/TestAccountDropdown, then click "
+                    "DevPanel/DirectEnterButton, wait for the shipped Lobby scene, and capture it. "
+                    "Do not substitute StartButton, terms onboarding, direct scene loading, or product edits."
+                )
+            if (
                 "protected destination evidence" in lowered
                 or "precondition-free click test" in lowered
             ):
