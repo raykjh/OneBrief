@@ -8,6 +8,7 @@ from onebrief.unity_semantic_observation import (
     UnitySemanticObservation,
     contract_requires_strict_visual_quality,
     observe_unity_visual_evidence,
+    semantic_observation_contract,
 )
 
 
@@ -152,3 +153,26 @@ def test_behavioral_observation_prompt_does_not_expand_to_visual_milestone(
     prompt = str(gateway.calls[0]["contents"])
     assert "bounded Quest" in prompt
     assert "do not fail pre-existing style" in prompt
+
+
+def test_behavioral_observation_excludes_advisory_whole_project_architecture() -> None:
+    contract = {
+        "goal": "Login reaches Lobby.",
+        "completion_contract": {"quality_criteria": [{
+            "criterion_id": "Q91",
+            "description": "Login transition works.",
+        }]},
+        "project_architecture": {
+            "directive": "Implement the future S02 visual redesign now."
+        },
+        "assumptions": ["Whole-project preference context."],
+    }
+
+    bounded = semantic_observation_contract(contract, strict_visual_quality=False)
+
+    assert bounded["goal"] == "Login reaches Lobby."
+    assert "project_architecture" not in bounded
+    assert "assumptions" not in bounded
+    assert semantic_observation_contract(
+        contract, strict_visual_quality=True
+    ) is contract

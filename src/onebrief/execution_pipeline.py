@@ -149,6 +149,7 @@ from onebrief.toolpacks import execute_toolpacks
 from onebrief.unity_semantic_observation import (
     contract_requires_strict_visual_quality,
     observe_unity_visual_evidence,
+    semantic_observation_contract,
 )
 from onebrief.unity_layout_diagnostics import compact_unity_layout_diagnostic_context
 from onebrief.unity_evidence_plan import (
@@ -1156,6 +1157,9 @@ class ExecutionPipeline:
             unity_evidence = development_dir / "unity_visual_evidence"
             if unity_evidence.is_dir():
                 strict_visual_quality = contract_requires_strict_visual_quality(contract)
+                observation_contract = semantic_observation_contract(
+                    contract, strict_visual_quality=strict_visual_quality
+                )
                 try:
                     observe_unity_visual_evidence(
                         self.gateway,
@@ -1168,7 +1172,7 @@ class ExecutionPipeline:
                             / "independent_observations"
                             / "unity_ui_observation.json"
                         ),
-                        goal_text=json.dumps(contract, ensure_ascii=False),
+                        goal_text=json.dumps(observation_contract, ensure_ascii=False),
                         strict_visual_quality=strict_visual_quality,
                     )
                 except RuntimeError as exc:
@@ -4176,7 +4180,10 @@ class ExecutionPipeline:
                 "project_architecture",
                 {"contract": contract, "sources": source_payload},
             )
-            if architecture is not None:
+            quest_bound = any(
+                "active_quest" in source.requirement_keys for source in sources
+            )
+            if architecture is not None and not quest_bound:
                 contract["project_architecture"] = architecture.model_dump(mode="json")
 
             public_research: PublicResearchResult | None = None

@@ -54,6 +54,25 @@ def contract_requires_strict_visual_quality(contract: dict[str, object]) -> bool
     return False
 
 
+def semantic_observation_contract(
+    contract: dict[str, object], *, strict_visual_quality: bool,
+) -> dict[str, object]:
+    """Remove advisory whole-project material from a bounded behavioral review."""
+
+    if strict_visual_quality:
+        return contract
+    allowed = (
+        "goal",
+        "desired_output",
+        "output_target",
+        "normalized_goal",
+        "deliverables",
+        "acceptance_criteria",
+        "completion_contract",
+    )
+    return {key: contract[key] for key in allowed if key in contract}
+
+
 class UnityFrameObservation(BaseModel):
     artifact_path: str
     visible_text_samples: list[str] = Field(default_factory=list, max_length=40)
