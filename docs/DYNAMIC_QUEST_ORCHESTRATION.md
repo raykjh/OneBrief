@@ -1,6 +1,6 @@
 # Dynamic Quest orchestration
 
-OneBrief keeps the approved `MilestonePlan` as the project skeleton, but it no
+KHALINOS keeps the approved `MilestonePlan` as the project skeleton, but it no
 longer treats every future slice as an immediately executable instruction.  A
 single digest-bound Quest is the only active unit of work.
 
@@ -13,7 +13,7 @@ single digest-bound Quest is the only active unit of work.
    `QuestContract`.
 4. The accountable maker executes that contract inside the approved ToolPack
    write prefixes and budget allocation.
-5. An independent verifier produces executable evidence. OneBrief derives a
+5. An independent verifier produces executable evidence. KHALINOS derives a
    `QuestVerificationReceipt` from the Completion Ledger, final verification,
    and execution checkpoint.
 6. A PASS receipt closes the Quest and becomes the input checkpoint for the next

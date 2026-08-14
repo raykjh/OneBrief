@@ -2,8 +2,9 @@
 
 ## New hackathon work
 
-OneBrief was created on 2026-08-05 during the All Things Agentic Hackathon submission
-period. The OneBrief orchestration system, ADK agents, budget gateway, ToolPack lifecycle,
+KHALINOS, developed under the internal codename OneBrief, was created on 2026-08-05
+during the All Things Agentic Hackathon submission period. The KHALINOS orchestration
+system, ADK agents, budget gateway, ToolPack lifecycle,
 isolated execution workflow, verification gates, web interface, Cloud Run job transport,
 and result packaging are hackathon-period work.
 
@@ -24,14 +25,14 @@ budget estimate and enforced by the same immutable execution gateway.
 
 Exchange and JULPAE are pre-existing projects owned by the entrant. They are not submitted
 as new hackathon products. When used in a demonstration, they serve only as existing-project
-inputs that prove OneBrief can inspect an approved repository, generate a bounded ToolPack,
+inputs that prove KHALINOS can inspect an approved repository, generate a bounded ToolPack,
 edit an isolated copy, run allowlisted verification, and return a reviewable result package.
-All pre-existing project code remains clearly separated from the new OneBrief repository.
+All pre-existing project code remains clearly separated from the new KHALINOS repository.
 
 ## Third-party and open-source components
 
-OneBrief uses Google ADK, Google GenAI/Vertex AI, Google Cloud Run, Google Cloud Storage,
+KHALINOS uses Google ADK, Google GenAI/Vertex AI, Google Cloud Run, Google Cloud Storage,
 FastAPI, Pydantic, Uvicorn, Filelock, XlsxWriter, and development-only Pytest/HTTPX under
 their respective licenses and terms. These components provide standard infrastructure;
-the submitted contribution is the OneBrief workflow and its safety, budget, evidence, and
+the submitted contribution is the KHALINOS workflow and its safety, budget, evidence, and
 quality-convergence layers.

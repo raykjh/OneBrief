@@ -1,14 +1,19 @@
-# OneBrief
+# KHALINOS
 
-OneBrief manages completion criteria and their evidence so AI work converges to a
-genuinely completed state. A non-expert describes a goal once; OneBrief defines what
+KHALINOS manages completion criteria and their evidence so AI work converges to a
+genuinely completed state. A non-expert describes a goal once; KHALINOS defines what
 "done" means, assigns AI workers, rejects unsupported results, returns failures to the
 accountable maker, and releases only evidence-backed work.
+
+The name comes from Ancient Greek `khalinos` (χαλινός), the bridle associated with
+Athena's gift to Bellerophon: a tool that gives extraordinary power an authorized
+direction. KHALINOS applies that idea to autonomous agents through bounded authority,
+adaptive Quests, and independent verification.
 
 The product contract is defined in `docs/PRODUCT_IDENTITY.md`. Example projects and
 domain ToolPacks are validation cases; they do not define the product.
 
-The user experience has two stages: OneBrief first creates the completion criteria,
+The user experience has two stages: KHALINOS first creates the completion criteria,
 capability pack, permission manifest, and cost envelope for one exact approval; it then
 works autonomously until the approved criteria are proven. See
 `docs/TWO_STAGE_WORKFLOW.md`.
@@ -81,3 +86,12 @@ result retrieval.
 See `docs/PARALLEL_TEST_CAMPAIGNS.md` for the frozen-baseline architecture that runs
 three evidence-only test lanes and permits only one integration lane to patch common
 code and promote a fully revalidated candidate.
+
+## Internal compatibility names
+
+The Python package, CLI command, environment variables, project manifest filename, and
+deployed Google Cloud resource identifiers retain the historical `onebrief` /
+`ONEBRIEF_*` names for compatibility with immutable approvals and audit receipts. They
+are implementation identifiers, not the public product name. Historical experiment and
+run reports may also retain the OneBrief codename so their recorded evidence is not
+rewritten after the fact.

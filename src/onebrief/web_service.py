@@ -1,4 +1,4 @@
-"""Minimal same-origin web service for OneBrief's guarded workflow."""
+"""Minimal same-origin web service for KHALINOS's guarded workflow."""
 
 from __future__ import annotations
 
@@ -642,7 +642,7 @@ def _project_requires_approved_host(project: RegisteredProject | None) -> bool:
     )
 
 
-app = FastAPI(title="OneBrief", version="0.1.0", docs_url=None, redoc_url=None)
+app = FastAPI(title="KHALINOS", version="0.1.0", docs_url=None, redoc_url=None)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1089,7 +1089,7 @@ async def amend_session(
             if status == "needs_information"
             else (
                 "Confirm whether the goal should avoid the blocked capability or explicitly "
-                "requires OneBrief to propose a different permission boundary."
+                "requires KHALINOS to propose a different permission boundary."
             )
         )
         runtime_requirement = InformationRequirement(
@@ -1149,7 +1149,7 @@ async def amend_session(
             "status": effective_status,
             "reusable_artifacts": reusable_artifacts,
             "message": (
-                "The previous run was preserved. OneBrief will reuse only artifacts "
+                "The previous run was preserved. KHALINOS will reuse only artifacts "
                 "that remain compatible with the amended approval."
             ),
         },
@@ -1282,7 +1282,7 @@ async def run_session(
             }
         if development_job and not isinstance(store, InMemoryWebSessionStore):
             raise RuntimeError(
-                "Cloud project snapshots must be created by the local OneBrief app that can read the approved repository."
+                "Cloud project snapshots must be created by the local KHALINOS app that can read the approved repository."
             )
         bucket, project, region, job_name = _service_config()
         with tempfile.TemporaryDirectory(prefix="onebrief_web_job_") as temp:
@@ -2053,7 +2053,7 @@ async def session_result(
                     return FileResponse(
                         workbook,
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        filename="OneBrief 결과.xlsx",
+                        filename="KHALINOS 결과.xlsx",
                     )
             if not record.result_package:
                 raise RuntimeError("result package is not ready")
@@ -2088,7 +2088,7 @@ async def session_result(
                 return FileResponse(
                     workbook,
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    filename="OneBrief 결과.xlsx",
+                    filename="KHALINOS 결과.xlsx",
                     background=BackgroundTask(shutil.rmtree, temp, ignore_errors=True),
                 )
         archive = Path(shutil.make_archive(str(temp / "onebrief-result"), "zip", result_dir))
@@ -2114,7 +2114,7 @@ async def apply_session_result(
 ) -> dict[str, object]:
     """Apply one verified Cloud/local result to its unchanged local project."""
     if not isinstance(store, InMemoryWebSessionStore):
-        raise HTTPException(409, "안전 적용은 원본 프로젝트에 접근할 수 있는 로컬 OneBrief에서만 가능합니다.")
+        raise HTTPException(409, "안전 적용은 원본 프로젝트에 접근할 수 있는 로컬 KHALINOS에서만 가능합니다.")
     try:
         session = store.read(session_id)
         project_id = session.intake.existing_project_id

@@ -2,18 +2,18 @@
 
 ## Fixed scope
 
-OneBrief is **a system that manages completion criteria and evidence so AI work reaches
+KHALINOS is **a system that manages completion criteria and evidence so AI work reaches
 an actually completed state**.
 
 It is not a general chatbot, an agent builder, an agent-count demonstration, or a claim
-that one prompt can solve every task. Agents are workers. OneBrief is the control system
+that one prompt can solve every task. Agents are workers. KHALINOS is the control system
 that defines, measures, rejects, revises, and proves their work.
 
 ## Two stages and two product responsibilities
 
 ### Stage 1. Establish and authorize the completion system
 
-Before paid execution, OneBrief converts the goal and authoritative sources into:
+Before paid execution, KHALINOS converts the goal and authoritative sources into:
 
 - an observable target state;
 - deliverables in a usable output form;
@@ -21,12 +21,12 @@ Before paid execution, OneBrief converts the goal and authoritative sources into
 - the evidence required for every criterion;
 - a proof mode: deterministic verification or independent review;
 - authority, safety, and budget boundaries;
-- a OneBrief-generated capability pack with exact read/write prefixes and evidence
+- a KHALINOS-generated capability pack with exact read/write prefixes and evidence
   adapters.
 
 The contract, capability permissions, and cost envelope are canonicalized into one
 authorization hash. Approval is valid only for that exact plan. External development
-assistants may prepare a clean repository, URL, or source material; OneBrief remains
+assistants may prepare a clean repository, URL, or source material; KHALINOS remains
 responsible for discovering, generating, qualifying, and proposing its own ToolPack.
 
 Only missing authoritative information, insufficient budget, or a decision outside AI
@@ -76,7 +76,7 @@ the prompt alone is never the security or convergence boundary.
 ### Product work and proof work are separate authorities
 
 Software convergence no longer treats every failed check as the same kind of coding
-task. Before the first maker call, OneBrief freezes `evidence_specification.json` from
+task. Before the first maker call, KHALINOS freezes `evidence_specification.json` from
 the completion contract and immutable acceptance inputs. Trusted failures are then
 assigned to one of four owners:
 
@@ -106,7 +106,7 @@ maker call unless deterministic re-promotion still cannot bind safely.
 
 ### Medium and large work converges through dependency-bound milestones
 
-OneBrief does not force a medium software goal through one all-or-nothing candidate.
+KHALINOS does not force a medium software goal through one all-or-nothing candidate.
 After authorization, a deterministic project-owner tool maps the existing `Qnn`
 criteria into a `MilestonePlan` of independently executable vertical slices. This plan
 cannot invent scope or weaken a criterion:
@@ -124,12 +124,12 @@ cannot invent scope or weaken a criterion:
   regression rather than a targeted check.
 
 The plan is an authorization skeleton, not a set of simultaneously active detailed
-instructions. OneBrief issues exactly one dynamic Quest from the latest verified
+instructions. KHALINOS issues exactly one dynamic Quest from the latest verified
 checkpoint, closes it with an independent Verification Receipt, and only then issues
 the next Quest. See [Dynamic Quest orchestration](DYNAMIC_QUEST_ORCHESTRATION.md).
 
 Functional milestones advance only an isolated integration repository. That repository
-is transient and is neither shipped nor uploaded. On continuation, OneBrief reconstructs
+is transient and is neither shipped nor uploaded. On continuation, KHALINOS reconstructs
 it from the original approved snapshot and the bounded, hash-checked milestone change
 sets. The final accumulated candidate is then tested once more against the clean
 baseline, preventing incremental drift from being mislabeled as completion.
@@ -150,7 +150,7 @@ remains authoritative and the reserve is available only inside that envelope.
 
 There is no silent authority expansion. `NEEDS_INFORMATION`, `NEEDS_BUDGET`, and
 `NEEDS_AUTHORIZATION` are structured returns to stage 1. The user approves an amended
-plan; OneBrief then resumes from persisted evidence instead of pretending the first run
+plan; KHALINOS then resumes from persisted evidence instead of pretending the first run
 completed.
 
 ## Completion ledger

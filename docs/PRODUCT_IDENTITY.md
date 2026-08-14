@@ -1,9 +1,17 @@
-# OneBrief Product Identity
+# KHALINOS Product Identity
 
 ## One sentence
 
-OneBrief manages completion criteria and evidence so AI work converges to a genuinely
+KHALINOS manages completion criteria and evidence so AI work converges to a genuinely
 completed state.
+
+## Name
+
+KHALINOS is derived from Ancient Greek `khalinos` (χαλινός), a bridle. In the myth of
+Bellerophon, Athena's golden bridle turns Pegasus's extraordinary but undirected power
+into capability aimed at an authorized purpose. The product uses the same relationship:
+the user supplies sovereignty and the approved outcome; KHALINOS binds agent power to
+that outcome through authority, budget, adaptive Quest, and evidence contracts.
 
 ## The narrow problem inside the general-purpose product
 
@@ -19,9 +27,9 @@ completion.
 
 1. The user describes the goal, authoritative information, constraints, and optional
    output form. Internal orchestration choices are not user settings.
-2. Before paid execution, OneBrief creates both the completion contract and the
+2. Before paid execution, KHALINOS creates both the completion contract and the
    capability pack required to prove it. Codex or the user may provide an address,
-   repository, or authoritative source, but they do not author the pack for OneBrief.
+   repository, or authoritative source, but they do not author the pack for KHALINOS.
 3. The project owner chooses agents, models, knowledge, skills, tools, memory, ordering,
    and safe parallelism.
    Model choice follows a deterministic criticality boundary: routine research,
@@ -44,7 +52,7 @@ completion.
    invalidates only its dependency descendants, while the final milestone always
    replays the accumulated candidate against the clean approved baseline and runs the
    full completion contract.
-7. Before execution, OneBrief calls the user only for missing authoritative information,
+7. Before execution, KHALINOS calls the user only for missing authoritative information,
    insufficient budget, or a decision beyond agent authority. After a completed result,
    user feedback starts an explicit existing-project improvement run.
 8. Example projects and domain ToolPacks prove and improve the system; they do not define
@@ -77,7 +85,7 @@ completion.
 
 - user selection of retry count, agent, model, or tool
 - a separate generic revision role that breaks artifact ownership
-- claims that OneBrief is only a long-form writer
+- claims that KHALINOS is only a long-form writer
 - example-specific identity or Exchange-specific product language
 - success claims based only on agents running or files being produced
 
@@ -93,19 +101,19 @@ completion.
    questions.
    Its choices resolve user preferences only. Facts or candidates that the approved
    execution is supposed to research may not be smuggled into a recommended option.
-   When the goal delegates discovery or selection to OneBrief, SixSense does not return
+   When the goal delegates discovery or selection to KHALINOS, SixSense does not return
    that delegated decision to the user; only a genuine mandatory information gap may stop intake.
-3. OneBrief asks separately only for genuinely missing authoritative information that
+3. KHALINOS asks separately only for genuinely missing authoritative information that
    cannot be inferred or safely defaulted.
-4. OneBrief creates the completion contract and generates and qualifies the smallest
+4. KHALINOS creates the completion contract and generates and qualifies the smallest
    capability pack that can create and prove the result.
-5. OneBrief presents the exact goal, completion criteria, read/write boundaries,
+5. KHALINOS presents the exact goal, completion criteria, read/write boundaries,
    validation adapters, forbidden boundaries, and minimum/recommended/maximum cost.
 6. The user gives one approval for that exact hashed plan.
 
 ### Stage 2 — converge and deliver
 
-1. OneBrief selects the team and models inside the approved plan.
+1. KHALINOS selects the team and models inside the approved plan.
 2. For medium and large work, the project owner creates a `MilestonePlan` from the
    approved criteria. Every criterion has one primary milestone owner; later milestones
    include already passed dependencies as regression requirements.
@@ -122,7 +130,7 @@ completion.
 
 Stage 2 may never silently widen stage 1. Missing authoritative information,
 insufficient budget, or a new permission returns an amendment request to stage 1. The
-user reaches that amendment with one action from the stopped run; OneBrief preserves the
+user reaches that amendment with one action from the stopped run; KHALINOS preserves the
 lineage and reuses only artifacts that remain compatible with the amended contract.
 
 ## Completion semantics
@@ -134,7 +142,7 @@ boundary cannot support further correction, the run returns to stage 1 instead o
 claiming completion or silently expanding authority.
 
 Broad goals are executable only after they become atomic observable slices. A criterion
-must be able to fail independently and name its own evidence. OneBrief may group those
+must be able to fail independently and name its own evidence. KHALINOS may group those
 slices into a coherent release, but it must not hide several independently failing
 behaviors behind one vague criterion such as “the application is professional.”
 

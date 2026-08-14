@@ -107,11 +107,11 @@ def test_existing_bounded_resume_resolves_the_same_child_session(tmp_path: Path)
 def test_home_serves_the_real_workflow() -> None:
     response = TestClient(app).get("/")
     assert response.status_code == 200
-    assert "OneBrief" in response.text
+    assert "KHALINOS" in response.text
     assert 'class="identity-hero"' in response.text
     assert 'id="languageToggle"' in response.text
     assert 'localStorage.getItem("onebrief-language")||"en"' in response.text
-    assert '"What should OneBrief complete?"' in response.text
+    assert '"What should KHALINOS complete?"' in response.text
     assert 'document.documentElement.lang=uiLanguage' in response.text
     assert 'id="completionContract"' in response.text
     assert 'id="qualityCriteria"' in response.text
