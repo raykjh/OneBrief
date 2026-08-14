@@ -12,7 +12,7 @@ import tempfile
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
-from typing import Callable
+from typing import Callable, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -148,6 +148,9 @@ class RepositoryInspection(BaseModel):
 class DevelopmentRun(BaseModel):
     schema_version: str = "onebrief-development-run-v1"
     status: str
+    result_mode: Literal["repository_change", "existing_state_verified"] = (
+        "repository_change"
+    )
     repository_name: str
     base_head_sha: str = Field(pattern=r"^[a-f0-9]{40}$")
     summary: str
@@ -509,22 +512,30 @@ class ExchangeDevelopmentToolPack:
 
             approved_paths = [item.path for item in change_set.changes]
             patch = self._git("diff", "--binary", "--no-ext-diff", "--", *approved_paths, cwd=clone)
-            if not patch.strip():
-                raise ValueError("development change set produced no repository diff")
             patch_path = output_dir / "changes.patch"
             patch_path.write_text(patch, encoding="utf-8", newline="\n")
-            changed_dir = output_dir / "changed_files"
-            for change in change_set.changes:
-                source = clone / Path(*PurePosixPath(change.path).parts)
-                destination = changed_dir / Path(*PurePosixPath(change.path).parts)
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source, destination)
+            has_repository_change = bool(patch.strip())
+            if has_repository_change:
+                changed_dir = output_dir / "changed_files"
+                for change in change_set.changes:
+                    source = clone / Path(*PurePosixPath(change.path).parts)
+                    destination = changed_dir / Path(*PurePosixPath(change.path).parts)
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, destination)
             run = DevelopmentRun(
                 status="verified",
+                result_mode=(
+                    "repository_change"
+                    if has_repository_change
+                    else "existing_state_verified"
+                ),
                 repository_name=self.root.name,
                 base_head_sha=head,
                 summary=change_set.summary,
-                changed_paths=[item.path for item in change_set.changes],
+                changed_paths=(
+                    [item.path for item in change_set.changes]
+                    if has_repository_change else []
+                ),
                 commands=commands,
                 patch_path=patch_path.relative_to(output_dir.parent).as_posix(),
                 safety_boundary=[
@@ -532,6 +543,11 @@ class ExchangeDevelopmentToolPack:
                     "only bounded text paths with matching base hashes were accepted",
                     "only fixed test, build, and production HTTP smoke commands were executed",
                     "static host-runtime capability scan passed before execution",
+                    (
+                        "the approved candidate produced a repository diff"
+                        if has_repository_change
+                        else "the approved candidate matched the existing repository; fresh fixed verification evidence was retained for independent contract review"
+                    ),
                     "original repository, Git remotes, deployment, and accounts were not changed",
                 ],
             )

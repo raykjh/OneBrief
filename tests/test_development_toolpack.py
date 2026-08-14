@@ -173,6 +173,56 @@ def test_development_changes_only_an_isolated_clone_and_returns_verified_patch(t
     assert "page.tsx" in patch.read_text(encoding="utf-8")
 
 
+def test_identical_candidate_retains_fresh_verification_for_independent_review(
+    tmp_path: Path,
+) -> None:
+    root = _repository(tmp_path / "exchange")
+    original = root / "web" / "src" / "page.tsx"
+
+    def existing_runner(
+        command_id: str, argv: list[str], cwd: Path, _timeout: int
+    ) -> DevelopmentCommandResult:
+        assert "Old" in (cwd / "web" / "src" / "page.tsx").read_text(
+            encoding="utf-8"
+        )
+        return DevelopmentCommandResult(
+            command_id=command_id,
+            argv=argv,
+            exit_code=0,
+            duration_seconds=0.01,
+            output_tail="passed",
+        )
+
+    pack = ExchangeDevelopmentToolPack(root, existing_runner)
+    inspection, _sources = pack.inspect(tmp_path / "inspection")
+    page_record = next(
+        item for item in inspection.context_files if item.path == "web/src/page.tsx"
+    )
+    changes = CodeChangeSet(
+        summary="Verify the existing page against the active completion contract.",
+        changes=[FileChange(
+            path="web/src/page.tsx",
+            base_sha256=page_record.sha256,
+            content=original.read_text(encoding="utf-8"),
+            reason="Run fresh bounded verification without claiming a repository change.",
+        )],
+    )
+
+    run = pack.apply_and_verify(changes, tmp_path / "delivery" / "development")
+
+    assert run.status == "verified"
+    assert run.result_mode == "existing_state_verified"
+    assert run.changed_paths == []
+    assert [item.command_id for item in run.commands] == [
+        "repository_tests", "web_build", "web_tests", "production_http"
+    ]
+    assert (tmp_path / "delivery" / "development" / "changes.patch").read_text(
+        encoding="utf-8"
+    ) == ""
+    assert not (tmp_path / "delivery" / "development" / "changed_files").exists()
+    assert "Old" in original.read_text(encoding="utf-8")
+
+
 
 def test_inspection_hash_matches_the_committed_git_blob(tmp_path: Path) -> None:
     root = _repository(tmp_path / "exchange")

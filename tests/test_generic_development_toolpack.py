@@ -401,6 +401,39 @@ def test_approved_generic_runner_edits_only_clone_and_returns_verified_patch(tmp
     assert "src/app.js" in (output / "changes.patch").read_text(encoding="utf-8")
 
 
+@pytest.mark.skipif(shutil.which("npm.cmd" if __import__("os").name == "nt" else "npm") is None, reason="npm unavailable")
+def test_approved_generic_runner_retains_verified_existing_state_without_diff(
+    tmp_path: Path,
+) -> None:
+    root, registry = _approved_node_project(tmp_path)
+    original = (root / "src" / "app.js").read_bytes()
+    committed = subprocess.run(
+        ["git", "show", "HEAD:src/app.js"], cwd=root, check=True, capture_output=True
+    ).stdout
+    change_set = ProjectCodeChangeSet(
+        summary="Verify the existing implementation against the active Quest.",
+        changes=[{
+            "path": "src/app.js",
+            "base_sha256": hashlib.sha256(committed).hexdigest(),
+            "content": committed.decode("utf-8"),
+            "reason": "Retain fresh fixed-command evidence without claiming a code change.",
+        }],
+    )
+    output = tmp_path / "result" / "development"
+
+    run = ApprovedProjectDevelopmentToolPack(
+        "generic-node", registry
+    ).apply_and_verify(change_set, output)
+
+    assert run.status == "verified"
+    assert run.result_mode == "existing_state_verified"
+    assert run.changed_paths == []
+    assert {item.command_id for item in run.commands} == {"node_test", "node_build"}
+    assert (output / "changes.patch").read_text(encoding="utf-8") == ""
+    assert not (output / "changed_files").exists()
+    assert (root / "src" / "app.js").read_bytes() == original
+
+
 def test_approved_generic_runner_ignores_onebrief_control_metadata(tmp_path: Path) -> None:
     root, registry = _approved_node_project(tmp_path)
     control = root / ".onebrief" / "project_state.json"

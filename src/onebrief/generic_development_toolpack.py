@@ -3256,18 +3256,24 @@ class ApprovedProjectDevelopmentToolPack:
                 os.replace(receipt_temp, receipt_path)
                 evidence_paths.append(evidence_dir.relative_to(output_dir.parent).as_posix())
             patch = self._git("diff", "--binary", "--no-ext-diff", "--", *approved_paths, cwd=clone)
-            if not patch.strip():
-                raise ValueError("development change set produced no repository diff")
             patch_path = output_dir / "changes.patch"
             patch_path.write_text(patch, encoding="utf-8", newline="\n")
-            for relative in approved_paths:
-                source = clone / Path(*PurePosixPath(relative).parts)
-                destination = output_dir / "changed_files" / Path(*PurePosixPath(relative).parts)
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source, destination)
+            has_repository_change = bool(patch.strip())
+            if has_repository_change:
+                for relative in approved_paths:
+                    source = clone / Path(*PurePosixPath(relative).parts)
+                    destination = output_dir / "changed_files" / Path(*PurePosixPath(relative).parts)
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, destination)
             run = DevelopmentRun(
                 status="verified", repository_name=self.root.name, base_head_sha=head,
-                summary=change_set.summary, changed_paths=approved_paths,
+                result_mode=(
+                    "repository_change"
+                    if has_repository_change
+                    else "existing_state_verified"
+                ),
+                summary=change_set.summary,
+                changed_paths=approved_paths if has_repository_change else [],
                 commands=results, patch_path=patch_path.relative_to(output_dir.parent).as_posix(),
                 evidence_paths=evidence_paths,
                 safety_boundary=[
@@ -3275,6 +3281,11 @@ class ApprovedProjectDevelopmentToolPack:
                     "exact approved HEAD and per-file base hashes were enforced",
                     "edits were limited to approved prefixes and text suffixes",
                     "only lockfile-bound dependency restore and fixed validation adapters executed in the clone",
+                    (
+                        "the approved candidate produced a repository diff"
+                        if has_repository_change
+                        else "the approved candidate matched the existing repository; fresh fixed verification evidence was retained for independent Quest review"
+                    ),
                     "dependency lifecycle scripts, deploy, push, credentials, accounts, and arbitrary commands were blocked",
                 ],
             )
