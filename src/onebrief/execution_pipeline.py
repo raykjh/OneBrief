@@ -68,6 +68,7 @@ from onebrief.generic_development_toolpack import (
     AtomicUnityEvidenceBundle,
     AnchoredRangeRepairProjectCodeChangeSet,
     CatalogAnchoredProductRepair,
+    catalog_bound_product_repair_schema,
     ApprovedProjectDevelopmentToolPack,
     CompactProposedProjectCodeChangeSet,
     ExactRepairProjectCodeChangeSet,
@@ -3677,7 +3678,9 @@ class ExecutionPipeline:
                     or "unity test failures" in feedback
                 )
             ):
-                return CatalogAnchoredProductRepair
+                return catalog_bound_product_repair_schema(
+                    _ctx.session.state.get(EXACT_EDIT_ANCHORS_STATE_KEY) or []
+                )
             return selected
         agent = build_text_convergence_agent(
             gateway=self.gateway,
@@ -3695,7 +3698,7 @@ class ExecutionPipeline:
             maker_schema=(
                 (
                     (
-                        CatalogAnchoredProductRepair
+                        catalog_bound_product_repair_schema(exact_edit_anchors)
                         if product_target_repair and exact_edit_anchors
                         else (
                             AnchoredRangeRepairProjectCodeChangeSet

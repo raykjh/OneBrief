@@ -12,6 +12,7 @@ from onebrief.generic_development_toolpack import (
     ApprovedProjectDevelopmentToolPack,
     CompactProposedProjectCodeChangeSet,
     CatalogAnchoredProductRepair,
+    catalog_bound_product_repair_schema,
     ExactRepairProjectCodeChangeSet,
     ProjectCodeChangeSet,
     ProjectFileChange,
@@ -69,6 +70,25 @@ def test_catalog_anchored_product_repair_structurally_excludes_full_files_and_te
                 "anchor_id": "A123456789abc",
                 "replace": "Assert.Pass();",
                 "reason": "Invalid evidence edit.",
+            }],
+        })
+
+    bounded = catalog_bound_product_repair_schema([{
+        "path": "Assets/Game/Scripts/LoginController.cs",
+        "anchors": [{"anchor_id": "A123456789abc", "text": "void StartGame() {}"}],
+    }])
+    schema = bounded.model_json_schema()
+    encoded = json.dumps(schema)
+    assert '"const": "Assets/Game/Scripts/LoginController.cs"' in encoded
+    assert '"const": "A123456789abc"' in encoded
+    with pytest.raises(ValidationError):
+        bounded.model_validate({
+            "summary": "Do not choose proof.",
+            "changes": [{
+                "path": "Assets/Game/Tests/PlayMode/LoginJourney.cs",
+                "anchor_id": "A123456789abc",
+                "replace": "Assert.Pass();",
+                "reason": "Invalid path outside provider enum.",
             }],
         })
 
