@@ -170,6 +170,37 @@ def test_dict_development_proposal_counts_atomic_evidence_members() -> None:
     assert missing_unity_evidence_bundle_paths(feedback, proposal) == []
 
 
+def test_verification_report_discards_provider_artifact_digest_placeholder() -> None:
+    report = VerificationReport.model_validate({
+        "verdict": "PASS",
+        "criterion_checks": [{
+            "criterion_id": "Q01",
+            "criterion": "Unity compile and PlayMode pass",
+            "passed": True,
+            "evidence": "Observed the trusted command receipt.",
+            "evidence_bindings": [{
+                "binding_id": "EB-0123456789abcdef",
+                "criterion_id": "Q01",
+                "kind": "compile",
+                "status": "passed",
+                "summary": "Provider observation only.",
+                "artifact": {
+                    "artifact_type": "log",
+                    "path": "onebrief-compile.log",
+                    "sha256": "dummy_hash",
+                },
+                "command_id": "unity_compile",
+            }],
+        }],
+        "blocking_issues": [],
+        "revision_instructions": [],
+        "missing_information": [],
+    })
+
+    assert report.criterion_checks[0].evidence_bindings[0].artifact is None
+    assert report.criterion_checks[0].evidence_bindings[0].command_id == "unity_compile"
+
+
 def test_declarative_unity_journey_compiles_trusted_harness() -> None:
     plan = UnityEvidenceJourneyPlan.model_validate({
         "summary": "Prove the preserved login journey.",

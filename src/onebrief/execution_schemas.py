@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+import re
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -69,6 +70,27 @@ class CriterionCheck(BaseModel):
     @classmethod
     def discard_non_contract_criterion_id(cls, value: object) -> object:
         return normalize_criterion_id(value)
+
+    @field_validator("evidence_bindings", mode="before")
+    @classmethod
+    def discard_untrusted_artifact_placeholders(cls, value: object) -> object:
+        """Keep model observations but never accept an invented artifact digest."""
+
+        if not isinstance(value, list):
+            return value
+        normalized: list[object] = []
+        for item in value:
+            if not isinstance(item, dict):
+                normalized.append(item)
+                continue
+            candidate = dict(item)
+            artifact = candidate.get("artifact")
+            if isinstance(artifact, dict) and not re.fullmatch(
+                r"[a-f0-9]{64}", str(artifact.get("sha256") or "")
+            ):
+                candidate["artifact"] = None
+            normalized.append(candidate)
+        return normalized
 
     @model_validator(mode="after")
     def bindings_match_criterion(self) -> "CriterionCheck":
