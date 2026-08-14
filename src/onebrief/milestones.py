@@ -29,6 +29,7 @@ from onebrief.quest_orchestration import QuestFailureOwner, QuestStore, infer_fa
 from onebrief.schemas import (
     CompletionContract,
     EvaluationMode,
+    ExecutionPhase,
     IntakeRequest,
     InternalSource,
     QualityCriterion,
@@ -130,6 +131,7 @@ class MilestoneSpec(BaseModel):
     title: str = Field(min_length=3, max_length=160)
     outcome: str = Field(min_length=3, max_length=1000)
     kind: MilestoneKind
+    initial_execution_phase: ExecutionPhase = ExecutionPhase.PRODUCT_IMPLEMENTATION
     dependencies: list[str] = Field(default_factory=list, max_length=12)
     contract: MilestoneCompletionContract
     budget_weight: float = Field(gt=0, le=1)
@@ -525,6 +527,11 @@ def build_milestone_plan(
             title=title,
             outcome=outcome,
             kind=MilestoneKind.IMPLEMENTATION,
+            initial_execution_phase=(
+                ExecutionPhase.EVIDENCE_CONSTRUCTION
+                if unity_surface_flow and index == 1
+                else ExecutionPhase.PRODUCT_IMPLEMENTATION
+            ),
             dependencies=[previous],
             contract=MilestoneCompletionContract(
                 target_state=outcome,

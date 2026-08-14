@@ -23,6 +23,7 @@ from onebrief.quest_orchestration import (
 from onebrief.schemas import (
     CompletionContract,
     EvaluationMode,
+    ExecutionPhase,
     QualityCriterion,
     RequirementsAnalysis,
 )
@@ -134,6 +135,7 @@ def test_only_m01_quest_exists_until_m01_receipt_passes(tmp_path: Path) -> None:
 
     first = quests.issue(milestone=m01, milestone_store=milestone_store, source_revision="a" * 40)
     assert first.milestone_id == "M01"
+    assert first.initial_execution_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
     assert list((tmp_path / "quests" / "contracts").glob("*.json")) == [
         tmp_path / "quests" / "contracts" / f"{first.quest_id}.json"
     ]
@@ -164,6 +166,7 @@ def test_only_m01_quest_exists_until_m01_receipt_passes(tmp_path: Path) -> None:
         evidence_paths=[output / "completion_ledger.json", output / "final_verification.json", output / "execution_checkpoint.json"],
     )
     second = quests.issue(milestone=m02, milestone_store=milestone_store, source_revision="b" * 40)
+    assert second.initial_execution_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
     assert second.parent_quest_id == first.quest_id
     assert second.input_checkpoint.previous_receipt_id == receipt.receipt_id
     assert receipt.receipt_id in second.preserve_receipt_ids

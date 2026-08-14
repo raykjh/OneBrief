@@ -131,7 +131,14 @@ from onebrief.recovery_policy import RecoveryAction, RecoveryDecision, RecoveryP
 from onebrief.repair_planning import RepairPlan, build_repair_plan
 from onebrief.reality_check import apply_reality_check_override, evaluate_reality_check
 from onebrief.requirements_gate import require_ready_for_estimate
-from onebrief.schemas import IntakeRequest, InternalSource, OutputTarget, RequirementsAnalysis, ToolPackId
+from onebrief.schemas import (
+    ExecutionPhase,
+    IntakeRequest,
+    InternalSource,
+    OutputTarget,
+    RequirementsAnalysis,
+    ToolPackId,
+)
 from onebrief.public_research import PublicResearchResult
 from onebrief.phase_execution import (
     PHASE_DECISION_STATE_KEY,
@@ -144,7 +151,6 @@ from onebrief.phase_execution import (
     path_allowed_for_phase,
     phase_stage,
 )
-from onebrief.schemas import ExecutionPhase
 from onebrief.toolpacks import execute_toolpacks
 from onebrief.unity_semantic_observation import (
     contract_requires_strict_visual_quality,
@@ -164,6 +170,25 @@ from onebrief.temperament import (
 )
 
 T = TypeVar("T", bound=BaseModel)
+
+
+def quest_initial_execution_phase(sources: list[InternalSource]) -> ExecutionPhase:
+    """Read the digest-bound starting authority from the active Quest source."""
+
+    matches = [
+        source for source in sources
+        if source.name.startswith("onebrief-active-quest-")
+        and source.media_type == "application/json"
+    ]
+    if not matches:
+        return ExecutionPhase.PRODUCT_IMPLEMENTATION
+    if len(matches) != 1:
+        raise RuntimeError("exactly one active Quest authority source is required")
+    try:
+        payload = json.loads(matches[0].content)
+        return ExecutionPhase(payload["initial_execution_phase"])
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError("active Quest has an invalid initial execution phase") from exc
 
 
 def development_proposal_changes(raw: object) -> list[object]:
@@ -2083,6 +2108,11 @@ class ExecutionPipeline:
         )
 
         change_schema, development_pack, developer = self._development_components(intake, output_dir)
+        quest_initial_phase = quest_initial_execution_phase(sources)
+        unity_runtime = (
+            isinstance(development_pack, ApprovedProjectDevelopmentToolPack)
+            and development_pack._uses_unity_runtime(development_pack._profile())
+        )
         prepared_sources: list[dict[str, object]] = []
         for source in source_payload:
             prepared = dict(source)
@@ -2184,7 +2214,7 @@ class ExecutionPipeline:
             best_failure_quality = development_failure_quality(best_failure_message)
         latest_run: DevelopmentRun | None = None
         initial_state: dict[str, object] = {
-            PHASE_STATE_KEY: ExecutionPhase.PRODUCT_IMPLEMENTATION.value,
+            PHASE_STATE_KEY: quest_initial_phase.value,
         }
         repair_fingerprints: list[str] = []
         for plan_path in sorted(output_dir.glob("repair_plan_r*.json")):
@@ -2441,7 +2471,7 @@ class ExecutionPipeline:
         prior_failure_text = (
             prior_failure.read_text("utf-8") if prior_failure.is_file() else ""
         )
-        initial_maker_phase = ExecutionPhase.PRODUCT_IMPLEMENTATION
+        initial_maker_phase = quest_initial_phase
         if prior_failure_text:
             initial_phase_decision = decide_repair_phase(
                 context="development_verification",
@@ -3742,8 +3772,10 @@ class ExecutionPipeline:
             "When exact_edit_anchors are supplied, prefer its anchor_id and return the complete replacement for "
             "that displayed source window; OneBrief resolves the ID deterministically. Otherwise copy search text "
             "only from those verbatim windows and keep each edit to the smallest unique anchor. "
-            "For a UI goal, the initial result must include actual production UI source changes; test-only output "
-            "is never a complete implementation. A verification test may interact with and capture the product, "
+            "When execution_phase is product_implementation, a UI goal's initial result must include actual production "
+            "UI source changes; test-only output is never a complete implementation. When execution_phase is "
+            "evidence_construction, preserve shipped product source and construct only the requested executable proof. "
+            "A verification test may interact with and capture the product, "
             "but it must never rewrite visible labels, dropdown option text, fonts, CanvasScaler, anchors, colors, "
             "or other product UI state merely to make evidence pass; repair production source instead. On revision, "
             "repair every build, test, runtime, or independent-review failure while preserving all "
@@ -3964,9 +3996,11 @@ class ExecutionPipeline:
             maker_schema=(
                 UnityEvidenceJourneyPlan
                 if (
-                    prior_failure.is_file()
+                    unity_runtime
                     and initial_maker_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
                     and (
+                        not prior_failure.is_file()
+                        or
                         is_unity_evidence_contract_feedback(prior_failure_text)
                         or is_missing_unity_evidence_harness(prior_failure_text)
                         or "unity_playmode_visual_tests" in prior_failure_text.casefold()

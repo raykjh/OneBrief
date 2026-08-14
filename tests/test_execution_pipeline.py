@@ -43,6 +43,7 @@ from onebrief.execution_pipeline import (
     rollback_detached_development_changes,
     should_preserve_unity_evidence_checkpoint,
     is_unity_localization_product_failure,
+    quest_initial_execution_phase,
     unity_evidence_contract_target_allowed,
 )
 from onebrief.execution_agents import DeveloperAgent
@@ -96,6 +97,29 @@ def test_dict_development_proposal_cannot_bypass_phase_authority() -> None:
         "Assets/Scripts/LoginView.cs"
     ]
     assert deferred == ["Assets/Tests/PlayMode/OneBriefVisualTests.cs"]
+
+
+def test_active_quest_binds_initial_evidence_phase() -> None:
+    payload = json.dumps({
+        "schema_version": "onebrief-quest-contract-v1",
+        "initial_execution_phase": "evidence_construction",
+    })
+    source = InternalSource(
+        name="onebrief-active-quest-QC-0123456789abcdef.json",
+        priority=SourcePriority.MANDATORY,
+        requirement_keys=["active_quest"],
+        summary="Authorized current Quest.",
+        content=payload,
+        media_type="application/json",
+        size_bytes=len(payload.encode("utf-8")),
+        sha256="0" * 64,
+    )
+
+    assert quest_initial_execution_phase([source]) == ExecutionPhase.EVIDENCE_CONSTRUCTION
+
+
+def test_missing_active_quest_keeps_legacy_product_phase() -> None:
+    assert quest_initial_execution_phase([]) == ExecutionPhase.PRODUCT_IMPLEMENTATION
 
 
 def test_dict_development_proposal_counts_atomic_evidence_members() -> None:

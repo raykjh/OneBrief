@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from onebrief.completion_ledger import CompletionLedger, CompletionStatus
 from onebrief.execution_schemas import ExecutionCheckpoint, PipelineStatus, VerificationReport, Verdict
-from onebrief.schemas import InternalSource, RequirementsAnalysis, SourcePriority
+from onebrief.schemas import ExecutionPhase, InternalSource, RequirementsAnalysis, SourcePriority
 
 
 def _now() -> str:
@@ -133,6 +133,7 @@ class QuestContract(BaseModel):
     milestone_id: str = Field(pattern=r"^M[0-9]{2}$")
     objective: str = Field(min_length=3, max_length=1600)
     quest_type: QuestType
+    initial_execution_phase: ExecutionPhase
     input_checkpoint: QuestInputCheckpoint
     authority_envelope_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     authorized_files: list[str] = Field(default_factory=list, max_length=64)
@@ -383,6 +384,7 @@ class QuestStore:
             "milestone_id": milestone.milestone_id,
             "objective": objective,
             "quest_type": QuestType.PROCESS_BOUND,
+            "initial_execution_phase": milestone.initial_execution_phase,
             "input_checkpoint": QuestInputCheckpoint(
                 milestone_plan_sha256=self.plan.sha256,
                 source_revision=source_revision,
