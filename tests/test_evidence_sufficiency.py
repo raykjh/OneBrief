@@ -267,6 +267,53 @@ def test_grouped_finding_citations_count_as_same_paragraph_evidence() -> None:
     assert not any(item.kind.value == "uncited_material_claim" for item in result.issues)
 
 
+def test_grounded_web_source_id_counts_but_invented_id_does_not() -> None:
+    source = InternalSource(
+        name="public_research.md",
+        priority=SourcePriority.MANDATORY,
+        requirement_keys=["research"],
+        content=(
+            "Research summary.\n\n## 공개 출처\n"
+            "- [W01] Example — https://example.com/products/a [HTTP 200]"
+        ),
+    )
+    grounded = validate_evidence_sufficiency(
+        IntakeRequest(goal="후보를 조사해줘.", public_research_allowed=True),
+        _requirements(),
+        [source],
+        _draft(
+            "이 제품은 가격 위험을 줄일 수 있습니다. [W01]\n\n"
+            "https://example.com/products/a"
+        ),
+    )
+    invented = validate_evidence_sufficiency(
+        IntakeRequest(goal="후보를 조사해줘.", public_research_allowed=True),
+        _requirements(),
+        [source],
+        _draft(
+            "이 제품은 가격 위험을 줄일 수 있습니다. [W99]\n\n"
+            "https://example.com/products/a"
+        ),
+    )
+
+    assert not any(item.kind.value == "uncited_material_claim" for item in grounded.issues)
+    assert any(item.kind.value == "uncited_material_claim" for item in invented.issues)
+
+
+def test_explicit_estimate_disclaimer_is_not_itself_an_uncited_price_claim() -> None:
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="시장 가격을 조사해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft(
+            "아래 가격은 시장 추정치이며 실제 발주 전 서면 견적으로 확인 필요합니다.\n\n"
+            "https://example.com/products/a"
+        ),
+    )
+
+    assert not any(item.kind.value == "uncited_material_claim" for item in result.issues)
+
+
 def test_markdown_table_header_is_not_treated_as_an_uncited_material_claim() -> None:
     body = """# 결과
 

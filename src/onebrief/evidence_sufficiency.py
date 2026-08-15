@@ -80,6 +80,12 @@ _FINDING_CITATION = re.compile(
     r"\[F\d{2,}(?:\s*,\s*F\d{2,})*\]",
     re.IGNORECASE,
 )
+_WEB_SOURCE_CITATION = re.compile(r"\[(W\d{2,})\]", re.IGNORECASE)
+_ESTIMATE_UNCERTAINTY = re.compile(
+    r"(?:추정치|가정|estimate|assumption).*(?:서면\s*견적|확인\s*필요|검증\s*필요|"
+    r"written\s+quotation|requires?\s+(?:verification|confirmation))",
+    re.IGNORECASE,
+)
 
 
 def _research_text(requirements: RequirementsAnalysis) -> str:
@@ -160,6 +166,25 @@ def _grounded_source_urls(sources: list[InternalSource]) -> set[str]:
     return grounded
 
 
+def _grounded_source_ids(sources: list[InternalSource]) -> set[str]:
+    """Return only W-prefixed identifiers bound to URLs in the source registry."""
+
+    grounded: set[str] = set()
+    registry_line = re.compile(
+        r"^-?\s*\[(?P<source_id>W\d{2,})\]\s+.*?\s+—\s+(?P<url>https?://\S+)",
+        re.IGNORECASE,
+    )
+    for source in sources:
+        if source.name != "public_research.md" or "## 공개 출처" not in source.content:
+            continue
+        registry = source.content.rsplit("## 공개 출처", 1)[-1]
+        for raw in registry.splitlines():
+            match = registry_line.match(raw.strip())
+            if match and urlparse(match.group("url")).hostname:
+                grounded.add(match.group("source_id").casefold())
+    return grounded
+
+
 def _unbounded_negative_segments(markdown: str) -> list[str]:
     segments = [
         item.strip()
@@ -184,8 +209,13 @@ def _claim_excerpt(segment: str, pattern: re.Pattern[str], *, width: int = 240) 
     return f"{'…' if start else ''}{excerpt}{'…' if end < len(normalized) else ''}"
 
 
-def _uncited_material_claims(markdown: str) -> list[str]:
+def _uncited_material_claims(
+    markdown: str,
+    *,
+    grounded_source_ids: set[str] | None = None,
+) -> list[str]:
     claims: list[str] = []
+    allowed_source_ids = grounded_source_ids or set()
     lines = markdown.splitlines()
     for index, raw in enumerate(lines):
         line = raw.strip()
@@ -193,6 +223,10 @@ def _uncited_material_claims(markdown: str) -> list[str]:
         is_table_header = (
             "|" in line
             and bool(re.fullmatch(r"\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?", next_line))
+        )
+        has_grounded_web_citation = any(
+            match.casefold() in allowed_source_ids
+            for match in _WEB_SOURCE_CITATION.findall(line)
         )
         if (
             not line
@@ -202,6 +236,8 @@ def _uncited_material_claims(markdown: str) -> list[str]:
             or not _MATERIAL_CLAIM.search(line)
             or _URL.search(line)
             or _FINDING_CITATION.search(line)
+            or has_grounded_web_citation
+            or _ESTIMATE_UNCERTAINTY.search(line)
         ):
             continue
         claims.append(re.sub(r"\s+", " ", line)[:240])
@@ -308,14 +344,21 @@ def validate_evidence_sufficiency(
             ),
         ))
 
-    uncited = _uncited_material_claims(body) if has_public_research else []
+    uncited = (
+        _uncited_material_claims(
+            body,
+            grounded_source_ids=_grounded_source_ids(sources),
+        )
+        if has_public_research else []
+    )
     if uncited:
         examples = " | ".join(uncited[:3])
         issues.append(EvidenceSufficiencyIssue(
             kind=EvidenceSufficiencyIssueKind.UNCITED_MATERIAL_CLAIM,
             message=(
-                "Research-backed material claims must carry an F-prefixed finding citation or a source URL "
-                "on the same row or paragraph. If the supplied findings do not directly support a claim, "
+                "Research-backed material claims must carry an F-prefixed finding citation, a grounded "
+                "W-prefixed source ID, or a source URL on the same row or paragraph. If the supplied findings "
+                "do not directly support a claim, "
                 "remove it or replace the unsupported value with an explicit RFQ or verification input; "
                 f"never attach an unrelated citation. Uncited examples: {examples}"
             ),
