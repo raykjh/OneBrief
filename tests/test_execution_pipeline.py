@@ -734,6 +734,41 @@ def test_generated_unity_evidence_pair_is_one_causal_repair_bundle() -> None:
     ) == []
 
 
+def test_one_digest_approved_new_product_sidecar_can_extend_causal_contract() -> None:
+    contract = RepairContract.model_validate({
+        "contract_id": "RC-2123456789abcdef",
+        "observation_id": "FO-2123456789abcdef",
+        "progress_kind": "new_hypothesis",
+        "occurrence": 1,
+        "hypothesis": {
+            "hypothesis_id": "RH-2123456789abcdef",
+            "suspected_cause": "The shipped UI lacks its requested visual theme.",
+            "cheapest_probe": "Add one bounded runtime theme sidecar.",
+            "expected_signal": "Fresh screenshots show the approved style.",
+            "repair_boundary": "One production UI source file.",
+            "requires_model_reasoning": True,
+        },
+        "permitted_paths": ["Assets/JULPAE/Scripts/Lobby/LobbyResponsiveLayout.cs"],
+        "verification_ladder": ["compile", "targeted_test", "visual_review"],
+        "execution_allowed": True,
+        "escalation_required": False,
+        "rationale": "The failure is product-owned.",
+    })
+    proposed = ["Assets/JULPAE/Scripts/Common/JulpaeDarkNeonTheme.cs"]
+
+    assert paths_outside_active_repair_contract(
+        proposed,
+        contract,
+        reverify_existing=False,
+        permitted_new_paths=proposed,
+    ) == []
+    assert paths_outside_active_repair_contract(
+        proposed,
+        contract,
+        reverify_existing=False,
+    ) == proposed
+
+
 class FakeGateway:
     def __init__(self, outputs: list[object]):
         self.outputs = outputs

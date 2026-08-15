@@ -317,6 +317,7 @@ def paths_outside_active_repair_contract(
     contract: RepairContract | None,
     *,
     reverify_existing: bool,
+    permitted_new_paths: list[str] | None = None,
 ) -> list[str]:
     """Return only newly proposed paths that exceed the active repair contract.
 
@@ -333,6 +334,10 @@ def paths_outside_active_repair_contract(
         path.replace("\\", "/").casefold()
         for path in contract.permitted_paths
     }
+    permitted.update(
+        path.replace("\\", "/").casefold()
+        for path in (permitted_new_paths or [])
+    )
     normalized_proposed = [
         path.replace("\\", "/").strip("/").casefold()
         for path in proposed_paths
@@ -3174,21 +3179,75 @@ class ExecutionPipeline:
                         development_change_path(item)
                         for item in allowed_changes
                     ]
+            active_feedback = " ".join([
+                *(active_report.blocking_issues if active_report else []),
+                *(active_report.revision_instructions if active_report else []),
+            ])
+            product_target_repair = is_development_product_target_failure(
+                active_feedback
+            )
+            proposed_change_items = development_proposal_changes(raw)
+            approved_context_paths = {
+                str(item.get("repository_path", "")).replace("\\", "/").casefold()
+                for item in prepared_sources
+                if item.get("repository_path")
+            }
+            safe_new_product_sidecars: list[str] = []
+            if (
+                active_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+                and product_target_repair
+                and not reverify_existing
+            ):
+                for item in proposed_change_items:
+                    path = development_change_path(item)
+                    normalized_path = path.replace("\\", "/").casefold()
+                    content = (
+                        item.get("content") if isinstance(item, dict)
+                        else getattr(item, "content", None)
+                    )
+                    base_sha256 = (
+                        item.get("base_sha256") if isinstance(item, dict)
+                        else getattr(item, "base_sha256", None)
+                    )
+                    if (
+                        path
+                        and normalized_path not in approved_context_paths
+                        and base_sha256 is None
+                        and isinstance(content, str)
+                        and content.strip()
+                        and PurePosixPath(normalized_path).suffix == ".cs"
+                        and visual_repair_production_target_allowed(path)
+                        and developer.path_approver(path) is not None
+                    ):
+                        safe_new_product_sidecars.append(path)
+                # A causal exception is intentionally narrower than the normal
+                # compact proposal schema: one bounded new production sidecar.
+                if len(safe_new_product_sidecars) != 1:
+                    safe_new_product_sidecars = []
+                else:
+                    self._write(
+                        output_dir / f"causal_new_sidecar_authority_r{round_number}.json",
+                        json.dumps({
+                            "schema_version": "onebrief-causal-new-sidecar-authority-v1",
+                            "round_number": round_number,
+                            "path": safe_new_product_sidecars[0],
+                            "basis": (
+                                "The active product-owned failure requires a new bounded source; "
+                                "the path remains inside the digest-approved ToolPack and Quest phase."
+                            ),
+                        }, ensure_ascii=False, indent=2),
+                    )
             outside_contract = paths_outside_active_repair_contract(
                 proposed_paths,
                 active_contract,
                 reverify_existing=reverify_existing,
+                permitted_new_paths=safe_new_product_sidecars,
             )
             if outside_contract:
                 raise PermissionError(
                     "repair proposal is outside the causal contract permitted paths: "
                     + ", ".join(outside_contract)
                 )
-            active_feedback = " ".join([
-                *(active_report.blocking_issues if active_report else []),
-                *(active_report.revision_instructions if active_report else []),
-            ])
-            product_target_repair = is_development_product_target_failure(active_feedback)
             evidence_contract_repair = (
                 is_unity_evidence_contract_feedback(active_feedback)
                 or is_missing_unity_evidence_harness(active_feedback)
