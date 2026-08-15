@@ -835,6 +835,43 @@ def test_semantic_product_contract_binds_only_bounded_approved_product_sources()
     ]
 
 
+def test_semantic_product_contract_prioritizes_fresh_diagnostic_owner_paths() -> None:
+    contract = RepairContract.model_validate({
+        "contract_id": "RC-3123456789abcdef",
+        "observation_id": "FO-3123456789abcdef",
+        "progress_kind": "first_observation",
+        "occurrence": 1,
+        "hypothesis": {
+            "hypothesis_id": "RH-3123456789abcdef",
+            "suspected_cause": "The rendered surface remains wrong.",
+            "cheapest_probe": "Inspect its owning source.",
+            "expected_signal": "The trusted state improves.",
+            "repair_boundary": "One product surface.",
+            "requires_model_reasoning": True,
+        },
+        "permitted_paths": ["None", "Assets/JULPAE/Scripts/Lobby/Layout.cs"],
+        "verification_ladder": ["compile", "semantic_observation"],
+        "execution_allowed": True,
+        "escalation_required": False,
+        "rationale": "Use fresh diagnostic ownership.",
+    })
+
+    bound = bind_semantic_product_repair_scope(
+        contract,
+        [],
+        "independent semantic observation failed",
+        diagnostic_paths=[
+            "Assets/JULPAE/Scripts/Localization/JulpaeLoginAccountPanelBinder.cs",
+            "Assets/Tests/PlayMode/OneBriefGeneratedJourneyTest.cs",
+        ],
+    )
+
+    assert bound.permitted_paths == [
+        "Assets/JULPAE/Scripts/Lobby/Layout.cs",
+        "Assets/JULPAE/Scripts/Localization/JulpaeLoginAccountPanelBinder.cs",
+    ]
+
+
 def test_cross_surface_visual_failure_rejects_unrelated_local_anchor() -> None:
     context = [
         {"path": "Assets/Scripts/StoreCatalogImageBinding.cs", "anchors": [{"anchor_id": "A1"}]},

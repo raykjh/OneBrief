@@ -489,6 +489,7 @@ def bind_semantic_product_repair_scope(
     contract: RepairContract,
     sources: list[dict[str, object]],
     failure_text: str,
+    diagnostic_paths: list[str] | None = None,
 ) -> RepairContract:
     """Bind the semantic repair contract to its approved diagnostic sources.
 
@@ -501,12 +502,17 @@ def bind_semantic_product_repair_scope(
     """
 
     selected_paths = [
-        str(source.get("repository_path", "")).replace("\\", "/")
+        str(source.get("repository_path") or "").replace("\\", "/")
         for source in relevant_product_repair_sources(sources, failure_text)
     ]
     permitted = [
         path.replace("\\", "/")
-        for path in [*contract.permitted_paths, *selected_paths]
+        for path in [
+            *contract.permitted_paths,
+            *(diagnostic_paths or []),
+            *selected_paths,
+        ]
+        if path and path.casefold() not in {"none", "null"}
         if path_allowed_for_phase(path, ExecutionPhase.PRODUCT_IMPLEMENTATION)
         and visual_repair_production_target_allowed(path)
     ]
@@ -2511,6 +2517,7 @@ class ExecutionPipeline:
             failed_criterion_ids: list[str] | None = None,
             preserve_criterion_ids: list[str] | None = None,
             strategy_fingerprint: str | None = None,
+            diagnostic_paths: list[str] | None = None,
         ) -> RepairContract:
             """Persist the causal observation before authorizing another maker turn."""
 
@@ -2533,6 +2540,7 @@ class ExecutionPipeline:
                     contract,
                     prepared_sources,
                     failure_text,
+                    diagnostic_paths,
                 )
             convergence_ledger = convergence_policy.record(
                 convergence_ledger, observation, contract
@@ -3900,6 +3908,20 @@ class ExecutionPipeline:
                     failure_phase_decision.next_phase is not None
                     and failure_phase_decision.next_phase != active_phase
                 )
+                diagnostic_paths: list[str] = []
+                if is_development_product_target_failure(feedback):
+                    diagnostic_context = refresh_diagnostic_repository_context(
+                        feedback,
+                        _ctx,
+                        round_number,
+                    )
+                    diagnostic_paths = [
+                        str(item.get("path", ""))
+                        for item in semantic_visual_edit_context(
+                            diagnostic_context,
+                            feedback,
+                        )
+                    ]
                 convergence_contract = (
                     latest_repair_contract
                     if reverify_existing and latest_repair_contract is not None
@@ -3917,6 +3939,7 @@ class ExecutionPipeline:
                             str(item.path) for item in getattr(delta, "changes", [])
                         ]),
                         strategy_fingerprint=delta_strategy_fingerprint,
+                        diagnostic_paths=diagnostic_paths,
                     )
                 )
                 if not convergence_contract.execution_allowed:
