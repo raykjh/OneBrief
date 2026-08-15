@@ -92,6 +92,16 @@ class BudgetedAdkLlm(BaseLlm):
         for compact_attempt in range(1, 2):
             if not invalid:
                 break
+            verifier_retry_guidance = ""
+            if self.response_model is VerificationReport:
+                verifier_retry_guidance = (
+                    " This is an independent verification receipt, not a narrative artifact or maker edit. "
+                    "Return exactly one criterion_check for every Q-prefixed completion_contract criterion in "
+                    "the work contract, copying each criterion_id verbatim. Additional system checks may use null. "
+                    "Do not invent evidence identifiers: set evidence_bindings to an empty list unless the input "
+                    "contains a trusted runtime binding copied verbatim. Keep evidence concise, and make verdict, "
+                    "blocking_issues, revision_instructions, and missing_information mutually consistent."
+                )
             # A truncated structured response is not useful evidence and cannot be
             # parsed by ADK. Retry once as a deliberately small incremental edit.
             # Later convergence rounds can add the next increment after deterministic
@@ -114,6 +124,7 @@ class BudgetedAdkLlm(BaseLlm):
                     "keep its body under 8000 characters while covering every acceptance criterion with "
                     "concise evidence. Implement the highest-priority verified slice now; later maker "
                     "rounds can add remaining detail. Return only the required schema."
+                    + verifier_retry_guidance
                 ))],
             )]
             retry_config = llm_request.config.model_copy(deep=True)

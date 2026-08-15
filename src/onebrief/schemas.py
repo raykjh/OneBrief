@@ -118,6 +118,9 @@ class IntakeRequest(BaseModel):
     desired_output: Annotated[str | None, Field(max_length=2000)] = None
     internal_sources: list[InternalSource] = Field(default_factory=list, max_length=50)
     public_research_allowed: bool = False
+    forbidden_output_terms: list[
+        Annotated[str, Field(min_length=1, max_length=200)]
+    ] = Field(default_factory=list, max_length=50)
     budget_limit_usd: Annotated[float | None, Field(gt=0)] = None
     max_revision_rounds: Annotated[int, Field(ge=0, le=6)] = 6
     toolpack_ids: list[ToolPackId] = Field(default_factory=list, max_length=5)

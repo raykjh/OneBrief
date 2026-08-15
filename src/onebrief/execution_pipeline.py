@@ -2194,8 +2194,16 @@ class ExecutionPipeline:
             "no equivalent exists from novelty, a registration date, or category-level "
             "comparison. Use bounded search-scope language and preserve uncertainty. Do not add unsolicited next "
             "steps beyond an explicit scope ceiling. If no supplied finding directly supports a material claim, "
-            "remove the claim or replace its unsupported value with an explicit RFQ or verification input instead "
-            "of preserving it or attaching an unrelated citation. When repair_plan is present, treat it as the complete scope "
+            "do not treat missing evidence as proof that the claim is false. Remove the claim, replace its unsupported "
+            "value with an explicit RFQ or verification input, or retain a plausible causal idea only as an explicit "
+            "hypothesis with a concrete test or pilot and a boundary against marketing it as established before validation. "
+            "A user-authorized project fact or operational decision is authoritative for this project when it is present "
+            "in the work contract or a supplied finding; preserve it and cite that finding instead of demanding a public paper. "
+            "Do not generalize a local audit finding into a universal clinical efficacy claim. "
+            "The work contract's forbidden_output_terms are private decision context: use the resulting requirements but "
+            "never copy, paraphrase, attribute, or otherwise disclose those terms in the deliverable. "
+            "For health outcomes, words such as prevents, treats, or reduces disease require direct evidence and cannot "
+            "be downgraded merely by adding 'may'. Never attach an unrelated citation. When repair_plan is present, treat it as the complete scope "
             "of the revision, repair each listed evidence failure, and preserve passing criteria. Return only the "
             "required structured object. "
             + WRITER_PROFILE.instruction()
@@ -2209,6 +2217,12 @@ class ExecutionPipeline:
             "N products or examples, verify N named, directly source-linked entries. Novelty does not prove absence "
             "of equivalents, and absolute safety or uniqueness claims fail without bounded evidence. Reject any "
             "section beyond an explicit user scope ceiling. "
+            "Distinguish contradiction from uncertainty: lack of direct evidence does not make a plausible claim false. "
+            "Accept an uncited causal idea only when the artifact clearly labels it as a hypothesis, defines a concrete "
+            "test or pilot, and forbids treating it as an established health or marketing claim before validation. "
+            "Treat user-authorized operational decisions and supplied local audit findings as valid project evidence, while "
+            "checking that the artifact does not overgeneralize them into universal medical efficacy. "
+            "Fail any public artifact that contains or reveals the work contract's forbidden_output_terms. "
             "For each completion_contract criterion, return exactly one check with its Q-prefixed criterion_id; "
             "leave criterion_id null only for additional system checks. Give exact revision instructions and "
             "never edit the artifact. Return only the structured object. "
@@ -4577,6 +4591,7 @@ class ExecutionPipeline:
             ),
             "assumptions": requirements.assumptions,
             "public_research_allowed": intake.public_research_allowed,
+            "forbidden_output_terms": intake.forbidden_output_terms,
         }
         source_payload = [
             {

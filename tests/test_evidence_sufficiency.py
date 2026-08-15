@@ -353,6 +353,53 @@ def test_explicit_estimate_disclaimer_is_not_itself_an_uncited_price_claim() -> 
     assert not any(item.kind.value == "uncited_material_claim" for item in result.issues)
 
 
+def test_bounded_causal_hypothesis_is_not_treated_as_an_established_claim() -> None:
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="일회용 목욕 타월의 운영상 이점을 조사해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft(
+            "검증 가설: 재사용과 세탁 단계를 생략하면 간병 노동과 오염 기회를 줄일 가능성이 있다. "
+            "실제 효과는 비교 파일럿으로 측정하며, 입증 전 예방 효과로 광고하지 않는다.\n\n"
+            "https://example.com/products/a"
+        ),
+    )
+
+    assert not any(item.kind.value == "uncited_material_claim" for item in result.issues)
+
+
+def test_unqualified_health_prevention_marketing_claim_still_requires_evidence() -> None:
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="일회용 목욕 타월의 운영상 이점을 조사해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft(
+            "소구점: 세탁 비용 절감, 간병인 노동 강도 감소, 욕창 및 교차 감염 예방.\n\n"
+            "https://example.com/products/a"
+        ),
+    )
+
+    assert any(item.kind.value == "uncited_material_claim" for item in result.issues)
+
+
+def test_private_decision_context_is_forbidden_only_in_the_deliverable() -> None:
+    result = validate_evidence_sufficiency(
+        IntakeRequest(
+            goal="비공개 운영 근거를 반영한 일회용 제품을 제안해줘.",
+            public_research_allowed=True,
+            forbidden_output_terms=["PRIVATE-AUDIT-NAME"],
+        ),
+        _requirements(),
+        [_public_source()],
+        _draft(
+            "PRIVATE-AUDIT-NAME의 지적에 따라 1회용으로 변경한다. [F01]\n\n"
+            "https://example.com/products/a"
+        ),
+    )
+
+    assert any(item.kind.value == "forbidden_output_disclosure" for item in result.issues)
+
+
 def test_trusted_public_source_registry_is_appended_without_model_copying() -> None:
     source = InternalSource(
         name="public_research.md",

@@ -21,6 +21,7 @@ class EvidenceSufficiencyIssueKind(StrEnum):
     OUT_OF_SCOPE_FOLLOWUP = "out_of_scope_followup"
     UNCITED_MATERIAL_CLAIM = "uncited_material_claim"
     UNGROUNDED_MODEL_URL = "ungrounded_model_url"
+    FORBIDDEN_OUTPUT_DISCLOSURE = "forbidden_output_disclosure"
 
 
 class EvidenceSufficiencyIssue(BaseModel):
@@ -89,6 +90,17 @@ _LABEL_ONLY = re.compile(r"^(?:[-*]\s*)?\*\*[^*]+\*\*:?\s*$")
 _ESTIMATE_UNCERTAINTY = re.compile(
     r"(?:추정치|가정|estimate|assumption).*(?:서면\s*견적|확인\s*필요|검증\s*필요|"
     r"written\s+quotation|requires?\s+(?:verification|confirmation))",
+    re.IGNORECASE,
+)
+_HYPOTHESIS_MARKER = re.compile(
+    r"가설|추론|가능성|잠재적|예상|검토\s*대상|"
+    r"\b(?:hypothesis|inference|may|might|could|potential)\b",
+    re.IGNORECASE,
+)
+_VALIDATION_BOUNDARY = re.compile(
+    r"검증|시험|파일럿|측정|확인\s*필요|입증\s*전|주장\s*금지|광고\s*금지|"
+    r"\b(?:test|pilot|measure|requires?\s+(?:verification|confirmation)|"
+    r"before\s+(?:claiming|marketing))\b",
     re.IGNORECASE,
 )
 _PROPOSAL_SCOPE_STATEMENT = re.compile(
@@ -300,6 +312,10 @@ def _uncited_material_claims(
             or has_grounded_web_citation
             or has_supported_mixed_citation
             or _ESTIMATE_UNCERTAINTY.search(line)
+            or (
+                _HYPOTHESIS_MARKER.search(line)
+                and _VALIDATION_BOUNDARY.search(line)
+            )
             or _PROPOSAL_SCOPE_STATEMENT.search(line)
             or _NORMATIVE_TEST_PROCEDURE.search(line)
             or _NORMATIVE_CHECKLIST.search(line)
@@ -322,6 +338,19 @@ def validate_evidence_sufficiency(
     body = draft.body_markdown
     has_public_research = any(source.name == "public_research.md" for source in sources)
     research_text = _research_text(requirements)
+
+    forbidden_disclosures = [
+        term for term in intake.forbidden_output_terms
+        if term.casefold() in body.casefold()
+    ]
+    if forbidden_disclosures:
+        issues.append(EvidenceSufficiencyIssue(
+            kind=EvidenceSufficiencyIssueKind.FORBIDDEN_OUTPUT_DISCLOSURE,
+            message=(
+                "The deliverable contains user-configured private decision context. Remove every forbidden "
+                "disclosure from the public artifact while preserving the resulting product requirement."
+            ),
+        ))
 
     if has_public_research and research_text and not _URL.search(body):
         issues.append(EvidenceSufficiencyIssue(
@@ -424,8 +453,9 @@ def validate_evidence_sufficiency(
             message=(
                 "Research-backed material claims must carry an F-prefixed finding citation, a grounded "
                 "W-prefixed source ID, or a source URL on the same row or paragraph. If the supplied findings "
-                "do not directly support a claim, "
-                "remove it or replace the unsupported value with an explicit RFQ or verification input; "
+                "do not directly support a claim, that does not prove the claim false. Either remove it, "
+                "replace the unsupported value with an explicit RFQ or verification input, or label a plausible "
+                "causal idea as a hypothesis with a concrete test/pilot boundary and no pre-validation marketing claim; "
                 f"never attach an unrelated citation. Uncited examples: {examples}"
             ),
         ))
