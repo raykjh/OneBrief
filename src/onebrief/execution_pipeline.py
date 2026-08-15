@@ -2190,7 +2190,9 @@ class ExecutionPipeline:
             "URLs beside the claims or rows they support; an F-prefixed finding ID alone is not inspectable "
             "evidence. Never infer that no equivalent exists from novelty, a registration date, or category-level "
             "comparison. Use bounded search-scope language and preserve uncertainty. Do not add unsolicited next "
-            "steps beyond an explicit scope ceiling. When repair_plan is present, treat it as the complete scope "
+            "steps beyond an explicit scope ceiling. If no supplied finding directly supports a material claim, "
+            "remove the claim or replace its unsupported value with an explicit RFQ or verification input instead "
+            "of preserving it or attaching an unrelated citation. When repair_plan is present, treat it as the complete scope "
             "of the revision, repair each listed evidence failure, and preserve passing criteria. Return only the "
             "required structured object. "
             + WRITER_PROFILE.instruction()

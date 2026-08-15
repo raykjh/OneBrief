@@ -241,7 +241,9 @@ def test_uncited_material_claim_is_rejected_at_row_or_paragraph_level() -> None:
         _draft(body),
     )
 
-    assert any(item.kind.value == "uncited_material_claim" for item in result.issues)
+    issue = next(item for item in result.issues if item.kind.value == "uncited_material_claim")
+    assert "explicit RFQ or verification input" in issue.message
+    assert "unrelated citation" in issue.message
 
 
 def test_grouped_finding_citations_count_as_same_paragraph_evidence() -> None:
@@ -316,6 +318,33 @@ def test_scope_gate_allows_filing_classification_but_rejects_filing_action() -> 
 
     assert not any(item.kind.value == "out_of_scope_followup" for item in allowed.issues)
     assert any(item.kind.value == "out_of_scope_followup" for item in rejected.issues)
+
+
+def test_scope_gate_allows_requested_pilot_and_registration_plan_without_execution() -> None:
+    result = validate_evidence_sufficiency(
+        IntakeRequest(
+            goal=(
+                "제품 제안서와 단계별 파일럿 계획을 작성하되 공급사에 연락하거나 "
+                "제품을 등록하지 마."
+            ),
+            desired_output="OEM 견적 요청 체크리스트, 품목제조신고 절차, 단계별 파일럿 계획",
+            public_research_allowed=True,
+        ),
+        _requirements(),
+        [_public_source()],
+        _draft(
+            "# 단계별 파일럿 계획\n\n"
+            "1단계는 OEM 견적 요청 체크리스트를 확정한다.\n\n"
+            "2단계는 위생용품 품목제조신고 절차와 필요 서류를 검토한다.\n\n"
+            "실제 연락, 신청, 생산은 이 제안서 범위에서 수행하지 않는다. [F01]\n\n"
+            "| 제품 | 출처 |\n|---|---|\n"
+            "| Alpha | https://example.com/products/a |\n"
+            "| Beta | https://example.com/products/b |\n"
+            "| Gamma | https://example.com/products/c |"
+        ),
+    )
+
+    assert not any(item.kind.value == "out_of_scope_followup" for item in result.issues)
 
 
 def test_reference_list_urls_do_not_satisfy_a_comparison_table_contract() -> None:

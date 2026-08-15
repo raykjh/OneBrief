@@ -63,15 +63,9 @@ _SAFETY_ABSOLUTE = re.compile(
     re.IGNORECASE,
 )
 _SCOPE_LIMIT = re.compile(r"까지만|범위에서\s*제외|하지\s*마|\bonly\b|\bdo\s+not\b", re.IGNORECASE)
-_FOLLOWUP_HEADING = re.compile(
-    r"^#{1,6}\s+.*(?:후속\s*작업|다음\s*단계|생산\s*단계|판매\s*단계|"
-    r"next\s+steps?|follow[- ]?up|implementation\s+guide|production\s+stage)",
-    re.IGNORECASE | re.MULTILINE,
-)
 _SCOPE_LEAKAGE = re.compile(
-    r"견적\s*요청용|"
-    r"품목제조신고(?:를|의)?\s*(?:신청|진행|준비|제출|절차|단계|착수)|"
-    r"즉시\s*(?:활용|생산|판매|출시)|"
+    r"품목제조신고(?:를)?\s*(?:즉시\s*)?(?:신청|진행|제출|착수)|"
+    r"(?:생산|판매|출시)(?:합니다|하겠습니다|한다)|"
     r"(?:production|deployment|sale|launch)[ -]?ready|ready\s+for\s+(?:production|deployment|sale|launch)",
     re.IGNORECASE,
 )
@@ -305,9 +299,7 @@ def validate_evidence_sufficiency(
         ))
 
     scope_text = "\n".join(filter(None, [intake.goal, intake.desired_output or ""]))
-    if _SCOPE_LIMIT.search(scope_text) and (
-        _FOLLOWUP_HEADING.search(body) or _SCOPE_LEAKAGE.search(body)
-    ):
+    if _SCOPE_LIMIT.search(scope_text) and _SCOPE_LEAKAGE.search(body):
         issues.append(EvidenceSufficiencyIssue(
             kind=EvidenceSufficiencyIssueKind.OUT_OF_SCOPE_FOLLOWUP,
             message=(
@@ -323,7 +315,9 @@ def validate_evidence_sufficiency(
             kind=EvidenceSufficiencyIssueKind.UNCITED_MATERIAL_CLAIM,
             message=(
                 "Research-backed material claims must carry an F-prefixed finding citation or a source URL "
-                f"on the same row or paragraph. Uncited examples: {examples}"
+                "on the same row or paragraph. If the supplied findings do not directly support a claim, "
+                "remove it or replace the unsupported value with an explicit RFQ or verification input; "
+                f"never attach an unrelated citation. Uncited examples: {examples}"
             ),
         ))
 
