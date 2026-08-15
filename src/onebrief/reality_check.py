@@ -8,7 +8,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from onebrief.execution_schemas import CriterionCheck, VerificationReport, Verdict
-from onebrief.schemas import IntakeRequest, OutputTarget, RequirementsAnalysis
+from onebrief.schemas import CompletionContract, IntakeRequest, OutputTarget, RequirementsAnalysis
 
 
 class RealityCapability(StrEnum):
@@ -30,6 +30,14 @@ class ObservationRequirement(BaseModel):
     acceptance_dimensions: list[str] = Field(default_factory=list)
 
 
+class ObservationCriterionCheck(BaseModel):
+    """One contract criterion judged from the independently rendered artifact."""
+
+    criterion_id: str = Field(pattern=r"^Q[0-9]{2}$")
+    passed: bool
+    evidence: str = Field(min_length=3, max_length=2_000)
+
+
 class ObservationReceipt(BaseModel):
     capability: RealityCapability
     observer_pack_id: str
@@ -38,6 +46,7 @@ class ObservationReceipt(BaseModel):
     artifact_paths: list[str] = Field(default_factory=list)
     findings: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
+    criterion_checks: list[ObservationCriterionCheck] = Field(default_factory=list, max_length=12)
 
 
 class RealityCheckResult(BaseModel):
@@ -155,6 +164,11 @@ def evaluate_reality_check(
         return any(any(marker in command for marker in markers) for command in commands)
 
     receipts = _trusted_receipts(development_evidence)
+    independent_semantic = [
+        receipt for receipt in receipts
+        if receipt.capability == RealityCapability.SEMANTIC_OBSERVATION
+        and receipt.independent_from_maker
+    ]
     observed = {
         RealityCapability.AUTOMATED_EXECUTION: has("test", "lint", "verification"),
         RealityCapability.RUNTIME_INTERACTION: has(
@@ -164,10 +178,8 @@ def evaluate_reality_check(
             "visual", "screenshot", "glyph", "render"
         ),
         RealityCapability.SEMANTIC_OBSERVATION: any(
-            receipt.capability == RealityCapability.SEMANTIC_OBSERVATION
-            and receipt.status == ObservationStatus.OBSERVED
-            and receipt.independent_from_maker
-            for receipt in receipts
+            receipt.status == ObservationStatus.OBSERVED
+            for receipt in independent_semantic
         ),
     }
     messages = {
@@ -179,7 +191,19 @@ def evaluate_reality_check(
             "Self-reported locale names, screenshot hashes, and test command names cannot prove visible language or quality."
         ),
     }
-    issues = [messages[item.capability] for item in requirements_list if not observed[item.capability]]
+    failed_semantic = next((
+        receipt for receipt in independent_semantic
+        if receipt.status == ObservationStatus.FAILED
+    ), None)
+    issues: list[str] = []
+    for item in requirements_list:
+        if observed[item.capability]:
+            continue
+        if item.capability == RealityCapability.SEMANTIC_OBSERVATION and failed_semantic:
+            detail = "; ".join(failed_semantic.findings)[:4_000]
+            issues.append("Independent semantic observation failed: " + detail)
+        else:
+            issues.append(messages[item.capability])
     return RealityCheckResult(
         requirements=requirements_list,
         receipts=receipts,
@@ -189,17 +213,60 @@ def evaluate_reality_check(
 
 
 def apply_reality_check_override(
-    report: VerificationReport, result: RealityCheckResult
+    report: VerificationReport,
+    result: RealityCheckResult,
+    contract: CompletionContract | None = None,
 ) -> VerificationReport:
     if result.verdict_override is None or report.verdict == Verdict.NEEDS_INFORMATION:
         return report
     checks = [*report.criterion_checks]
-    for issue in result.issues:
+    failed_receipt_checks = [
+        item
+        for receipt in result.receipts
+        if receipt.capability == RealityCapability.SEMANTIC_OBSERVATION
+        and receipt.independent_from_maker
+        and receipt.status == ObservationStatus.FAILED
+        for item in receipt.criterion_checks
+        if not item.passed
+    ]
+    criterion_by_id = {
+        item.criterion_id: item.description
+        for item in (contract.quality_criteria if contract is not None else [])
+    }
+    for item in failed_receipt_checks:
         checks.append(CriterionCheck(
-            criterion="Reality check: independent observation",
+            criterion_id=item.criterion_id,
+            criterion=criterion_by_id.get(
+                item.criterion_id, "Independent semantic observation"
+            ),
             passed=False,
-            evidence=issue,
+            evidence=item.evidence,
         ))
+    bound_ids = {item.criterion_id for item in failed_receipt_checks}
+    for issue in result.issues:
+        explicit_ids = set(re.findall(r"\bQ[0-9]{2}\b", issue))
+        for criterion_id in sorted(explicit_ids - bound_ids):
+            if contract is not None and criterion_id not in criterion_by_id:
+                continue
+            checks.append(CriterionCheck(
+                criterion_id=criterion_id,
+                criterion=criterion_by_id.get(
+                    criterion_id, "Independent semantic observation"
+                ),
+                passed=False,
+                evidence=issue,
+            ))
+            bound_ids.add(criterion_id)
+        semantic_issue_already_bound = bool(
+            failed_receipt_checks
+            and issue.startswith("Independent semantic observation failed:")
+        )
+        if not explicit_ids and not semantic_issue_already_bound:
+            checks.append(CriterionCheck(
+                criterion="Reality check: independent observation",
+                passed=False,
+                evidence=issue,
+            ))
     return VerificationReport(
         verdict=Verdict.UNVERIFIABLE,
         criterion_checks=checks,

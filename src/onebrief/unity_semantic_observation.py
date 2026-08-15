@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 from pydantic import BaseModel, Field, model_validator
 
 from onebrief.reality_check import (
+    ObservationCriterionCheck,
     ObservationReceipt,
     ObservationStatus,
     RealityCapability,
@@ -82,6 +83,7 @@ class UnityFrameObservation(BaseModel):
 
 class UnitySemanticObservation(BaseModel):
     frames: list[UnityFrameObservation] = Field(min_length=1, max_length=6)
+    criterion_checks: list[ObservationCriterionCheck] = Field(default_factory=list, max_length=12)
     overall_findings: list[str] = Field(min_length=1, max_length=20)
 
     @model_validator(mode="after")
@@ -141,6 +143,12 @@ def observe_unity_visual_evidence(
         "at each supplied viewport. Return exactly one frame entry for every artifact path listed below.\n\n"
         f"GOAL AND COMPLETION CONTRACT:\n{goal_text[:24000]}\n\n"
         "ARTIFACT PATHS:\n" + "\n".join(f"- {item}" for item in allowed.values())
+        + (
+            "\n\nFor every active completion criterion whose truth is visible in these frames, "
+            "return criterion_checks with the exact Q-number, passed boolean, and concrete visual evidence. "
+            "A frame being present is not proof of style, layout, language, or glyph compliance."
+            if strict_visual_quality else ""
+        )
     )
     result = gateway.generate_json_with_images(
         stage="independent_verification",
@@ -172,7 +180,10 @@ def observe_unity_visual_evidence(
             "Unity semantic observer omitted screenshot(s): " + ", ".join(missing)
         )
 
-    passed = all(frame.passed for frame in normalized)
+    passed = (
+        all(frame.passed for frame in normalized)
+        and all(item.passed for item in result.criterion_checks)
+    )
     findings = [
         f"{frame.artifact_path}: {finding}"
         for frame in normalized
@@ -186,6 +197,7 @@ def observe_unity_visual_evidence(
         artifact_paths=[frame.artifact_path for frame in normalized],
         findings=findings,
         limitations=[] if passed else ["At least one rendered Unity state failed semantic inspection."],
+        criterion_checks=result.criterion_checks,
     )
     observation_path.parent.mkdir(parents=True, exist_ok=True)
     observation_path.write_text(receipt.model_dump_json(indent=2) + "\n", encoding="utf-8")

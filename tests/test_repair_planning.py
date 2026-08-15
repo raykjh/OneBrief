@@ -95,3 +95,29 @@ def test_multiple_system_blockers_remain_separate_repair_tasks() -> None:
     assert [task.failure_evidence for task in plan.tasks] == [
         ["capture PNG"], ["operate real scene"]
     ]
+
+
+def test_criterion_cannot_be_preserved_when_an_independent_check_fails_it() -> None:
+    report = VerificationReport(
+        verdict=Verdict.REVISE,
+        criterion_checks=[
+            CriterionCheck(
+                criterion_id="Q02", criterion="Locale switch", passed=True,
+                evidence="The PNG file passed integrity checks.",
+            ),
+            CriterionCheck(
+                criterion_id="Q02", criterion="Locale switch", passed=False,
+                evidence="Independent observation found unchanged visible text.",
+            ),
+        ],
+        blocking_issues=["The rendered locale did not change."],
+        revision_instructions=["Repair the production locale binding."],
+        missing_information=[],
+    )
+
+    plan = build_repair_plan(_contract(), report, round_number=1)
+
+    assert plan is not None
+    assert plan.passing_criterion_ids == []
+    assert plan.tasks[0].criterion_id == "Q02"
+    assert plan.tasks[0].preserve_criterion_ids == []

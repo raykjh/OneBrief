@@ -94,6 +94,29 @@ def test_model_pass_cannot_complete_an_unmatched_required_criterion() -> None:
     assert all(item.status == CompletionStatus.PENDING for item in ledger.criteria)
 
 
+def test_same_report_semantic_failure_overrides_png_integrity_pass() -> None:
+    report = VerificationReport(
+        verdict=Verdict.UNVERIFIABLE,
+        criterion_checks=[
+            CriterionCheck(
+                criterion_id="Q02", criterion="Workflow", passed=True,
+                evidence="The PNG exists and its digest is valid.",
+            ),
+            CriterionCheck(
+                criterion_id="Q02", criterion="Workflow", passed=False,
+                evidence="Independent observation shows the requested UI is absent.",
+            ),
+        ],
+        blocking_issues=["The requested UI is absent."],
+        revision_instructions=[], missing_information=[],
+    )
+
+    ledger = build_completion_ledger(contract(), [(0, report)])
+
+    assert ledger.criteria[1].status == CompletionStatus.UNVERIFIABLE
+    assert ledger.required_passed == 0
+
+
 def test_all_passing_checks_settle_a_contradictory_revise() -> None:
     report = VerificationReport(
         verdict=Verdict.REVISE,

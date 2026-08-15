@@ -8,7 +8,13 @@ from onebrief.reality_check import (
     apply_reality_check_override,
     evaluate_reality_check,
 )
-from onebrief.schemas import IntakeRequest, OutputTarget, RequirementsAnalysis
+from onebrief.schemas import (
+    CompletionContract,
+    IntakeRequest,
+    OutputTarget,
+    QualityCriterion,
+    RequirementsAnalysis,
+)
 
 
 def _requirements(goal: str) -> RequirementsAnalysis:
@@ -107,6 +113,52 @@ def test_maker_self_review_cannot_satisfy_independent_observation() -> None:
     )
 
     assert result.verdict_override == Verdict.UNVERIFIABLE
+
+
+def test_failed_semantic_receipt_is_bound_to_its_contract_criterion() -> None:
+    goal = "Use dark translucent panels and clean sans-serif typography."
+    receipt = {
+        "capability": "semantic_observation",
+        "observer_pack_id": "independent_visual",
+        "status": "failed",
+        "independent_from_maker": True,
+        "artifact_paths": ["lobby.png"],
+        "findings": ["Q05 fails because the lobby is light and serif."],
+        "limitations": [],
+        "criterion_checks": [{
+            "criterion_id": "Q05",
+            "passed": False,
+            "evidence": "The rendered lobby is light and serif, not dark and sans-serif.",
+        }],
+    }
+    requirements = _requirements(goal).model_copy(update={
+        "completion_contract": CompletionContract(
+            target_state="The requested visual design is visible.",
+            quality_criteria=[QualityCriterion(
+                criterion_id="Q05",
+                description="Visual style compliance",
+                evidence_required="Independent rendered screenshot review.",
+            )],
+        )
+    })
+    result = evaluate_reality_check(
+        IntakeRequest(goal=goal, output_target=OutputTarget.UNITY_APP),
+        requirements,
+        _evidence(
+            "unity_tests", "unity_playmode", "unity_visual_screenshot",
+            receipts=[receipt],
+        ),
+    )
+
+    overridden = apply_reality_check_override(
+        _pass(), result, requirements.completion_contract
+    )
+
+    assert "No independent semantic observer" not in result.issues[0]
+    failed = [item for item in overridden.criterion_checks if not item.passed]
+    assert [(item.criterion_id, item.criterion) for item in failed] == [
+        ("Q05", "Visual style compliance")
+    ]
 
 
 def test_maker_runtime_file_cannot_impersonate_independent_observer() -> None:

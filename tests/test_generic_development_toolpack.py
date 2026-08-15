@@ -692,6 +692,39 @@ def test_diagnostic_context_discovers_existing_auth_fixture_without_edit_authori
     assert preferred[0]["anchors"]
 
 
+def test_diagnostic_context_discovers_cross_surface_theme_source_from_visual_failure(
+    tmp_path: Path,
+) -> None:
+    root, registry = _approved_node_project(tmp_path)
+    theme = root / "src" / "UI" / "GlobalVisualTheme.cs"
+    theme.parent.mkdir(parents=True)
+    theme.write_text(
+        "public class GlobalVisualTheme {\n"
+        "  void ApplyPanelStyle() { var neonAccent = \"cyan\"; var sansSerif = true; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "Add global visual theme source")
+    ExternalProjectImporter(registry).import_bytes((root / MANIFEST_NAME).read_bytes())
+    lifecycle = ProjectToolPackLifecycle("generic-node", registry)
+    state = lifecycle.generate_and_qualify()
+    lifecycle.approve(state.qualification.toolpack_sha256)
+
+    context = ApprovedProjectDevelopmentToolPack(
+        "generic-node", registry
+    ).inspect_diagnostic_context(
+        tmp_path / "visual-diagnostic",
+        "Independent Unity semantic visual observation failed: lobby and settings use serif "
+        "typography, light opaque panels, and no neon accents instead of the requested "
+        "cross-surface visual style.",
+    )
+
+    matched = next(item for item in context if item["path"] == "src/UI/GlobalVisualTheme.cs")
+    assert matched["anchors"]
+    assert "neonAccent" in matched["content_excerpt"]
+
+
 def test_generic_inspection_understands_korean_localization_goal(tmp_path: Path) -> None:
     root, registry = _approved_node_project(tmp_path)
     localization = root / "src" / "Localization"

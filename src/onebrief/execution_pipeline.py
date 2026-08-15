@@ -2302,6 +2302,9 @@ class ExecutionPipeline:
                 "precondition-free click test",
                 "inspect the approved repository context",
                 "existing file was not included in approved model context",
+                "independent unity semantic visual observation failed",
+                "independent semantic observation failed",
+                "deterministic unity layout diagnostics",
             )):
                 return []
             context = development_pack.inspect_diagnostic_context(
@@ -2310,6 +2313,23 @@ class ExecutionPipeline:
             )
             if context:
                 ctx.session.state[MAKER_DIAGNOSTIC_CONTEXT_STATE_KEY] = context
+                if any(marker in normalized for marker in (
+                    "semantic visual observation failed",
+                    "semantic observation failed",
+                    "unity layout diagnostics",
+                )):
+                    ctx.session.state[EXACT_EDIT_ANCHORS_STATE_KEY] = [
+                        {
+                            "path": str(item["path"]),
+                            "anchors": list(item.get("anchors", [])),
+                        }
+                        for item in context
+                        if item.get("anchors")
+                        and path_allowed_for_phase(
+                            str(item.get("path", "")),
+                            ExecutionPhase.PRODUCT_IMPLEMENTATION,
+                        )
+                    ]
             return context
 
         # A Cloud continuation may restore the last verified-or-failed candidate
@@ -3891,7 +3911,9 @@ class ExecutionPipeline:
                 output_dir / f"reality_check_r{round_number}.json",
                 reality.model_dump_json(indent=2),
             )
-            report = apply_reality_check_override(report, reality)
+            report = apply_reality_check_override(
+                report, reality, requirements.completion_contract
+            )
             if requirements.completion_contract is not None:
                 report = settle_consistent_verification(
                     requirements.completion_contract, report
@@ -4009,6 +4031,11 @@ class ExecutionPipeline:
             " When repair_plan is present, treat it as the complete scope of this revision: repair those failed "
             "criterion slices only, preserve every passing criterion listed there, and do not redesign unrelated behavior. "
             "A decompose_scope task must be reduced to one independently verifiable source change before editing."
+            " When independent semantic observation reports a visual defect across several real Unity surfaces, "
+            "do not keep tuning one local control. Select the smallest production-owned cross-surface styling hook; "
+            "when no existing component owns the shared concern, one bounded new runtime theme component with a safe "
+            "RuntimeInitializeOnLoadMethod entrypoint is preferable to unrelated local edits. Preserve product assets, "
+            "behavior, and identity unless the active contract explicitly authorizes replacing them."
             " When repair_contract is present, it is the causal contract for this turn. Follow its cheapest_probe, "
             "stay inside permitted_paths and repair_boundary, and produce evidence in its verification_ladder order. "
             "Do not claim a different cause merely to evade the progress gate; if the probe cannot distinguish the "

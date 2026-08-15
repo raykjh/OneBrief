@@ -105,6 +105,42 @@ def test_unity_semantic_observer_rejects_blank_runtime_frame(tmp_path: Path) -> 
     assert payload["status"] == "failed"
 
 
+def test_unity_semantic_observer_persists_failed_criterion_binding(tmp_path: Path) -> None:
+    gateway = FakeGateway({
+        "frames": [
+            {"artifact_path": "screenshots/desktop.png", "visible_text_samples": ["Lobby"],
+             "findings": ["The panel is light and opaque."], "passed": False},
+            {"artifact_path": "screenshots/mobile.png", "visible_text_samples": ["Lobby"],
+             "findings": ["The typography is serif."], "passed": False},
+        ],
+        "criterion_checks": [{
+            "criterion_id": "Q05",
+            "passed": False,
+            "evidence": "Both rendered lobby views violate the active visual style.",
+        }],
+        "overall_findings": ["Q05 is not satisfied."],
+    })
+    output = tmp_path / "independent_observations" / "unity.json"
+
+    with pytest.raises(RuntimeError, match="semantic visual observation failed"):
+        observe_unity_visual_evidence(
+            gateway,
+            model="gemini-test",
+            evidence_dir=_evidence(tmp_path),
+            observation_path=output,
+            goal_text="Q05 requires a dark sans-serif lobby.",
+            strict_visual_quality=True,
+        )
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["criterion_checks"] == [{
+        "criterion_id": "Q05",
+        "passed": False,
+        "evidence": "Both rendered lobby views violate the active visual style.",
+    }]
+    assert "exact Q-number" in str(gateway.calls[0]["contents"])
+
+
 def test_visual_quality_review_is_bound_to_active_criteria() -> None:
     behavioral = {
         "goal": "The Login surface reaches Lobby.",

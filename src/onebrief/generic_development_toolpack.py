@@ -1849,6 +1849,10 @@ class ApprovedProjectDevelopmentToolPack:
             (("audio", "volume", "sound", "bgm", "sfx"), {
                 "audio", "volume", "sound", "music", "bgm", "sfx", "slider",
             }),
+            (("visual style", "typography", "neon", "semi-transparent", "serif", "sans-serif"), {
+                "theme", "style", "visual", "typography", "font", "color", "panel",
+                "background", "image", "canvas", "text", "button", "popup", "login", "lobby",
+            }),
         )
         for markers, related in concept_expansions:
             if any(marker in lowered for marker in markers):

@@ -112,6 +112,11 @@ def build_completion_ledger(
     }
     ordered_reports = sorted(reports, key=lambda item: item[0])
     for round_number, report in ordered_reports:
+        failed_ids = {
+            check.criterion_id
+            for check in report.criterion_checks
+            if not check.passed and check.criterion_id
+        }
         for check in report.criterion_checks:
             index = _match_index(contract, check.criterion_id, check.criterion)
             for binding in check.evidence_bindings:
@@ -141,7 +146,7 @@ def build_completion_ledger(
                 verdict=report.verdict,
                 evidence_bindings=check.evidence_bindings,
             ))
-            if check.passed:
+            if check.passed and check.criterion_id not in failed_ids:
                 state.status = CompletionStatus.PASSED
                 state.failure_reasons = []
                 state.revision_instructions = []

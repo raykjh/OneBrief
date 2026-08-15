@@ -75,11 +75,16 @@ def build_repair_plan(
     failed = [check for check in report.criterion_checks if not check.passed]
     if not failed:
         return None
-    passing = [
+    failed_ids = {
+        check.criterion_id
+        for check in failed
+        if check.criterion_id
+    }
+    passing = list(dict.fromkeys([
         check.criterion_id
         for check in report.criterion_checks
-        if check.passed and check.criterion_id
-    ]
+        if check.passed and check.criterion_id and check.criterion_id not in failed_ids
+    ]))
     known = list(prior_fingerprints or [])
     contract_by_id = {item.criterion_id: item for item in contract.quality_criteria}
     tasks: list[RepairTask] = []
