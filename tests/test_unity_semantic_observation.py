@@ -263,6 +263,36 @@ def test_behavioral_observer_cannot_fail_compile_criterion_from_screenshots(
     assert receipt.criterion_checks == []
 
 
+def test_visual_observer_drops_nonvisual_log_findings_from_receipt(
+    tmp_path: Path,
+) -> None:
+    gateway = FakeGateway({
+        "frames": [
+            {"artifact_path": "screenshots/desktop.png", "visible_text_samples": ["Dashboard"],
+             "findings": ["The dashboard navigation is visibly rendered."], "passed": True},
+            {"artifact_path": "screenshots/mobile.png", "visible_text_samples": ["Profile"],
+             "findings": ["The profile panel is visibly rendered."], "passed": True},
+        ],
+        "overall_findings": [
+            "The requested UI states are visible.",
+            "Multiple criteria require specific log evidence which is not provided in the visual artifacts.",
+        ],
+    })
+
+    receipt = observe_unity_visual_evidence(
+        gateway,
+        model="gemini-test",
+        evidence_dir=_evidence(tmp_path),
+        observation_path=tmp_path / "visual-observation.json",
+        goal_text="Verify the rendered Dashboard and Profile surfaces.",
+    )
+
+    assert receipt.status == ObservationStatus.OBSERVED
+    assert "The requested UI states are visible." in receipt.findings
+    assert all("log evidence" not in finding for finding in receipt.findings)
+    assert "never mark them missing" in str(gateway.calls[0]["system_instruction"])
+
+
 def test_behavioral_observation_excludes_advisory_whole_project_architecture() -> None:
     contract = {
         "goal": "Login reaches Lobby.",

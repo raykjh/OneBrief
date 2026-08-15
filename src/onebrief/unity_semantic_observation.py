@@ -29,6 +29,26 @@ _VISUAL_QUALITY_MARKERS = (
     "desktop aspect",
 )
 
+_NONVISUAL_FINDING_MARKERS = (
+    "compilation log",
+    "compile log",
+    "interaction log",
+    "test log",
+    "log evidence",
+    "logs are not",
+    "logs were not",
+    "not provided in the visual",
+    "not provided with the visual",
+    "criteria require specific log",
+)
+
+
+def _is_visual_finding(finding: str) -> bool:
+    """Reject capability claims that cannot be learned from rendered pixels."""
+
+    normalized = " ".join(finding.split()).casefold()
+    return not any(marker in normalized for marker in _NONVISUAL_FINDING_MARKERS)
+
 
 def _semantic_criterion_ids(goal_text: str) -> set[str]:
     """Return only contract criteria an image observer is authorized to judge."""
@@ -186,7 +206,10 @@ def observe_unity_visual_evidence(
         "You are OneBrief's independent visual verifier. Be conservative, concrete, and "
         "evidence-bound. Never infer invisible UI from test metadata. Keep each frame to no "
         "more than three short findings and three short visible-text samples. Do not repeat a "
-        "finding across frames; use criterion_checks for the shared verdict."
+        "finding across frames; use criterion_checks for the shared verdict. Judge rendered "
+        "pixels only. Compilation, runtime interaction, command success, logs, and other "
+        "nonvisual evidence are verified by separate trusted adapters: never mark them missing, "
+        "failed, or absent from a screenshot and never mention them in findings."
     )
     try:
         result = gateway.generate_json_with_images(
@@ -251,7 +274,11 @@ def observe_unity_visual_evidence(
         f"{frame.artifact_path}: {finding}"
         for frame in normalized
         for finding in frame.findings
-    ] + list(result.overall_findings)
+        if _is_visual_finding(finding)
+    ] + [
+        finding for finding in result.overall_findings
+        if _is_visual_finding(finding)
+    ]
     receipt = ObservationReceipt(
         capability=RealityCapability.SEMANTIC_OBSERVATION,
         observer_pack_id="onebrief_unity_semantic_visual_observer_v1",
