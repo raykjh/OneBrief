@@ -305,11 +305,19 @@ def test_research_reentry_request_is_bound_to_the_new_continuation(
     )
     JobStore(source_dir).finish(JobStatus.PARTIAL, stage="verification", message="evidence gap")
 
-    child, _actual, _approved, _reused = create_budget_preserving_continuation(
+    class ResearchReuseSource:
+        def download_reusable_artifacts(self, destination: Path) -> list[str]:
+            destination.mkdir(parents=True, exist_ok=True)
+            (destination / "public_research.json").write_text('{"sources":[]}', "utf-8")
+            (destination / "analysis.json").write_text('{"stale":true}', "utf-8")
+            (destination / "draft_r0.json").write_text('{"stale":true}', "utf-8")
+            return ["public_research.json", "analysis.json", "draft_r0.json"]
+
+    child, _actual, _approved, reused = create_budget_preserving_continuation(
         source_job_dir=source_dir,
         source_job_uri="gs://bucket/jobs/source",
         jobs_dir=tmp_path / "children",
-        reusable_source=ReuseSource(),
+        reusable_source=ResearchReuseSource(),
         explicit_child_approval_usd=0.15,
         research_reentry=True,
         research_blocking_issues=["Three comparison rows lack direct URLs."],
@@ -322,6 +330,10 @@ def test_research_reentry_request_is_bound_to_the_new_continuation(
     assert request["max_refinement_calls"] == 2
     assert request["blocking_issues"] == ["Three comparison rows lack direct URLs."]
     assert manifest["research_reentry"] is True
+    assert (child / "work" / "public_research.json").is_file()
+    assert not (child / "work" / "analysis.json").exists()
+    assert not (child / "work" / "draft_r0.json").exists()
+    assert reused == ("public_research.json",)
 
 
 def test_targeted_repair_estimate_charges_only_remaining_work() -> None:

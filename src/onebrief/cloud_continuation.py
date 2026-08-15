@@ -258,6 +258,19 @@ def create_budget_preserving_continuation(
         reused_items.extend(
             supplemental_reusable_source.download_reusable_artifacts(child_dir / "work")
         )
+    if research_reentry:
+        # Investigator re-entry changes the evidence basis and finding IDs. A prior
+        # analysis or narrative candidate would be stale by construction and can
+        # immediately recreate the same untraceable citations before the new maker
+        # receives the refreshed evidence.
+        child_work = child_dir / "work"
+        (child_work / "analysis.json").unlink(missing_ok=True)
+        for path in child_work.glob("draft_r*.json"):
+            path.unlink(missing_ok=True)
+        reused_items = [
+            item for item in reused_items
+            if item != "analysis.json" and not item.startswith("draft_r")
+        ]
     if reusable_team_plan is not None:
         child_id = JobStore(child_dir).read().job_id
         plan = reusable_team_plan.model_copy(update={"project_id": child_id})
