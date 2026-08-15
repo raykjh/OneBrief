@@ -24,6 +24,8 @@ MAKER_STATE_KEY = "onebrief_maker_artifact"
 VERIFICATION_STATE_KEY = "onebrief_verification"
 ROUND_STATE_KEY = "onebrief_convergence_round"
 VERIFIER_CONTEXT_STATE_KEY = "onebrief_verifier_context"
+WORK_CONTRACT_STATE_KEY = "onebrief_work_contract"
+ANALYSIS_PACKAGE_STATE_KEY = "onebrief_analysis_package"
 SKIP_VERIFIER_STATE_KEY = "onebrief_skip_verifier"
 REVERIFY_EXISTING_STATE_KEY = "onebrief_reverify_existing_candidate"
 EXACT_EDIT_ANCHORS_STATE_KEY = "onebrief_exact_edit_anchors"
@@ -51,6 +53,7 @@ class BudgetedAdkLlm(BaseLlm):
     gateway: Any
     stage: str
     response_model: Any = None
+    required_criterion_ids: tuple[str, ...] = ()
 
     @override
     async def generate_content_async(
@@ -81,7 +84,19 @@ class BudgetedAdkLlm(BaseLlm):
                     isinstance(self.response_model, type)
                     and issubclass(self.response_model, BaseModel)
                 ):
-                    self.response_model.model_validate(parsed)
+                    validated = self.response_model.model_validate(parsed)
+                    if self.response_model is VerificationReport and self.required_criterion_ids:
+                        observed = {
+                            check.criterion_id
+                            for check in validated.criterion_checks
+                            if check.criterion_id
+                        }
+                        missing = sorted(set(self.required_criterion_ids) - observed)
+                        if missing:
+                            return True, (
+                                "verification omitted required criterion IDs: "
+                                + ", ".join(missing)
+                            )
             except (TypeError, json.JSONDecodeError) as exc:
                 return True, "invalid JSON: " + str(exc)
             except ValidationError as exc:
@@ -422,6 +437,7 @@ def build_text_convergence_agent(
     maker_schema_selector: MakerSchemaHook | None = None,
     after_maker: MakerHook | None = None,
     verification_gate: GateHook | None = None,
+    required_criterion_ids: tuple[str, ...] = (),
 ) -> AdkConvergenceAgent:
     """Build the production ADK agent tree with one persistent maker identity."""
 
@@ -445,6 +461,8 @@ def build_text_convergence_agent(
 
     def contextual_verifier_instruction(ctx) -> str:
         return verifier_instruction + "\n\nVERIFICATION PAYLOAD:\n" + json.dumps({
+            "work_contract": ctx.state.get(WORK_CONTRACT_STATE_KEY),
+            "analysis_package": ctx.state.get(ANALYSIS_PACKAGE_STATE_KEY),
             "artifact": ctx.state.get(MAKER_STATE_KEY),
             "implementation_evidence": ctx.state.get(VERIFIER_CONTEXT_STATE_KEY),
         }, ensure_ascii=False)
@@ -471,6 +489,7 @@ def build_text_convergence_agent(
         model=BudgetedAdkLlm(
             model=verifier_model, gateway=gateway, stage=verifier_stage,
             response_model=VerificationReport,
+            required_criterion_ids=required_criterion_ids,
         ),
         instruction=contextual_verifier_instruction,
         output_schema=VerificationReport,
@@ -509,12 +528,17 @@ async def run_convergence_agent(
 
     user_id = "onebrief-worker"
     session_id = __import__("uuid").uuid4().hex
+    session_state = dict(initial_state or {})
+    if "work_contract" in payload:
+        session_state[WORK_CONTRACT_STATE_KEY] = payload["work_contract"]
+    if "analysis_package" in payload:
+        session_state[ANALYSIS_PACKAGE_STATE_KEY] = payload["analysis_package"]
     sessions = InMemorySessionService()
     await sessions.create_session(
         app_name=app_name,
         user_id=user_id,
         session_id=session_id,
-        state=initial_state or {},
+        state=session_state,
     )
     runner = Runner(agent=agent, app_name=app_name, session_service=sessions)
     trace: list[dict[str, Any]] = []

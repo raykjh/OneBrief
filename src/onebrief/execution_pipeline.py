@@ -2267,6 +2267,11 @@ class ExecutionPipeline:
             verifier_output_tokens=VERIFIER_OUTPUT_CAP,
             after_maker=after_maker,
             verification_gate=verification_gate,
+            required_criterion_ids=tuple(
+                item.criterion_id
+                for item in requirements.completion_contract.quality_criteria
+                if item.required
+            ) if requirements.completion_contract is not None else (),
         )
         state, trace = asyncio.run(run_convergence_agent(agent, {
             "work_contract": compact_work_contract(
@@ -4475,6 +4480,11 @@ class ExecutionPipeline:
                 else DEVELOPER_OUTPUT_CAP
             ),
             verifier_output_tokens=VERIFIER_OUTPUT_CAP,
+            required_criterion_ids=tuple(
+                item.criterion_id
+                for item in requirements.completion_contract.quality_criteria
+                if item.required
+            ) if requirements.completion_contract is not None else (),
             maker_model_selector=select_maker_model,
             maker_schema_selector=select_maker_schema,
             after_maker=after_maker,

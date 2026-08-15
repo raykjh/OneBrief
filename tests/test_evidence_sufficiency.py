@@ -725,3 +725,18 @@ def test_absolute_causal_benefit_is_rejected_even_in_a_proposal() -> None:
     )
 
     assert any(item.kind.value == "unsupported_causal_absolute" for item in result.issues)
+
+
+def test_material_neutrality_is_not_mistaken_for_market_exclusivity() -> None:
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="제품 제안서를 작성한다.", public_research_allowed=True),
+        _requirements(),
+        [_registry_source("https://example.com/material")],
+        _draft(
+            "특정 제조사의 독점적 원사나 브랜드 부직포에 종속되지 않도록, 물리적 성능 "
+            "지표 중심의 소재 중립적 사양을 정의하고 공급사 견적으로 검증한다. [F01]"
+        ),
+        _public_analysis(["W01"]),
+    )
+
+    assert not any(item.kind.value == "unbounded_absence_claim" for item in result.issues)

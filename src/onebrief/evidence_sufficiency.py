@@ -59,7 +59,7 @@ _QUANTIFIED_ITEMS_EN = re.compile(
 )
 _NEGATIVE_ABSOLUTE = re.compile(
     r"유사\s*(?:제품|서비스|사례)?\s*(?:이|가)?\s*없|기존\s*시장에\s*없|"
-    r"유일(?:한|하다)?|독점적|완전히\s*차별화|"
+    r"유일(?:한|하다)?|독점적(?:인)?\s*(?:지위|시장|제품|서비스|기술)|완전히\s*차별화|"
     r"\b(?:no\s+(?:similar|equivalent|competing)|unique|only\s+one|first\s+ever)\b",
     re.IGNORECASE,
 )

@@ -532,6 +532,63 @@ def test_adk_llm_compact_retry_receives_a_larger_structured_output_envelope() ->
     assert responses[0].content.parts[0].text == '{"value":"complete"}'
 
 
+def test_adk_verifier_compact_retries_when_required_criterion_ids_are_omitted() -> None:
+    generic = VerificationReport(
+        verdict=Verdict.PASS,
+        criterion_checks=[CriterionCheck(
+            criterion="Generic review", passed=True, evidence="Looks complete."
+        )],
+        blocking_issues=[], revision_instructions=[], missing_information=[],
+    )
+    bound = generic.model_copy(update={
+        "criterion_checks": [CriterionCheck(
+            criterion_id="Q01", criterion="Required result",
+            passed=True, evidence="Q01 was explicitly checked.",
+        )],
+    })
+
+    class Gateway:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def generate_adk_response(self, **kwargs):
+            self.calls.append(str(kwargs["stage"]))
+            payload = generic if len(self.calls) == 1 else bound
+            return types.GenerateContentResponse(candidates=[types.Candidate(
+                content=types.Content(
+                    role="model",
+                    parts=[types.Part(text=payload.model_dump_json())],
+                ),
+                finish_reason=types.FinishReason.STOP,
+            )])
+
+    async def collect():
+        gateway = Gateway()
+        model = BudgetedAdkLlm(
+            model="verifier-model", gateway=gateway,
+            stage="independent_verification",
+            response_model=VerificationReport,
+            required_criterion_ids=("Q01",),
+        )
+        request = LlmRequest(
+            model="verifier-model",
+            contents=[types.Content(role="user", parts=[types.Part(text="verify")])],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json", max_output_tokens=2200,
+            ),
+        )
+        responses = [item async for item in model.generate_content_async(request)]
+        return gateway, responses
+
+    gateway, responses = asyncio.run(collect())
+
+    parsed = VerificationReport.model_validate_json(responses[0].content.parts[0].text)
+    assert gateway.calls == [
+        "independent_verification", "independent_verification_compact_retry"
+    ]
+    assert parsed.criterion_checks[0].criterion_id == "Q01"
+
+
 def test_contextual_maker_receives_current_exact_edit_anchors() -> None:
     agent = build_text_convergence_agent(
         gateway=object(),
@@ -731,6 +788,12 @@ def test_independent_verifier_receives_state_projection_not_repository_conversat
 
     asyncio.run(run_convergence_agent(agent, {
         "goal": "Finish it.",
+        "work_contract": {
+            "completion_contract": {
+                "quality_criteria": [{"criterion_id": "Q01"}]
+            }
+        },
+        "analysis_package": {"findings": [{"finding_id": "F01"}]},
         "approved_repository_files": huge_repository_payload,
     }, initial_state={
         VERIFIER_CONTEXT_STATE_KEY: {"commands": [{"command_id": "compile", "exit_code": 0}]}
@@ -741,6 +804,8 @@ def test_independent_verifier_receives_state_projection_not_repository_conversat
     assert huge_repository_payload not in str(verifier_call[1])
     assert huge_repository_payload not in verifier_call[2]
     assert "VERIFICATION PAYLOAD" in verifier_call[2]
+    assert '"criterion_id": "Q01"' in verifier_call[2]
+    assert '"finding_id": "F01"' in verifier_call[2]
     assert "Bounded result" in verifier_call[2]
     assert "compile" in verifier_call[2]
 
