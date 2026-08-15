@@ -433,6 +433,68 @@ def test_declarative_unity_journey_compiles_language_and_glyph_evidence() -> Non
     assert '"Unity.TextMeshPro"' in rendered.test_assembly_source
 
 
+def test_declarative_unity_journey_observes_slider_and_persisted_client_state() -> None:
+    plan = UnityEvidenceJourneyPlan.model_validate({
+        "summary": "Prove shipped settings controls trigger persisted client state.",
+        "test_directory": "Assets/Tests/PlayMode",
+        "steps": [
+            {"action": "load_scene", "scene_name": "LobbyScene_All"},
+            {"action": "set_slider_value", "target": "SfxSlider", "number_value": 0.75},
+            {
+                "action": "assert_player_pref_float",
+                "preference_key": "APP_SETTING_SFX_VOLUME",
+                "number_value": 0.75,
+            },
+            {
+                "action": "select_dropdown_index",
+                "target": "LanguageDropdown",
+                "value_index": 1,
+            },
+            {
+                "action": "assert_player_pref_string",
+                "preference_key": "APP_LANGUAGE",
+                "text_value": "en",
+            },
+            {"action": "assert_active", "target": "LanguageDropdown"},
+            {"action": "capture", "scenario_id": "settings_controls"},
+        ],
+    })
+
+    rendered = render_unity_evidence_journey(plan)
+
+    assert 'SetSliderValue(RequireActive("SfxSlider"), 0.75f)' in rendered.playmode_test_source
+    assert 'AssertPlayerPrefFloat("APP_SETTING_SFX_VOLUME", 0.75f, 0.001f)' in rendered.playmode_test_source
+    assert 'AssertPlayerPrefString("APP_LANGUAGE", "en")' in rendered.playmode_test_source
+    assert "JulpaeAudioManager" not in rendered.playmode_test_source
+    assert "JulpaeLanguageSettings" not in rendered.playmode_test_source
+    assert "PlayerPrefs.HasKey(key)" in rendered.playmode_test_source
+
+
+def test_playmode_interaction_feedback_selects_trusted_journey_schema() -> None:
+    report = VerificationReport(
+        verdict=Verdict.REVISE,
+        criterion_checks=[CriterionCheck(
+            criterion="Settings controls functionality",
+            passed=False,
+            evidence="The generated PlayMode test omitted the requested interactions.",
+        )],
+        blocking_issues=[
+            "The generated PlayMode test does not interact with the volume sliders."
+        ],
+        revision_instructions=[
+            "Update the PlayMode test journey to include steps that interact with the controls."
+        ],
+        missing_information=[],
+    )
+
+    assert is_unity_evidence_contract_feedback(" | ".join(report.blocking_issues))
+    assert development_maker_schema_for(
+        report,
+        None,
+        active_phase=ExecutionPhase.EVIDENCE_CONSTRUCTION,
+    ) is UnityEvidenceJourneyPlan
+
+
 def test_declarative_unity_journey_canonicalizes_named_toggle_before_playmode() -> None:
     plan = UnityEvidenceJourneyPlan.model_validate({
         "summary": "Normalize a provider-authored terms interaction.",

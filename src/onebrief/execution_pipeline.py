@@ -982,6 +982,9 @@ def is_unity_evidence_contract_feedback(feedback: str) -> bool:
         and "onebrief.visual" in normalized
     )
     return executable_evidence_failure or "unity visual test contract:" in normalized or any(marker in normalized for marker in (
+        "generated playmode test does not interact",
+        "update the playmode test journey",
+        "playmode test journey to include steps that interact",
         "unity visual evidence requires a distinct rendered scenario",
         "responsive unity visual evidence must define and capture",
         "unity visual evidence reused an identical screenshot",

@@ -360,6 +360,13 @@ def classify_failure_owner(
     typed_owner = failure_owner_for(code, layer)
     paths = affected_paths or []
     evidence_targeted = bool(paths) and all(is_evidence_path(path) for path in paths)
+    normalized = failure_text.casefold()
+    if any(marker in normalized for marker in (
+        "generated playmode test does not interact",
+        "update the playmode test journey",
+        "playmode test journey to include steps that interact",
+    )):
+        return FailureOwner.EVIDENCE
     # Build/runtime codes normally indicate a shipped-product defect, but the
     # compiler can name a generated test or trusted evidence harness as the
     # only failing surface. The exact failed delta is a stronger ownership
@@ -381,7 +388,6 @@ def classify_failure_owner(
         FailureLayer.STRUCTURED_OUTPUT,
     }:
         return typed_owner
-    normalized = failure_text.casefold()
     # Layer classification is authoritative when runtime evidence has already
     # identified a shipped product defect.  Audit suffixes from the evidence
     # phase must not pull that defect back into the test-harness wallet.
@@ -395,6 +401,9 @@ def classify_failure_owner(
         "executed onebrief.visual playmode test",
         "add a discoverable unity playmode test", "testassemblies",
         "runtime-evidence.json", "screenshot capture is missing",
+        "generated playmode test does not interact",
+        "update the playmode test journey",
+        "playmode test journey to include steps that interact",
     )):
         return FailureOwner.EVIDENCE
     if any(marker in normalized for marker in (

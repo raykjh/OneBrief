@@ -21,8 +21,11 @@ UnityJourneyAction = Literal[
     "wait_frames",
     "assert_active",
     "select_dropdown_index",
+    "set_slider_value",
     "set_toggle_on",
     "set_input_text",
+    "assert_player_pref_float",
+    "assert_player_pref_string",
     "click_button",
     "wait_for_scene",
     "capture",
@@ -38,7 +41,7 @@ class UnityEvidenceJourneyStep(BaseModel):
         max_length=300,
         description=(
             "Exact active GameObject name or hierarchy path. Required for "
-            "assert_active, select_dropdown_index, set_toggle_on, set_input_text, and "
+            "assert_active, select_dropdown_index, set_slider_value, set_toggle_on, set_input_text, and "
             "click_button. Use set_toggle_on for a Unity Toggle; never treat a Toggle as a Button."
         ),
     )
@@ -52,6 +55,29 @@ class UnityEvidenceJourneyStep(BaseModel):
         ge=0,
         le=128,
         description="Existing dropdown option index selected through the shipped control.",
+    )
+    number_value: float | None = Field(
+        default=None,
+        ge=-10000.0,
+        le=10000.0,
+        description=(
+            "Deterministic slider value or expected PlayerPrefs float. Required for "
+            "set_slider_value and assert_player_pref_float."
+        ),
+    )
+    preference_key: str | None = Field(
+        default=None,
+        max_length=200,
+        description=(
+            "Exact non-secret PlayerPrefs key observed through the public Unity API. Required "
+            "for assert_player_pref_float and assert_player_pref_string."
+        ),
+    )
+    tolerance: float = Field(
+        default=0.001,
+        ge=0.0,
+        le=1.0,
+        description="Allowed absolute error for assert_player_pref_float.",
     )
     text_value: str | None = Field(
         default=None,
@@ -85,7 +111,7 @@ class UnityEvidenceJourneyStep(BaseModel):
         normalized = dict(value)
         action = str(normalized.get("action") or "")
         target_actions = {
-            "assert_active", "select_dropdown_index", "set_toggle_on", "set_input_text",
+            "assert_active", "select_dropdown_index", "set_slider_value", "set_toggle_on", "set_input_text",
             "click_button",
         }
         if action not in target_actions:
@@ -94,7 +120,11 @@ class UnityEvidenceJourneyStep(BaseModel):
             normalized["scene_name"] = None
         if action != "select_dropdown_index":
             normalized["value_index"] = None
-        if action != "set_input_text":
+        if action not in {"set_slider_value", "assert_player_pref_float"}:
+            normalized["number_value"] = None
+        if action not in {"assert_player_pref_float", "assert_player_pref_string"}:
+            normalized["preference_key"] = None
+        if action not in {"set_input_text", "assert_player_pref_string"}:
             normalized["text_value"] = None
         if action != "capture":
             normalized["scenario_id"] = None
@@ -107,7 +137,9 @@ class UnityEvidenceJourneyStep(BaseModel):
             normalized["action"] = "set_toggle_on"
         return normalized
 
-    @field_validator("target", "scene_name", "text_value", "scenario_id", mode="before")
+    @field_validator(
+        "target", "scene_name", "text_value", "preference_key", "scenario_id", mode="before"
+    )
     @classmethod
     def normalize_optional_text(cls, value: object) -> str | None:
         if value is None:
@@ -154,7 +186,7 @@ class UnityEvidenceJourneyStep(BaseModel):
     @model_validator(mode="after")
     def fields_match_action(self) -> "UnityEvidenceJourneyStep":
         target_actions = {
-            "assert_active", "select_dropdown_index", "set_toggle_on", "set_input_text",
+            "assert_active", "select_dropdown_index", "set_slider_value", "set_toggle_on", "set_input_text",
             "click_button",
         }
         if self.action in target_actions and not self.target:
@@ -163,8 +195,14 @@ class UnityEvidenceJourneyStep(BaseModel):
             raise ValueError(f"{self.action} requires scene_name")
         if self.action == "select_dropdown_index" and self.value_index is None:
             raise ValueError("select_dropdown_index requires value_index")
+        if self.action in {"set_slider_value", "assert_player_pref_float"} and self.number_value is None:
+            raise ValueError(f"{self.action} requires number_value")
+        if self.action in {"assert_player_pref_float", "assert_player_pref_string"} and not self.preference_key:
+            raise ValueError(f"{self.action} requires preference_key")
         if self.action == "set_input_text" and self.text_value is None:
             raise ValueError("set_input_text requires text_value")
+        if self.action == "assert_player_pref_string" and self.text_value is None:
+            raise ValueError("assert_player_pref_string requires text_value")
         if self.action == "capture" and not self.scenario_id:
             raise ValueError("capture requires scenario_id")
         return self
@@ -192,7 +230,10 @@ class UnityEvidenceJourneyPlan(BaseModel):
             "by a DirectEnter/SignIn/Login/Authenticate control, or the complete terms-and-identity "
             "onboarding path. Selecting an account and then clicking a generic Start button is not "
             "an authentication contract. "
-            "Use set_toggle_on for terms/consent Toggle controls instead of click_button."
+            "Use set_toggle_on for terms/consent Toggle controls instead of click_button. Use "
+            "set_slider_value for a shipped Slider. When acceptance requires proof that a control "
+            "triggered a persisted client system, follow the interaction with assert_player_pref_float "
+            "or assert_player_pref_string using an exact key discovered in approved source."
         ),
     )
 
@@ -232,7 +273,7 @@ class UnityEvidenceJourneyPlan(BaseModel):
                 continue
             if not any(
                 prior.action in {
-                    "click_button", "select_dropdown_index", "set_toggle_on", "set_input_text",
+                    "click_button", "select_dropdown_index", "set_slider_value", "set_toggle_on", "set_input_text",
                 }
                 for prior in self.steps[:index]
             ):
@@ -330,6 +371,13 @@ def _step_source(step: UnityEvidenceJourneyStep) -> list[str]:
         if _target_contains(step, ("language", "locale")):
             lines.append("AssertNoMissingGlyphs();")
         return lines
+    if step.action == "set_slider_value":
+        value = float(step.number_value or 0.0)
+        return [
+            f"SetSliderValue(RequireActive({_cs(step.target or '')}), {value:g}f);",
+            f"assertions++; trace.Add({_cs('set_slider:' + (step.target or '') + ':' + format(value, 'g'))});",
+            f"yield return WaitFrames({step.frames});",
+        ]
     if step.action == "set_toggle_on":
         return [
             f"SetToggleOn(RequireActive({_cs(step.target or '')}));",
@@ -341,6 +389,17 @@ def _step_source(step: UnityEvidenceJourneyStep) -> list[str]:
             f"SetInputText(RequireActive({_cs(step.target or '')}), {_cs(step.text_value or '')});",
             f"assertions++; trace.Add({_cs('set_input:' + (step.target or ''))});",
             f"yield return WaitFrames({step.frames});",
+        ]
+    if step.action == "assert_player_pref_float":
+        value = float(step.number_value or 0.0)
+        return [
+            f"AssertPlayerPrefFloat({_cs(step.preference_key or '')}, {value:g}f, {step.tolerance:g}f);",
+            f"assertions++; trace.Add({_cs('assert_player_pref_float:' + (step.preference_key or '') + ':' + format(value, 'g'))});",
+        ]
+    if step.action == "assert_player_pref_string":
+        return [
+            f"AssertPlayerPrefString({_cs(step.preference_key or '')}, {_cs(step.text_value or '')});",
+            f"assertions++; trace.Add({_cs('assert_player_pref_string:' + (step.preference_key or '') + ':' + (step.text_value or ''))});",
         ]
     if step.action == "click_button":
         return [
@@ -474,6 +533,28 @@ def render_unity_evidence_journey(
         "            Assert.IsTrue(toggle.interactable, \"Toggle is not interactable: \" + target.name);",
         "            toggle.SetIsOnWithoutNotify(true);",
         "            toggle.onValueChanged.Invoke(true);",
+        "        }", "",
+        "        private static void SetSliderValue(GameObject target, float value)", "        {",
+        "            Slider slider = target.GetComponent<Slider>();",
+        "            Assert.IsNotNull(slider, \"Target is not a Slider: \" + target.name);",
+        "            Assert.IsTrue(slider.interactable, \"Slider is not interactable: \" + target.name);",
+        "            float bounded = Mathf.Clamp(value, slider.minValue, slider.maxValue);",
+        "            slider.SetValueWithoutNotify(bounded);",
+        "            slider.onValueChanged.Invoke(bounded);",
+        "            Assert.AreEqual(bounded, slider.value, 0.0001f, \"Slider did not retain the requested value.\");",
+        "            Debug.Log(\"[ONEBRIEF] slider invoked: \" + target.name + \"=\" + bounded);",
+        "        }", "",
+        "        private static void AssertPlayerPrefFloat(string key, float expected, float tolerance)", "        {",
+        "            Assert.IsTrue(PlayerPrefs.HasKey(key), \"Expected PlayerPrefs float was not written: \" + key);",
+        "            float actual = PlayerPrefs.GetFloat(key);",
+        "            Assert.AreEqual(expected, actual, tolerance, \"PlayerPrefs float did not reflect the UI interaction: \" + key);",
+        "            Debug.Log(\"[ONEBRIEF] observed PlayerPrefs float: \" + key + \"=\" + actual);",
+        "        }", "",
+        "        private static void AssertPlayerPrefString(string key, string expected)", "        {",
+        "            Assert.IsTrue(PlayerPrefs.HasKey(key), \"Expected PlayerPrefs string was not written: \" + key);",
+        "            string actual = PlayerPrefs.GetString(key);",
+        "            Assert.AreEqual(expected, actual, \"PlayerPrefs string did not reflect the UI interaction: \" + key);",
+        "            Debug.Log(\"[ONEBRIEF] observed PlayerPrefs string: \" + key + \"=\" + actual);",
         "        }", "",
         "        private static void SetInputText(GameObject target, string value)", "        {",
         "            Component control = ValueComponent(target, \"text\"); Type type = control.GetType();",

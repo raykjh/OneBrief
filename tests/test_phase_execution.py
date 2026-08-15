@@ -170,6 +170,22 @@ def test_trusted_failure_selects_product_or_evidence_owner() -> None:
     assert not environment.model_repair_allowed
 
 
+def test_missing_playmode_control_interaction_remains_evidence_owned() -> None:
+    decision = decide_repair_phase(
+        context="development_acceptance_verification",
+        failure_text=(
+            "The generated PlayMode test does not interact with the volume sliders. "
+            "Update the PlayMode test journey to include steps that interact with them."
+        ),
+        round_number=4,
+        affected_paths=["Assets/JULPAE/Scripts/Lobby/LobbyPopupController.cs"],
+    )
+
+    assert decision.failure_owner == FailureOwner.EVIDENCE
+    assert decision.next_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
+    assert decision.model_repair_allowed
+
+
 def test_batchmode_framebuffer_failure_cannot_open_product_edit_authority() -> None:
     decision = decide_repair_phase(
         context="development_verification",
