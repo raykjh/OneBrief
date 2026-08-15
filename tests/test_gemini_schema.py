@@ -38,6 +38,10 @@ def test_transport_result_is_still_checked_by_strict_domain_model():
         },
         "sixsense": {
             "standard_profile": "Use a conventional professional standard.",
+            "assurance": {
+                "intended_use": "internal_decision",
+                "rationale": "This artifact supports an internal decision.",
+            },
             "questions": [],
             "interaction_target_seconds": 30,
         },

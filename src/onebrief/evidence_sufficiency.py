@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 
+from onebrief.assurance import resolve_assurance_policy
 from onebrief.execution_schemas import CriterionCheck, DraftArtifact, VerificationReport, Verdict
 from onebrief.public_research import PublicResearchResult, PublicWebSource
 from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis
@@ -277,6 +278,8 @@ def _uncited_material_claims(
     markdown: str,
     *,
     grounded_source_ids: set[str] | None = None,
+    allow_labeled_estimates: bool = False,
+    allow_bounded_inference: bool = False,
 ) -> list[str]:
     claims: list[str] = []
     allowed_source_ids = grounded_source_ids or set()
@@ -311,8 +314,10 @@ def _uncited_material_claims(
             or _FINDING_CITATION.search(line)
             or has_grounded_web_citation
             or has_supported_mixed_citation
-            or _ESTIMATE_UNCERTAINTY.search(line)
+            or (allow_labeled_estimates and _ESTIMATE_UNCERTAINTY.search(line))
             or (
+                allow_bounded_inference
+                and
                 _HYPOTHESIS_MARKER.search(line)
                 and _VALIDATION_BOUNDARY.search(line)
             )
@@ -338,6 +343,7 @@ def validate_evidence_sufficiency(
     body = draft.body_markdown
     has_public_research = any(source.name == "public_research.md" for source in sources)
     research_text = _research_text(requirements)
+    assurance = resolve_assurance_policy(requirements)
 
     forbidden_disclosures = [
         term for term in intake.forbidden_output_terms
@@ -443,6 +449,8 @@ def validate_evidence_sufficiency(
         _uncited_material_claims(
             body,
             grounded_source_ids=_grounded_source_ids(sources),
+            allow_labeled_estimates=assurance.allow_labeled_estimates,
+            allow_bounded_inference=assurance.allow_bounded_inference,
         )
         if has_public_research else []
     )

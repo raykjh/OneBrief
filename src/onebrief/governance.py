@@ -46,6 +46,7 @@ class AuthorizationEnvelope(BaseModel):
     executor_id: str = Field(min_length=1, max_length=120)
     action: Literal["execute_completion_contract"] = "execute_completion_contract"
     completion_contract_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    assurance_profile_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     toolpack_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     base_source_revision: str | None = Field(default=None, pattern=r"^[a-f0-9]{40}$")
     allowed_read_prefixes: list[str] = Field(default_factory=list, max_length=20)

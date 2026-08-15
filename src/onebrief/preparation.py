@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from onebrief.assurance import resolve_assurance_policy
 from onebrief.schemas import BudgetEnvelope, IntakeRequest, RequirementsAnalysis, ToolPackId
 from onebrief.toolpack_lifecycle import ToolPackLifecycleState
 from onebrief.governance import AuthorizationEnvelope, RiskClass, canonical_digest
@@ -115,6 +116,7 @@ def build_preparation_plan(
             if "approval" not in item.casefold()
         )
     contract = requirements.completion_contract.model_dump(mode="json")
+    assurance = resolve_assurance_policy(requirements)
     issue_time = (
         datetime.fromisoformat(issued_at.replace("Z", "+00:00"))
         if issued_at else datetime.now(UTC)
@@ -126,6 +128,7 @@ def build_preparation_plan(
         actor_id=actor_id,
         executor_id=executor_id,
         completion_contract_sha256=canonical_digest(contract),
+        assurance_profile_sha256=assurance.sha256,
         toolpack_sha256=manifest.toolpack_sha256,
         base_source_revision=(generated.repository_head_sha if generated else None),
         allowed_read_prefixes=manifest.allowed_read_prefixes,
@@ -141,6 +144,11 @@ def build_preparation_plan(
         "output_target": intake.output_target.value,
         "amendment_reason": amendment_reason,
         "completion_contract": contract,
+        "assurance_selection": (
+            requirements.sixsense.assurance.model_dump(mode="json")
+            if requirements.sixsense is not None else None
+        ),
+        "assurance_policy": assurance.model_dump(mode="json"),
         "permission_manifest": manifest.model_dump(mode="json"),
         "authorization_envelope": envelope.model_dump(mode="json"),
         "budget": {

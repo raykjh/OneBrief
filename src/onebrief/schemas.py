@@ -39,6 +39,26 @@ class EvaluationMode(StrEnum):
     INDEPENDENT_REVIEW = "independent_review"
 
 
+class AssuranceUse(StrEnum):
+    """The approved real-world use of the current delivery."""
+
+    EXPLORATION = "exploration"
+    INTERNAL_DECISION = "internal_decision"
+    COMMERCIAL_PROPOSAL = "commercial_proposal"
+    PUBLIC_MARKETING = "public_marketing"
+    REGULATORY_SUBMISSION = "regulatory_submission"
+    OPERATIONAL_RELEASE = "operational_release"
+
+
+class AssuranceSelection(BaseModel):
+    """SixSense use decision; trusted code derives the actual evidence policy."""
+
+    intended_use: AssuranceUse = AssuranceUse.INTERNAL_DECISION
+    rationale: Annotated[str, Field(min_length=3, max_length=300)] = (
+        "Use source-backed facts and distinguish estimates, inference, and validation needs."
+    )
+
+
 class QualityCriterion(BaseModel):
     criterion_id: Annotated[str, Field(pattern=r"^Q[0-9]{2}$")]
     description: Annotated[str, Field(min_length=3, max_length=300)]
@@ -89,6 +109,7 @@ class SixSensePlan(BaseModel):
     """One model pass, then an instant client-side sequence of at most five choices."""
 
     standard_profile: Annotated[str, Field(min_length=3, max_length=800)]
+    assurance: AssuranceSelection = Field(default_factory=AssuranceSelection)
     questions: list[SixSenseQuestion] = Field(default_factory=list, max_length=5)
     interaction_target_seconds: Annotated[int, Field(ge=10, le=90)] = 30
 

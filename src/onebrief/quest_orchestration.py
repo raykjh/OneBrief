@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
+from onebrief.assurance import AssurancePolicy, resolve_assurance_policy
 from onebrief.completion_ledger import CompletionLedger, CompletionStatus
 from onebrief.execution_schemas import ExecutionCheckpoint, PipelineStatus, VerificationReport, Verdict
 from onebrief.schemas import ExecutionPhase, InternalSource, RequirementsAnalysis, SourcePriority
@@ -96,11 +97,12 @@ class OutcomeSketch(BaseModel):
     prohibitions: list[str] = Field(default_factory=list, max_length=24)
     objective_completion_conditions: list[str] = Field(min_length=1, max_length=24)
     preference_profile: str = Field(default="Use approved professional defaults.", max_length=1000)
+    assurance_policy: AssurancePolicy | None = None
     completion_contract_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
 
     @property
     def sha256(self) -> str:
-        return _digest(self)
+        return _digest(self.model_dump(mode="json", exclude_none=True))
 
 
 class QuestBudget(BaseModel):
@@ -136,6 +138,7 @@ class QuestContract(BaseModel):
     initial_execution_phase: ExecutionPhase
     input_checkpoint: QuestInputCheckpoint
     authority_envelope_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    assurance_profile_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     authorized_files: list[str] = Field(default_factory=list, max_length=64)
     forbidden_scope: list[str] = Field(min_length=1, max_length=32)
     required_process: list[str] = Field(min_length=1, max_length=24)
@@ -161,7 +164,7 @@ class QuestContract(BaseModel):
 
     @property
     def sha256(self) -> str:
-        return _digest(self)
+        return _digest(self.model_dump(mode="json", exclude_none=True))
 
 
 class QuestVerificationReceipt(BaseModel):
@@ -239,6 +242,7 @@ def build_outcome_sketch(project_id: str, requirements: RequirementsAnalysis) ->
     preserve = [item for item in requirements.assumptions if any(
         token in item.casefold() for token in ("preserv", "keep", "unchanged", "보존")
     )]
+    assurance = resolve_assurance_policy(requirements)
     return OutcomeSketch(
         project_id=project_id,
         final_outcome=contract.target_state,
@@ -257,6 +261,7 @@ def build_outcome_sketch(project_id: str, requirements: RequirementsAnalysis) ->
             if requirements.sixsense is not None
             else "Use approved professional defaults while preserving project identity."
         ),
+        assurance_policy=assurance,
         completion_contract_digest=_digest(contract),
     )
 
@@ -277,6 +282,10 @@ class QuestStore:
         self.outcome_path = root / "outcome_sketch.json"
         self.plan = plan
         self.requirements = requirements
+        assurance = resolve_assurance_policy(requirements)
+        planned_assurance = getattr(plan, "assurance_profile_digest", None)
+        if planned_assurance not in {None, assurance.sha256}:
+            raise RuntimeError("milestone plan is bound to a different assurance profile")
         self.toolpack_sha256 = toolpack_sha256
         self.allowed_write_prefixes = list(allowed_write_prefixes or [])
         self.approved_budget_usd = (
@@ -378,6 +387,7 @@ class QuestStore:
             for item in milestone.contract.slice_quality_criteria
             if item.criterion_id not in milestone.contract.criterion_ids
         )
+        assurance = resolve_assurance_policy(self.requirements)
         stable = {
             "parent_quest_id": previous.quest_id if previous is not None else None,
             "project_id": self.plan.project_id,
@@ -398,7 +408,9 @@ class QuestStore:
                 "toolpack_sha256": self.toolpack_sha256,
                 "allowed_write_prefixes": self.allowed_write_prefixes,
                 "approved_budget_usd": self.approved_budget_usd,
+                "assurance_profile_sha256": assurance.sha256,
             }),
+            "assurance_profile_sha256": assurance.sha256,
             "authorized_files": self.allowed_write_prefixes or [
                 "Only paths permitted by the approved project ToolPack for this milestone."
             ],
@@ -411,6 +423,7 @@ class QuestStore:
             ],
             "required_process": [
                 "Use the approved ToolPack and source revision.",
+                f"Apply the {assurance.intended_use.value} assurance profile without weakening its truth floor.",
                 "Preserve previously passed receipts and criteria.",
                 "Separate accountable making from independent verification.",
                 "Stop on a no-progress or authority-required receipt.",

@@ -21,11 +21,14 @@ from onebrief.quest_orchestration import (
     infer_failure_owner,
 )
 from onebrief.schemas import (
+    AssuranceSelection,
+    AssuranceUse,
     CompletionContract,
     EvaluationMode,
     ExecutionPhase,
     QualityCriterion,
     RequirementsAnalysis,
+    SixSensePlan,
 )
 
 
@@ -61,6 +64,13 @@ def requirements() -> RequirementsAnalysis:
         completion_contract=CompletionContract(
             target_state="A modernized, working Unity client.",
             quality_criteria=criteria,
+        ),
+        sixsense=SixSensePlan(
+            standard_profile="Preserve behavior and prove the running Unity result.",
+            assurance=AssuranceSelection(
+                intended_use=AssuranceUse.OPERATIONAL_RELEASE,
+                rationale="This is runnable software, not a proposal.",
+            ),
         ),
         assumptions=["Preserve authentication and server behavior."],
         consolidated_questions=[],
@@ -136,6 +146,10 @@ def test_only_m01_quest_exists_until_m01_receipt_passes(tmp_path: Path) -> None:
     first = quests.issue(milestone=m01, milestone_store=milestone_store, source_revision="a" * 40)
     assert first.milestone_id == "M01"
     assert first.initial_execution_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
+    assert quests.outcome.assurance_policy is not None
+    assert quests.outcome.assurance_policy.intended_use == AssuranceUse.OPERATIONAL_RELEASE
+    assert first.assurance_profile_sha256 == quests.outcome.assurance_policy.sha256
+    assert any("operational_release" in item for item in first.required_process)
     assert list((tmp_path / "quests" / "contracts").glob("*.json")) == [
         tmp_path / "quests" / "contracts" / f"{first.quest_id}.json"
     ]
@@ -171,6 +185,21 @@ def test_only_m01_quest_exists_until_m01_receipt_passes(tmp_path: Path) -> None:
     assert second.input_checkpoint.previous_receipt_id == receipt.receipt_id
     assert receipt.receipt_id in second.preserve_receipt_ids
     assert second.input_checkpoint.dependency_checkpoints["M01"] == milestone_store.checkpoint("M01").checkpoint_id
+
+
+def test_quest_store_rejects_assurance_profile_changed_after_milestone_plan(tmp_path: Path) -> None:
+    current_plan = plan()
+    changed = requirements().model_copy(update={
+        "sixsense": requirements().sixsense.model_copy(update={
+            "assurance": AssuranceSelection(
+                intended_use=AssuranceUse.COMMERCIAL_PROPOSAL,
+                rationale="This is now only a proposal.",
+            )
+        })
+    })
+
+    with pytest.raises(RuntimeError, match="different assurance profile"):
+        QuestStore(tmp_path / "quests", plan=current_plan, requirements=changed)
 
 
 def test_pass_requires_ledger_and_independent_verification(tmp_path: Path) -> None:

@@ -6,12 +6,15 @@ from onebrief.evidence_sufficiency import (
 )
 from onebrief.execution_schemas import DraftArtifact, VerificationReport
 from onebrief.schemas import (
+    AssuranceSelection,
+    AssuranceUse,
     CompletionContract,
     IntakeRequest,
     InternalSource,
     QualityCriterion,
     RequirementsAnalysis,
     SourcePriority,
+    SixSensePlan,
 )
 
 
@@ -366,6 +369,29 @@ def test_bounded_causal_hypothesis_is_not_treated_as_an_established_claim() -> N
     )
 
     assert not any(item.kind.value == "uncited_material_claim" for item in result.issues)
+
+
+def test_public_marketing_does_not_inherit_proposal_hypothesis_freedom() -> None:
+    requirements = _requirements().model_copy(update={
+        "sixsense": SixSensePlan(
+            standard_profile="Use only substantiated public claims.",
+            assurance=AssuranceSelection(
+                intended_use=AssuranceUse.PUBLIC_MARKETING,
+                rationale="The artifact will be used as public marketing.",
+            ),
+        )
+    })
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="일회용 목욕 타월 광고문을 작성해줘.", public_research_allowed=True),
+        requirements,
+        [_public_source()],
+        _draft(
+            "검증 가설: 세탁 단계를 생략하면 간병 노동을 줄일 가능성이 있다. "
+            "실제 효과는 파일럿으로 측정한다.\n\nhttps://example.com/products/a"
+        ),
+    )
+
+    assert any(item.kind.value == "uncited_material_claim" for item in result.issues)
 
 
 def test_unqualified_health_prevention_marketing_claim_still_requires_evidence() -> None:

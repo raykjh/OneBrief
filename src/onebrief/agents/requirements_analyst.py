@@ -74,6 +74,15 @@ Rules:
    researched candidates may appear in a choice only when they were supplied by the user or
    an authoritative upload. Otherwise ask only for the desired outcome area or selection
    principle and state that execution will research and choose the candidates with evidence.
+   Every SixSense plan must also classify the approved intended use in its assurance field:
+   exploration, internal_decision, commercial_proposal, public_marketing,
+   regulatory_submission, or operational_release. Describe why in one short user-facing
+   rationale. Infer it when the goal is explicit. When the intended use is unresolved and
+   would materially change allowed claims or required evidence, use one SixSense question to
+   ask where this delivery will be used, not how "strict" the user wants verification to be.
+   On reinspection after SixSense completion, update assurance from the confirmed decision.
+   Never use assurance to waive truth, authority, budget, code execution, or direct evidence
+   for prevention and treatment claims.
 8. Separate mandatory gaps from optional improvements and name acceptable evidence.
 9. If a public fact can be researched later and public research is allowed, do not
    ask the user for it as mandatory internal information.

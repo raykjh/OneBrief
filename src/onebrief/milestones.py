@@ -22,6 +22,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
+from onebrief.assurance import resolve_assurance_policy
 from onebrief.execution_schemas import ExecutionCheckpoint, PipelineStatus, Verdict
 from onebrief.generic_development_toolpack import ProjectCodeChangeSet, ProjectFileChange
 from onebrief.project_import import ExternalProjectImporter, MANIFEST_NAME, ProjectManifest
@@ -142,6 +143,7 @@ class MilestonePlan(BaseModel):
     project_id: str
     goal_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     completion_contract_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    assurance_profile_digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     overall_criterion_ids: list[str] = Field(min_length=1, max_length=12)
     source_revision: str = Field(min_length=1, max_length=128)
     minimum_cost_usd: float = Field(ge=0)
@@ -203,7 +205,7 @@ class MilestonePlan(BaseModel):
 
     @property
     def sha256(self) -> str:
-        return canonical_sha256(self)
+        return canonical_sha256(self.model_dump(mode="json", exclude_none=True))
 
 
 class MilestoneCheckpoint(BaseModel):
@@ -593,6 +595,7 @@ def build_milestone_plan(
         project_id=project_id,
         goal_digest=canonical_sha256({"goal": goal}),
         completion_contract_digest=canonical_sha256(contract),
+        assurance_profile_digest=resolve_assurance_policy(requirements).sha256,
         overall_criterion_ids=[item.criterion_id for item in criteria],
         source_revision=source_revision,
         minimum_cost_usd=minimum_cost_usd,

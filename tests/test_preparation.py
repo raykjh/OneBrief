@@ -1,6 +1,12 @@
 from onebrief.preparation import build_preparation_plan
 from onebrief.producer import estimate_budget
-from onebrief.schemas import IntakeRequest, RequirementsAnalysis
+from onebrief.schemas import (
+    AssuranceSelection,
+    AssuranceUse,
+    IntakeRequest,
+    RequirementsAnalysis,
+    SixSensePlan,
+)
 
 
 def _requirements(criterion: str = "Every requested feature is proven.") -> RequirementsAnalysis:
@@ -72,4 +78,32 @@ def test_changed_goal_requires_a_new_authorization_even_with_same_contract() -> 
     )
 
     assert first is not None and second is not None
+    assert first.authorization_sha256 != second.authorization_sha256
+
+
+def test_changed_intended_use_requires_a_new_authorization_hash() -> None:
+    intake = IntakeRequest(goal="Prepare a product document.")
+    proposal = _requirements().model_copy(update={
+        "sixsense": SixSensePlan(
+            standard_profile="Use proposal conventions.",
+            assurance=AssuranceSelection(
+                intended_use=AssuranceUse.COMMERCIAL_PROPOSAL,
+                rationale="The document is an OEM proposal.",
+            ),
+        )
+    })
+    marketing = proposal.model_copy(update={
+        "sixsense": proposal.sixsense.model_copy(update={
+            "assurance": AssuranceSelection(
+                intended_use=AssuranceUse.PUBLIC_MARKETING,
+                rationale="The document will be published as marketing.",
+            )
+        })
+    })
+
+    first = build_preparation_plan(intake, proposal, estimate_budget(intake, proposal))
+    second = build_preparation_plan(intake, marketing, estimate_budget(intake, marketing))
+
+    assert first is not None and second is not None
+    assert first.authorization_envelope.assurance_profile_sha256 != second.authorization_envelope.assurance_profile_sha256
     assert first.authorization_sha256 != second.authorization_sha256

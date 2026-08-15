@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 
+from onebrief.assurance import resolve_assurance_policy
 from onebrief.budget_guard import BudgetExceeded, BudgetStore
 from onebrief.adk_convergence import (
     MAKER_STATE_KEY,
@@ -2195,8 +2196,9 @@ class ExecutionPipeline:
             "comparison. Use bounded search-scope language and preserve uncertainty. Do not add unsolicited next "
             "steps beyond an explicit scope ceiling. If no supplied finding directly supports a material claim, "
             "do not treat missing evidence as proof that the claim is false. Remove the claim, replace its unsupported "
-            "value with an explicit RFQ or verification input, or retain a plausible causal idea only as an explicit "
-            "hypothesis with a concrete test or pilot and a boundary against marketing it as established before validation. "
+            "value with an explicit RFQ or verification input, or, only when work_contract.assurance_policy explicitly "
+            "allows bounded inference, retain a plausible causal idea as an explicit hypothesis with a concrete test or "
+            "pilot and a boundary against marketing it as established before validation. "
             "A user-authorized project fact or operational decision is authoritative for this project when it is present "
             "in the work contract or a supplied finding; preserve it and cite that finding instead of demanding a public paper. "
             "Do not generalize a local audit finding into a universal clinical efficacy claim. "
@@ -2218,8 +2220,9 @@ class ExecutionPipeline:
             "of equivalents, and absolute safety or uniqueness claims fail without bounded evidence. Reject any "
             "section beyond an explicit user scope ceiling. "
             "Distinguish contradiction from uncertainty: lack of direct evidence does not make a plausible claim false. "
-            "Accept an uncited causal idea only when the artifact clearly labels it as a hypothesis, defines a concrete "
-            "test or pilot, and forbids treating it as an established health or marketing claim before validation. "
+            "Accept an uncited causal idea only when work_contract.assurance_policy allows bounded inference and the "
+            "artifact clearly labels it as a hypothesis, defines a concrete test or pilot, and forbids treating it as "
+            "an established health or marketing claim before validation. "
             "Treat user-authorized operational decisions and supplied local audit findings as valid project evidence, while "
             "checking that the artifact does not overgeneralize them into universal medical efficacy. "
             "Fail any public artifact that contains or reveals the work contract's forbidden_output_terms. "
@@ -4579,6 +4582,7 @@ class ExecutionPipeline:
             intake.model_copy(update={"internal_sources": sources}), requirements, sources
         )
         self._active_completion_contract = requirements.completion_contract
+        assurance_policy = resolve_assurance_policy(requirements)
         contract = {
             "goal": intake.goal,
             "desired_output": intake.desired_output,
@@ -4592,6 +4596,12 @@ class ExecutionPipeline:
             "assumptions": requirements.assumptions,
             "public_research_allowed": intake.public_research_allowed,
             "forbidden_output_terms": intake.forbidden_output_terms,
+            "assurance_selection": (
+                requirements.sixsense.assurance.model_dump(mode="json")
+                if requirements.sixsense is not None else None
+            ),
+            "assurance_policy": assurance_policy.model_dump(mode="json"),
+            "assurance_profile_sha256": assurance_policy.sha256,
         }
         source_payload = [
             {
