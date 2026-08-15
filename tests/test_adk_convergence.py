@@ -15,6 +15,7 @@ from onebrief.adk_convergence import (
     MAKER_STATE_KEY,
     MAKER_MODEL_BINDING_STATE_KEY,
     MAKER_SCHEMA_BINDING_STATE_KEY,
+    MAKER_SCHEMA_FAILURE_STATE_KEY,
     REVERIFY_EXISTING_STATE_KEY,
     EXACT_EDIT_ANCHORS_STATE_KEY,
     MAKER_DIAGNOSTIC_CONTEXT_STATE_KEY,
@@ -24,6 +25,7 @@ from onebrief.adk_convergence import (
     VERIFICATION_STATE_KEY,
     AdkConvergenceAgent,
     BudgetedAdkLlm,
+    InvalidStructuredMakerOutput,
     build_text_convergence_agent,
     run_convergence_agent,
 )
@@ -334,6 +336,106 @@ def test_adk_llm_allows_one_bounded_schema_repair_before_returning() -> None:
     CompactProposedProjectCodeChangeSet.model_validate_json(
         responses[0].content.parts[0].text
     )
+
+
+def test_adk_loop_returns_persisted_schema_failure_to_same_maker() -> None:
+    class InvalidThenValidMaker(FakeMaker):
+        @override
+        async def _run_async_impl(
+            self, ctx: InvocationContext
+        ) -> AsyncGenerator[Event, None]:
+            self.calls += 1
+            if self.calls == 1:
+                raise InvalidStructuredMakerOutput(
+                    "schema validation failed: changes.0 requires one edit mechanism",
+                    '{"changes":[{"path":"Assets/UI/Lobby.cs","replace":"```json{"}]}',
+                )
+            yield Event(
+                author=self.name,
+                invocation_id=ctx.invocation_id,
+                branch=ctx.branch,
+                actions=EventActions(state_delta={MAKER_STATE_KEY: {
+                    "version": self.calls,
+                    "received_feedback": bool(
+                        ctx.session.state.get(VERIFICATION_STATE_KEY)
+                    ),
+                }}),
+            )
+
+    maker = InvalidThenValidMaker(name="maker")
+    verifier = FakeVerifier(name="verifier", calls=1)
+    agent = AdkConvergenceAgent(
+        name="convergence", sub_agents=[maker, verifier], max_revision_rounds=2,
+    )
+
+    state, _trace = asyncio.run(
+        run_convergence_agent(agent, {"goal": "Complete the work."})
+    )
+
+    assert maker.calls == 2
+    assert verifier.calls == 2
+    assert state[MAKER_STATE_KEY] == {"version": 2, "received_feedback": True}
+    assert state[VERIFICATION_STATE_KEY]["verdict"] == Verdict.PASS.value
+    assert state[MAKER_SCHEMA_FAILURE_STATE_KEY]["raw_text"].endswith("```json{\"}]}")
+
+
+def test_adk_llm_rejects_malformed_compact_retry_before_adk_validation() -> None:
+    from onebrief.generic_development_toolpack import (
+        CompactProposedProjectCodeChangeSet,
+    )
+
+    malformed = {
+        "summary": "Malformed selector.",
+        "changes": [{
+            "path": "Assets/UI/Lobby.cs",
+            "replace": "```json{",
+            "reason": "Repair the product surface.",
+        }],
+    }
+
+    class Gateway:
+        def __init__(self):
+            self.calls = []
+
+        def generate_adk_response(self, *, stage, **_kwargs):
+            self.calls.append(stage)
+            return types.GenerateContentResponse(candidates=[types.Candidate(
+                finish_reason=types.FinishReason.STOP,
+                content=types.Content(
+                    role="model", parts=[types.Part(text=json.dumps(malformed))]
+                ),
+            )])
+
+    async def collect():
+        gateway = Gateway()
+        model = BudgetedAdkLlm(
+            model="gemini-3.5-flash",
+            gateway=gateway,
+            stage="product_implementation::repair::long_form_draft",
+            response_model=CompactProposedProjectCodeChangeSet,
+        )
+        request = LlmRequest(
+            model="gemini-3.5-flash",
+            contents=[types.Content(role="user", parts=[types.Part(text="repair")])],
+            config=types.GenerateContentConfig(
+                max_output_tokens=10_000,
+                response_mime_type="application/json",
+            ),
+        )
+        try:
+            return gateway, [item async for item in model.generate_content_async(request)]
+        except InvalidStructuredMakerOutput as exc:
+            return gateway, exc
+
+    gateway, result = asyncio.run(collect())
+
+    assert isinstance(result, InvalidStructuredMakerOutput)
+    assert "changes.0" in result.detail
+    assert result.raw_text == json.dumps(malformed)
+    assert gateway.calls == [
+        "product_implementation::repair::long_form_draft",
+        "product_implementation::repair::long_form_draft_compact_retry",
+    ]
 
 
 def test_adk_llm_compact_retry_receives_a_larger_structured_output_envelope() -> None:

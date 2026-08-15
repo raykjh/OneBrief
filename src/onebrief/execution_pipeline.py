@@ -24,6 +24,7 @@ from onebrief.adk_convergence import (
     REVERIFY_EXISTING_STATE_KEY,
     EXACT_EDIT_ANCHORS_STATE_KEY,
     MAKER_DIAGNOSTIC_CONTEXT_STATE_KEY,
+    MAKER_SCHEMA_FAILURE_STATE_KEY,
     REPAIR_CONTRACT_STATE_KEY,
     REPAIR_PLAN_STATE_KEY,
     VERIFIER_CONTEXT_STATE_KEY,
@@ -4412,6 +4413,13 @@ class ExecutionPipeline:
             **initial_state,
             EXACT_EDIT_ANCHORS_STATE_KEY: exact_edit_anchors,
         }))
+        schema_failure = state.get(MAKER_SCHEMA_FAILURE_STATE_KEY)
+        if isinstance(schema_failure, dict):
+            failure_round = int(schema_failure.get("round_number", 0))
+            self._write(
+                output_dir / f"development_maker_schema_failure_r{failure_round}.json",
+                json.dumps(schema_failure, ensure_ascii=False, indent=2),
+            )
         self._write(
             output_dir / "adk_convergence_trace.json",
             json.dumps({

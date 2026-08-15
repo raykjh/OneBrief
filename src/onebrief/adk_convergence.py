@@ -32,6 +32,16 @@ REPAIR_PLAN_STATE_KEY = "onebrief_repair_plan"
 REPAIR_CONTRACT_STATE_KEY = "onebrief_repair_contract"
 MAKER_MODEL_BINDING_STATE_KEY = "onebrief_maker_model_binding"
 MAKER_SCHEMA_BINDING_STATE_KEY = "onebrief_maker_schema_binding"
+MAKER_SCHEMA_FAILURE_STATE_KEY = "onebrief_maker_schema_failure"
+
+
+class InvalidStructuredMakerOutput(RuntimeError):
+    """A maker response remained invalid after the bounded compact retry."""
+
+    def __init__(self, detail: str, raw_text: str):
+        super().__init__(detail)
+        self.detail = detail
+        self.raw_text = raw_text
 
 
 class BudgetedAdkLlm(BaseLlm):
@@ -119,6 +129,11 @@ class BudgetedAdkLlm(BaseLlm):
                 config=retry_config,
             )
             invalid, failure_detail = structured_failure(response)
+        if invalid:
+            raise InvalidStructuredMakerOutput(
+                failure_detail,
+                getattr(response, "text", "") or "",
+            )
         yield LlmResponse.create(response)
 
 
@@ -296,8 +311,47 @@ class AdkConvergenceAgent(BaseAgent):
                             branch=ctx.branch,
                             actions=EventActions(state_delta=binding_state_delta),
                         )
-                async for event in self.maker.run_async(ctx):
-                    yield event
+                try:
+                    async for event in self.maker.run_async(ctx):
+                        yield event
+                except InvalidStructuredMakerOutput as exc:
+                    failure = {
+                        "schema_version": "onebrief-invalid-structured-maker-output-v1",
+                        "round_number": round_number,
+                        "active_schema": ctx.session.state.get(
+                            MAKER_SCHEMA_BINDING_STATE_KEY
+                        ),
+                        "detail": exc.detail,
+                        "raw_text": exc.raw_text,
+                    }
+                    report = VerificationReport(
+                        verdict=Verdict.REVISE,
+                        criterion_checks=[{
+                            "criterion": "Return a valid bounded structured proposal",
+                            "passed": False,
+                            "evidence": exc.detail,
+                        }],
+                        blocking_issues=[exc.detail],
+                        revision_instructions=[
+                            "The invalid proposal was discarded. Return only the active schema, "
+                            "with exactly one complete edit mechanism on every change."
+                        ],
+                        missing_information=[],
+                    )
+                    yield Event(
+                        author=self.name,
+                        invocation_id=ctx.invocation_id,
+                        branch=ctx.branch,
+                        actions=EventActions(state_delta={
+                            MAKER_SCHEMA_FAILURE_STATE_KEY: failure,
+                            self.verification_state_key: report.model_dump(mode="json"),
+                            SKIP_VERIFIER_STATE_KEY: True,
+                        }),
+                    )
+                    # This is neither product evidence nor an executable candidate.
+                    # Keep the prior artifact untouched and let the same persistent
+                    # maker consume the structured feedback on the next round.
+                    continue
             maker_output = ctx.session.state.get(self.maker_state_key)
             if maker_output is None:
                 raise RuntimeError("ADK maker produced no structured state output")
