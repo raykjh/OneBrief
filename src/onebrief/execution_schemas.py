@@ -8,7 +8,11 @@ import re
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from onebrief.handoff_protocol import EvidenceBinding, normalize_criterion_id
+from onebrief.handoff_protocol import (
+    EvidenceBinding,
+    canonical_sha256,
+    normalize_criterion_id,
+)
 from onebrief.temperament import TemperamentDecision
 
 
@@ -106,8 +110,8 @@ class CriterionCheck(BaseModel):
 
     @field_validator("evidence_bindings", mode="before")
     @classmethod
-    def discard_untrusted_artifact_placeholders(cls, value: object) -> object:
-        """Keep model observations but never accept an invented artifact digest."""
+    def normalize_model_authored_evidence_bindings(cls, value: object) -> object:
+        """Normalize verifier transport fields without granting provenance."""
 
         if not isinstance(value, list):
             return value
@@ -122,6 +126,17 @@ class CriterionCheck(BaseModel):
                 r"[a-f0-9]{64}", str(artifact.get("sha256") or "")
             ):
                 candidate["artifact"] = None
+            observation_id = str(candidate.get("observation_id") or "").strip()
+            if not re.fullmatch(r"FO-[a-f0-9]{16}", observation_id):
+                candidate["observation_id"] = None
+            binding_id = str(candidate.get("binding_id") or "").strip()
+            if not re.fullmatch(r"EB-[a-f0-9]{16}", binding_id):
+                identity = {
+                    key: item_value
+                    for key, item_value in candidate.items()
+                    if key != "binding_id"
+                }
+                candidate["binding_id"] = "EB-" + canonical_sha256(identity)[:16]
             normalized.append(candidate)
         return normalized
 

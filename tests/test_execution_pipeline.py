@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -204,6 +205,33 @@ def test_verification_report_discards_provider_artifact_digest_placeholder() -> 
 
     assert report.criterion_checks[0].evidence_bindings[0].artifact is None
     assert report.criterion_checks[0].evidence_bindings[0].command_id == "unity_compile"
+
+
+def test_verification_report_replaces_provider_evidence_transport_placeholders() -> None:
+    report = VerificationReport.model_validate({
+        "verdict": "REVISE",
+        "criterion_checks": [{
+            "criterion_id": "Q01",
+            "criterion": "The proposal is grounded.",
+            "passed": False,
+            "evidence": "One claim needs a source.",
+            "evidence_bindings": [{
+                "binding_id": "B01",
+                "criterion_id": "Q01",
+                "kind": "other",
+                "status": "failed",
+                "summary": "The verifier reported an unsupported claim.",
+                "observation_id": "obs_01",
+            }],
+        }],
+        "blocking_issues": ["One claim needs a source."],
+        "revision_instructions": ["Cite or remove the claim."],
+        "missing_information": [],
+    })
+
+    binding = report.criterion_checks[0].evidence_bindings[0]
+    assert re.fullmatch(r"EB-[a-f0-9]{16}", binding.binding_id)
+    assert binding.observation_id is None
 
 
 def test_analysis_package_assigns_unique_ids_to_duplicate_provider_findings() -> None:
