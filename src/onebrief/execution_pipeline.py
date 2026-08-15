@@ -2142,7 +2142,7 @@ class ExecutionPipeline:
             report = apply_completion_evidence_override(model_report, completion)
             report = apply_deterministic_override(report, grounding)
             sufficiency = validate_evidence_sufficiency(
-                intake, requirements, sources, draft
+                intake, requirements, sources, draft, analysis
             )
             self._write(
                 output_dir / f"evidence_sufficiency_r{round_number}.json",
@@ -4556,6 +4556,17 @@ class ExecutionPipeline:
         verdict: Verdict | None = None,
         message: str = "",
     ) -> None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        contract = getattr(self, "_active_completion_contract", None)
+        if contract is not None:
+            ledger = refresh_completion_ledger(contract, output_dir)
+            if status == PipelineStatus.COMPLETE and not ledger.complete:
+                status = PipelineStatus.PARTIAL
+                verdict = Verdict.REVISE
+                message = (
+                    f"Completion Ledger is incomplete: {ledger.required_passed}/"
+                    f"{ledger.required_total} required criteria passed."
+                )
         checkpoint = ExecutionCheckpoint(
             status=status,
             current_stage=stage,
@@ -4565,9 +4576,6 @@ class ExecutionPipeline:
             message=message,
         )
         self._write(output_dir / "execution_checkpoint.json", checkpoint.model_dump_json(indent=2))
-        contract = getattr(self, "_active_completion_contract", None)
-        if contract is not None:
-            refresh_completion_ledger(contract, output_dir)
 
     def run(
         self,
@@ -5179,7 +5187,7 @@ class ExecutionPipeline:
                 report = apply_completion_evidence_override(report, completion_evidence)
                 report = apply_deterministic_override(report, grounding)
                 evidence_sufficiency = validate_evidence_sufficiency(
-                    intake, requirements, sources, draft
+                    intake, requirements, sources, draft, analysis
                 )
                 self._write(
                     evidence_sufficiency_path,
@@ -5312,7 +5320,7 @@ class ExecutionPipeline:
                     report = apply_completion_evidence_override(report, completion_evidence)
                     report = apply_deterministic_override(report, grounding)
                     evidence_sufficiency = validate_evidence_sufficiency(
-                        intake, requirements, sources, draft
+                        intake, requirements, sources, draft, analysis
                     )
                     self._write(
                         output_dir / f"evidence_sufficiency_r{revision_round}.json",
@@ -5410,7 +5418,7 @@ class ExecutionPipeline:
                     )
                     next_report = apply_deterministic_override(next_report, grounding)
                     evidence_sufficiency = validate_evidence_sufficiency(
-                        intake, requirements, sources, draft
+                        intake, requirements, sources, draft, analysis
                     )
                     self._write(
                         evidence_sufficiency_path,

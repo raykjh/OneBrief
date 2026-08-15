@@ -19,6 +19,7 @@ from onebrief.temperament import TemperamentDecision
 class EvidenceFinding(BaseModel):
     finding_id: str
     source_name: str
+    source_refs: list[str] = Field(default_factory=list, max_length=12)
     evidence: str
     implication: str
 

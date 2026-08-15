@@ -4,7 +4,7 @@ from onebrief.evidence_sufficiency import (
     research_reentry_issues,
     validate_evidence_sufficiency,
 )
-from onebrief.execution_schemas import DraftArtifact, VerificationReport
+from onebrief.execution_schemas import AnalysisPackage, DraftArtifact, VerificationReport
 from onebrief.schemas import (
     AssuranceSelection,
     AssuranceUse,
@@ -621,3 +621,107 @@ def test_research_reentry_only_clears_after_item_rows_carry_direct_evidence() ->
         for item in research_reentry_issues(intake, _requirements(), unsupported)
     )
     assert research_reentry_issues(intake, _requirements(), supported) == []
+
+
+def _public_analysis(source_refs: list[str]) -> AnalysisPackage:
+    return AnalysisPackage(
+        objective="Prepare a grounded proposal.",
+        findings=[{
+            "finding_id": "F01",
+            "source_name": "public_research.md",
+            "source_refs": source_refs,
+            "evidence": "A public-research conclusion.",
+            "implication": "Use only within its evidence boundary.",
+        }],
+        recommended_structure=["Proposal"],
+        constraints=[],
+        risks=[],
+    )
+
+
+def _registry_source(url: str, status: int = 200) -> InternalSource:
+    return InternalSource(
+        name="public_research.md",
+        priority=SourcePriority.MANDATORY,
+        content=f"Research summary.\n\n## 공개 출처\n- [W01] Source → {url} [HTTP {status}]",
+    )
+
+
+def test_public_finding_requires_a_successful_grounded_source_reference() -> None:
+    source = _registry_source("https://www.law.go.kr/example")
+
+    missing = validate_evidence_sufficiency(
+        IntakeRequest(goal="Prepare a proposal.", public_research_allowed=True),
+        _requirements(),
+        [source],
+        _draft("The classification needs review. [F01]\n\nhttps://www.law.go.kr/example"),
+        _public_analysis([]),
+    )
+    grounded = validate_evidence_sufficiency(
+        IntakeRequest(goal="Prepare a proposal.", public_research_allowed=True),
+        _requirements(),
+        [source],
+        _draft("The classification needs review. [F01]\n\nhttps://www.law.go.kr/example"),
+        _public_analysis(["W01"]),
+    )
+
+    assert any(item.kind.value == "untraceable_finding" for item in missing.issues)
+    assert not any(item.kind.value == "untraceable_finding" for item in grounded.issues)
+
+
+def test_failed_public_url_does_not_ground_a_finding_or_enter_the_draft() -> None:
+    source = _registry_source("https://www.mfds.go.kr/missing", status=404)
+    draft = _draft(
+        "A material public-research conclusion is presented for independent review. [F01]"
+    )
+
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="Prepare a proposal.", public_research_allowed=True),
+        _requirements(),
+        [source],
+        draft,
+        _public_analysis(["W01"]),
+    )
+    appended = append_grounded_public_source_registry([source], draft)
+
+    assert any(item.kind.value == "untraceable_finding" for item in result.issues)
+    assert "https://www.mfds.go.kr/missing" not in appended.body_markdown
+
+
+def test_regulatory_conclusion_requires_primary_authority_binding() -> None:
+    supplier = _registry_source("https://supplier.example/regulatory-guide")
+    official = _registry_source("https://www.law.go.kr/example")
+    body = (
+        "이 제품의 의약외품 분류는 법적으로 불가능하다는 결론을 제안서에 제시한다. "
+        "따라서 별도 등록 검토는 필요하지 않다고 판단한다. [F01]"
+    )
+
+    weak = validate_evidence_sufficiency(
+        IntakeRequest(goal="제품 제안서를 작성한다.", public_research_allowed=True),
+        _requirements(), [supplier], _draft(body), _public_analysis(["W01"]),
+    )
+    authoritative = validate_evidence_sufficiency(
+        IntakeRequest(goal="제품 제안서를 작성한다.", public_research_allowed=True),
+        _requirements(), [official], _draft(body), _public_analysis(["W01"]),
+    )
+
+    assert any(item.kind.value == "missing_primary_regulatory_source" for item in weak.issues)
+    assert not any(
+        item.kind.value == "missing_primary_regulatory_source"
+        for item in authoritative.issues
+    )
+
+
+def test_absolute_causal_benefit_is_rejected_even_in_a_proposal() -> None:
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="제품 제안서를 작성한다.", public_research_allowed=True),
+        _requirements(),
+        [_registry_source("https://www.who.int/example")],
+        _draft(
+            "이 일회용 제품은 교차 오염을 원천 차단하므로 의료기관 사용에 적합하며, "
+            "별도의 현장 검증 없이도 예방 효과를 홍보할 수 있다. [F01]"
+        ),
+        _public_analysis(["W01"]),
+    )
+
+    assert any(item.kind.value == "unsupported_causal_absolute" for item in result.issues)

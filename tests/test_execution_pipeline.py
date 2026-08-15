@@ -64,6 +64,7 @@ from onebrief.unity_evidence_plan import (
 from onebrief.convergence_policy import RepairContract
 from onebrief.execution_schemas import (
     AnalysisPackage,
+    CriterionCheck,
     DraftArtifact,
     PipelineStatus,
     VerificationReport,
@@ -82,6 +83,43 @@ from onebrief.schemas import (
     ToolPackId,
     ExecutionPhase,
 )
+
+
+def test_complete_checkpoint_fails_closed_when_completion_ledger_is_incomplete(tmp_path: Path) -> None:
+    contract = CompletionContract(
+        target_state="A verified document.",
+        quality_criteria=[QualityCriterion(
+            criterion_id="Q01",
+            description="The document is grounded.",
+            evidence_required="One explicit Q01 verification check.",
+        )],
+    )
+    pipeline = ExecutionPipeline(tmp_path / "run", gateway=object())
+    pipeline._active_completion_contract = contract
+    report = VerificationReport(
+        verdict=Verdict.PASS,
+        criterion_checks=[CriterionCheck(
+            criterion="Generic review",
+            passed=True,
+            evidence="Looks fine.",
+        )],
+        blocking_issues=[],
+        revision_instructions=[],
+        missing_information=[],
+    )
+    (tmp_path / "final_verification.json").write_text(
+        report.model_dump_json(indent=2), encoding="utf-8"
+    )
+
+    pipeline._checkpoint(
+        tmp_path, PipelineStatus.COMPLETE, "finished", [], 0, Verdict.PASS, "done"
+    )
+
+    checkpoint = json.loads((tmp_path / "execution_checkpoint.json").read_text(encoding="utf-8"))
+    ledger = json.loads((tmp_path / "completion_ledger.json").read_text(encoding="utf-8"))
+    assert checkpoint["status"] == "partial"
+    assert checkpoint["final_verdict"] == "REVISE"
+    assert ledger["complete"] is False
 
 
 def test_dict_development_proposal_cannot_bypass_phase_authority() -> None:
@@ -1206,6 +1244,7 @@ def _verification(verdict: str) -> VerificationReport:
         verdict=verdict,
         criterion_checks=[
             {
+                "criterion_id": "Q01",
                 "criterion": "Every material claim cites evidence.",
                 "passed": not revise,
                 "evidence": "F01 is present." if not revise else "The procedure is incomplete.",

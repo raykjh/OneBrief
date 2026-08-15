@@ -193,6 +193,24 @@ def settle_consistent_verification(
         for check in report.criterion_checks
         if check.passed and check.criterion_id
     }
+    observed_ids = {
+        check.criterion_id for check in report.criterion_checks if check.criterion_id
+    }
+    missing_ids = sorted(required_ids - observed_ids)
+    if missing_ids:
+        message = (
+            "Independent verification omitted required completion criteria: "
+            + ", ".join(missing_ids)
+            + ". A generic system check cannot substitute for one explicit check per criterion."
+        )
+        return report.model_copy(update={
+            "verdict": Verdict.REVISE,
+            "blocking_issues": list(dict.fromkeys([*report.blocking_issues, message])),
+            "revision_instructions": list(dict.fromkeys([
+                *report.revision_instructions,
+                "Re-run independent verification and return exactly one Q-prefixed check for every required criterion.",
+            ])),
+        })
     if (
         required_ids
         and required_ids.issubset(passed_ids)

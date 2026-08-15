@@ -38,7 +38,11 @@ def run_grounded_research(
         "item per row and include a direct source URL, checked date, and uncertainty columns. A category "
         "or market segment is not a named item. Never infer that no equivalent exists merely because a "
         "candidate is new; search named comparisons and use bounded wording such as 'not identified within "
-        "this search scope'. Never use absolute safety or no-side-effect language. When a requested value is "
+        "this search scope'. Never use absolute safety or no-side-effect language. For legal, regulatory, "
+        "safety, and standards claims, search primary statutes, regulator pages, or official standards "
+        "first and do not treat blogs, wikis, suppliers, or news articles as authority for the rule itself. "
+        "Treat proposed product specifications and unit economics as design targets or planning assumptions "
+        "unless a directly inspectable source supports the exact value. When a requested value is "
         "absent, write '확인 필요' rather than guessing. Keep high-impact decisions with the user."
     )
     contents = json.dumps(

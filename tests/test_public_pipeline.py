@@ -18,6 +18,7 @@ class FakeGateway:
                 objective="Create a current candidate list.",
                 findings=[{
                     "finding_id": "F01", "source_name": "public_research.md",
+                    "source_refs": ["W01"],
                     "evidence": "Example candidate is publicly listed.",
                     "implication": "Include it with its source.",
                 }],
@@ -34,6 +35,7 @@ class FakeGateway:
             VerificationReport(
                 verdict="PASS",
                 criterion_checks=[{
+                    "criterion_id": "Q01",
                     "criterion": "Every candidate has a source.",
                     "passed": True,
                     "evidence": "The row contains a source URL.",

@@ -167,6 +167,26 @@ def test_failed_system_check_prevents_settlement() -> None:
     assert settle_consistent_verification(contract(), report).verdict == Verdict.REVISE
 
 
+def test_generic_pass_cannot_replace_required_criterion_checks() -> None:
+    report = VerificationReport(
+        verdict=Verdict.PASS,
+        criterion_checks=[CriterionCheck(
+            criterion="Generic system review",
+            passed=True,
+            evidence="The document looks complete.",
+        )],
+        blocking_issues=[],
+        revision_instructions=[],
+        missing_information=[],
+    )
+
+    settled = settle_consistent_verification(contract(), report)
+
+    assert settled.verdict == Verdict.REVISE
+    assert "Q01" in settled.blocking_issues[0]
+    assert "Q02" in settled.blocking_issues[0]
+
+
 def test_equal_count_unbound_system_failures_do_not_overwrite_contract_criteria() -> None:
     report = VerificationReport(
         verdict=Verdict.REVISE,

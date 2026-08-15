@@ -9,7 +9,13 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, Field
 
 from onebrief.assurance import resolve_assurance_policy
-from onebrief.execution_schemas import CriterionCheck, DraftArtifact, VerificationReport, Verdict
+from onebrief.execution_schemas import (
+    AnalysisPackage,
+    CriterionCheck,
+    DraftArtifact,
+    VerificationReport,
+    Verdict,
+)
 from onebrief.public_research import PublicResearchResult, PublicWebSource
 from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis
 
@@ -23,6 +29,9 @@ class EvidenceSufficiencyIssueKind(StrEnum):
     UNCITED_MATERIAL_CLAIM = "uncited_material_claim"
     UNGROUNDED_MODEL_URL = "ungrounded_model_url"
     FORBIDDEN_OUTPUT_DISCLOSURE = "forbidden_output_disclosure"
+    UNTRACEABLE_FINDING = "untraceable_finding"
+    MISSING_PRIMARY_REGULATORY_SOURCE = "missing_primary_regulatory_source"
+    UNSUPPORTED_CAUSAL_ABSOLUTE = "unsupported_causal_absolute"
 
 
 class EvidenceSufficiencyIssue(BaseModel):
@@ -62,6 +71,24 @@ _BOUNDED_UNCERTAINTY = re.compile(
 _SAFETY_ABSOLUTE = re.compile(
     r"부작용\s*없|완전히\s*안전|안전한\s+(?:제품|원료|소재)|위험\s*없|"
     r"\b(?:no\s+side\s+effects?|completely\s+safe|risk[- ]free|zero\s+risk)\b",
+    re.IGNORECASE,
+)
+_CAUSAL_ABSOLUTE = re.compile(
+    r"(?:교차\s*오염|교차\s*감염|감염|미생물|욕창).{0,30}"
+    r"(?:원천(?:적)?(?:으로)?\s*차단|완전(?:히)?\s*(?:제거|차단|예방))|"
+    r"(?:eliminates?|completely\s+(?:eliminates?|prevents?|blocks?)).{0,30}"
+    r"(?:cross[- ]contamination|infection|microbial|pressure\s+injur)",
+    re.IGNORECASE,
+)
+_REGULATORY_CLAIM = re.compile(
+    r"의약외품|위생용품|약사법|품목(?:허가|신고|제조보고)|제조업\s*신고|"
+    r"법적으로\s*(?:불가능|가능)|즉시\s*출시|"
+    r"\b(?:quasi-drug|regulatory|legally|registration|filing|approval)\b",
+    re.IGNORECASE,
+)
+_PRIMARY_AUTHORITY_HOST = re.compile(
+    r"(?:^|\.)(?:law\.go\.kr|mfds\.go\.kr|foodsafetykorea\.go\.kr|gov\.kr|go\.kr|"
+    r"iso\.org|who\.int|cdc\.gov|europa\.eu)$",
     re.IGNORECASE,
 )
 _SCOPE_LIMIT = re.compile(r"까지만|범위에서\s*제외|하지\s*마|\bonly\b|\bdo\s+not\b", re.IGNORECASE)
@@ -222,6 +249,41 @@ def _grounded_source_ids(sources: list[InternalSource]) -> set[str]:
     return grounded
 
 
+def _successful_grounded_source_registry(sources: list[InternalSource]) -> dict[str, str]:
+    """Return only inspectable W IDs and their successful resolved public URL."""
+
+    grounded: dict[str, str] = {}
+    registry_line = re.compile(
+        r"^-?\s*\[(?P<source_id>W\d{2,})\].*?"
+        r"(?P<url>https?://[^\s\]]+)(?:\s+\[HTTP\s+(?P<status>\d{3})\])?",
+        re.IGNORECASE,
+    )
+    for source in sources:
+        if source.name != "public_research.md" or "## 공개 출처" not in source.content:
+            continue
+        registry = source.content.rsplit("## 공개 출처", 1)[-1]
+        for raw in registry.splitlines():
+            match = registry_line.match(raw.strip())
+            if not match or not urlparse(match.group("url")).hostname:
+                continue
+            status = int(match.group("status")) if match.group("status") else None
+            if status is not None and not 200 <= status < 400:
+                continue
+            grounded[match.group("source_id").casefold()] = match.group("url").rstrip(".,;])")
+    return grounded
+
+
+def _grounded_source_urls(sources: list[InternalSource]) -> set[str]:
+    return {
+        _normalize_url(url)
+        for url in _successful_grounded_source_registry(sources).values()
+    }
+
+
+def _grounded_source_ids(sources: list[InternalSource]) -> set[str]:
+    return set(_successful_grounded_source_registry(sources))
+
+
 def append_grounded_public_source_registry(
     sources: list[InternalSource],
     draft: DraftArtifact,
@@ -229,13 +291,15 @@ def append_grounded_public_source_registry(
     """Expose the trusted public-source registry without asking the maker to copy it."""
 
     trusted_lines: list[str] = []
+    grounded_ids = _grounded_source_ids(sources)
     for source in sources:
         if source.name != "public_research.md" or "## 공개 출처" not in source.content:
             continue
         registry = source.content.rsplit("## 공개 출처", 1)[-1]
         for raw in registry.splitlines():
             line = raw.strip()
-            if _WEB_SOURCE_CITATION.search(line) and _URL.search(line):
+            source_ids = {item.casefold() for item in _WEB_SOURCE_CITATION.findall(line)}
+            if source_ids & grounded_ids and _URL.search(line):
                 trusted_lines.append(line)
     missing_lines = [
         line for line in dict.fromkeys(trusted_lines)
@@ -336,6 +400,7 @@ def validate_evidence_sufficiency(
     requirements: RequirementsAnalysis,
     sources: list[InternalSource],
     draft: DraftArtifact,
+    analysis: AnalysisPackage | None = None,
 ) -> EvidenceSufficiencyVerification:
     """Reject research prose that overclaims or cannot expose its evidence."""
 
@@ -344,6 +409,8 @@ def validate_evidence_sufficiency(
     has_public_research = any(source.name == "public_research.md" for source in sources)
     research_text = _research_text(requirements)
     assurance = resolve_assurance_policy(requirements)
+    grounded_registry = _successful_grounded_source_registry(sources)
+    grounded_source_ids = set(grounded_registry)
 
     forbidden_disclosures = [
         term for term in intake.forbidden_output_terms
@@ -435,6 +502,72 @@ def validate_evidence_sufficiency(
             ),
         ))
 
+    if _CAUSAL_ABSOLUTE.search(body):
+        issues.append(EvidenceSufficiencyIssue(
+            kind=EvidenceSufficiencyIssueKind.UNSUPPORTED_CAUSAL_ABSOLUTE,
+            message=(
+                "The artifact turns a plausible hygiene or clinical benefit into an absolute causal claim. "
+                "Use bounded positive wording, distinguish the proposal rationale from a proven outcome, "
+                "and state the pilot or validation boundary needed before public use."
+            ),
+        ))
+
+    if analysis is not None and has_public_research:
+        used_finding_ids = {
+            item.casefold() for item in re.findall(r"\bF\d{2,}\b", body, re.IGNORECASE)
+        }
+        findings = {
+            finding.finding_id.casefold(): finding
+            for finding in analysis.findings
+            if finding.source_name == "public_research.md"
+        }
+        untraceable: list[str] = []
+        for finding_id in sorted(used_finding_ids & findings.keys()):
+            refs = {item.casefold() for item in findings[finding_id].source_refs}
+            if not refs & grounded_source_ids:
+                untraceable.append(findings[finding_id].finding_id)
+        if untraceable:
+            issues.append(EvidenceSufficiencyIssue(
+                kind=EvidenceSufficiencyIssueKind.UNTRACEABLE_FINDING,
+                message=(
+                    "The artifact cites public-research findings that are not traceable to a successful "
+                    "grounded W source: " + ", ".join(untraceable) + ". Re-run research or remove the "
+                    "unsupported finding; an F identifier alone is not evidence."
+                ),
+            ))
+
+        ungrounded_regulatory_lines: list[str] = []
+        for raw_line in body.splitlines():
+            if not _REGULATORY_CLAIM.search(raw_line):
+                continue
+            cited_findings = {
+                item.casefold() for item in re.findall(r"\bF\d{2,}\b", raw_line, re.IGNORECASE)
+            }
+            if not cited_findings:
+                continue
+            referenced_urls = [
+                grounded_registry[ref]
+                for finding_id in cited_findings
+                if finding_id in findings
+                for ref in {item.casefold() for item in findings[finding_id].source_refs}
+                if ref in grounded_registry
+            ]
+            if not any(
+                _PRIMARY_AUTHORITY_HOST.search((urlparse(url).hostname or "").casefold())
+                for url in referenced_urls
+            ):
+                ungrounded_regulatory_lines.append(re.sub(r"\s+", " ", raw_line).strip()[:200])
+        if ungrounded_regulatory_lines:
+            issues.append(EvidenceSufficiencyIssue(
+                kind=EvidenceSufficiencyIssueKind.MISSING_PRIMARY_REGULATORY_SOURCE,
+                message=(
+                    "A legal or regulatory conclusion is not bound to a successful primary-authority "
+                    "source. Use the governing statute, regulator, or official standard, or present the "
+                    "classification as an unresolved question. Examples: "
+                    + " | ".join(ungrounded_regulatory_lines[:3])
+                ),
+            ))
+
     scope_text = "\n".join(filter(None, [intake.goal, intake.desired_output or ""]))
     if _SCOPE_LIMIT.search(scope_text) and _SCOPE_LEAKAGE.search(body):
         issues.append(EvidenceSufficiencyIssue(
@@ -448,7 +581,7 @@ def validate_evidence_sufficiency(
     uncited = (
         _uncited_material_claims(
             body,
-            grounded_source_ids=_grounded_source_ids(sources),
+            grounded_source_ids=grounded_source_ids,
             allow_labeled_estimates=assurance.allow_labeled_estimates,
             allow_bounded_inference=assurance.allow_bounded_inference,
         )
@@ -480,6 +613,8 @@ _RESEARCH_REENTRY_KINDS = frozenset({
     EvidenceSufficiencyIssueKind.UNBOUNDED_ABSENCE_CLAIM,
     EvidenceSufficiencyIssueKind.UNSUPPORTED_SAFETY_ABSOLUTE,
     EvidenceSufficiencyIssueKind.UNGROUNDED_MODEL_URL,
+    EvidenceSufficiencyIssueKind.UNTRACEABLE_FINDING,
+    EvidenceSufficiencyIssueKind.MISSING_PRIMARY_REGULATORY_SOURCE,
 })
 
 
