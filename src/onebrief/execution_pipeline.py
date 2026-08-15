@@ -439,6 +439,34 @@ def semantic_visual_edit_context(
     return selected
 
 
+def is_cross_surface_visual_style_failure(feedback: str) -> bool:
+    """Return true when evidence proves a shared presentation owner is missing.
+
+    A catalog-anchored edit is appropriate for one known control. It is the
+    wrong response contract when Login, Lobby, and Settings all fail the same
+    theme criterion: forcing an existing anchor caused the maker to edit a
+    dormant binder log because no existing file owned the shared concern.
+    """
+
+    normalized = " ".join(feedback.split()).casefold()
+    screenshots = set(re.findall(
+        r"screenshots[/\\][^;|\s]+\.png", normalized
+    ))
+    style_markers = (
+        "dark semi-transparent",
+        "neon accent",
+        "sans-serif",
+        "visual style",
+        "theme",
+        "typography",
+    )
+    return (
+        "independent unity semantic visual observation failed" in normalized
+        and len(screenshots) >= 2
+        and any(marker in normalized for marker in style_markers)
+    )
+
+
 _PRODUCT_REPAIR_SOURCE_STOP_WORDS = {
     "after", "before", "could", "expected", "failed", "failure", "false",
     "from", "must", "onebrief", "should", "tests", "test", "true", "unity",
@@ -892,6 +920,11 @@ def development_maker_schema_for(
         active_phase != ExecutionPhase.EVIDENCE_CONSTRUCTION
         and is_development_product_target_failure(feedback)
     ):
+        if is_cross_surface_visual_style_failure(feedback):
+            # No catalog entry can represent a not-yet-created shared owner.
+            # The downstream causal gate still permits only one digest-approved
+            # new production .cs sidecar with complete bounded content.
+            return CompactProposedProjectCodeChangeSet
         if exact_edit_anchors:
             return catalog_bound_product_repair_schema(exact_edit_anchors)
         return ExactRepairProjectCodeChangeSet

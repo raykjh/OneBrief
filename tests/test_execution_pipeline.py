@@ -3034,6 +3034,28 @@ def test_runtime_product_failure_uses_one_bounded_exact_repair() -> None:
     assert issubclass(selected, CatalogAnchoredProductRepair)
 
 
+def test_cross_surface_style_failure_can_propose_one_new_theme_sidecar() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "independent Unity semantic visual observation failed: "
+        "screenshots/Screenshots/login.png: visual style lacks dark semi-transparent panels; "
+        "screenshots/Screenshots/lobby.png: no neon accents; "
+        "screenshots/Screenshots/settings.png: typography is not sans-serif"
+    )
+    anchors = [{
+        "path": "Assets/JULPAE/Scripts/Localization/JulpaeLoginAccountPanelBinder.cs",
+        "anchors": [{
+            "anchor_id": "A0123456789ab",
+            "text": "Debug.Log(\"Installed\");",
+        }],
+    }]
+
+    selected = development_maker_schema_for(
+        report, None, anchors, ExecutionPhase.PRODUCT_IMPLEMENTATION
+    )
+
+    assert selected is CompactProposedProjectCodeChangeSet
+
+
 def test_unseen_large_source_binding_uses_catalog_anchored_repair() -> None:
     report = ExecutionPipeline._development_failure_report(
         "existing file was not included in approved model context: "
