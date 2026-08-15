@@ -187,6 +187,38 @@ def test_continuation_rejects_nonterminal_source(
         )
 
 
+def test_needs_information_source_can_resume_after_new_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("onebrief.jobs.create_project_snapshot", lambda *_args: None)
+    source = InternalSource(
+        name="rules", priority=SourcePriority.MANDATORY, content="truth", size_bytes=5
+    )
+    source_dir = create_job(
+        jobs_dir=tmp_path / "source-jobs",
+        intake=_intake(source),
+        requirements=_requirements(),
+        sources=[source],
+        estimate=_estimate(),
+        approved_usd=0.10,
+    )
+    JobStore(source_dir).finish(
+        JobStatus.NEEDS_INFORMATION,
+        stage="research_reentry",
+        message="The investigator needs a new primary source.",
+    )
+
+    child, *_ = create_budget_preserving_continuation(
+        source_job_dir=source_dir,
+        source_job_uri="gs://bucket/jobs/source",
+        jobs_dir=tmp_path / "children",
+        reusable_source=ReuseSource(),
+    )
+
+    assert child.is_dir()
+
+
 def test_reverification_marker_reaches_active_milestone_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

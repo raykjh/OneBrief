@@ -103,10 +103,15 @@ def resolve_public_source(
                 status_code = response.status_code
                 response_url = str(response.url)
                 response_headers = response.headers
-                if status_code in {403, 405}:
-                    with client.stream(
-                        "GET", current, headers={"Range": "bytes=0-0"}
-                    ) as fallback:
+                # A number of inspectable public sites (including government
+                # registries) do not implement HEAD consistently: they return
+                # 404/500 for HEAD while serving the same URL with GET. Treat
+                # HEAD as the cheap probe, not as final evidence of failure.
+                if not 200 <= status_code < 400:
+                    # Do not add a Range header: some legacy government sites
+                    # reject ranged GETs too. Streaming lets us inspect the
+                    # response status and close it without consuming the body.
+                    with client.stream("GET", current) as fallback:
                         status_code = fallback.status_code
                         response_url = str(fallback.url)
                         response_headers = fallback.headers

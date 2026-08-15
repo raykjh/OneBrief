@@ -660,7 +660,11 @@ def research_reentry_issues(
     )
     probe = DraftArtifact(
         title="Public research evidence probe",
-        body_markdown=research_markdown,
+        # At investigator re-entry the grounded registry is part of the
+        # research artifact. Validate that complete evidence surface instead
+        # of the prose alone, or a valid direct URL in the registry is
+        # incorrectly reported as missing.
+        body_markdown=source.content if grounded_sources else research_markdown,
         cited_finding_ids=["F00"],
         drafting_decisions=["Synthetic probe used only for deterministic evidence routing."],
     )

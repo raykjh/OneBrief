@@ -1,6 +1,8 @@
 import zipfile
 from pathlib import Path
 
+import pytest
+
 from onebrief.budget_guard import BudgetStore
 from onebrief.jobs import create_job
 from onebrief.producer import estimate_budget
@@ -119,7 +121,8 @@ def test_google_grounding_redirect_is_resolved_to_observed_public_url(monkeypatc
     assert "https://vendor.example/products/42 [HTTP 200]" in internal.content
 
 
-def test_head_not_allowed_falls_back_to_bounded_get(monkeypatch) -> None:
+@pytest.mark.parametrize("head_status", [404, 405, 500])
+def test_failed_head_falls_back_to_bounded_get(monkeypatch, head_status: int) -> None:
     class Response:
         def __init__(self, status_code, url):
             self.status_code = status_code
@@ -143,11 +146,10 @@ def test_head_not_allowed_falls_back_to_bounded_get(monkeypatch) -> None:
             return None
 
         def head(self, url):
-            return Response(405, url)
+            return Response(head_status, url)
 
-        def stream(self, method, url, headers):
+        def stream(self, method, url):
             assert method == "GET"
-            assert headers == {"Range": "bytes=0-0"}
             return Response(200, url)
 
     monkeypatch.setattr("onebrief.public_research._public_host", lambda _host: True)

@@ -6,6 +6,7 @@ from onebrief.evidence_sufficiency import (
     validate_evidence_sufficiency,
 )
 from onebrief.execution_schemas import AnalysisPackage, DraftArtifact, VerificationReport
+from onebrief.public_research import PublicWebSource
 from onebrief.schemas import (
     AssuranceSelection,
     AssuranceUse,
@@ -622,6 +623,23 @@ def test_research_reentry_only_clears_after_item_rows_carry_direct_evidence() ->
         for item in research_reentry_issues(intake, _requirements(), unsupported)
     )
     assert research_reentry_issues(intake, _requirements(), supported) == []
+
+
+def test_research_reentry_counts_successful_grounded_registry_as_direct_evidence() -> None:
+    issues = research_reentry_issues(
+        IntakeRequest(goal="Research a regulatory question.", public_research_allowed=True),
+        _requirements(),
+        "The answer is summarized here without duplicating the registry URL.",
+        grounded_sources=[PublicWebSource(
+            source_id="W01",
+            title="Official source",
+            url="https://example.com/grounding-redirect",
+            resolved_url="https://www.law.go.kr/LSW/example",
+            http_status=200,
+        )],
+    )
+
+    assert not any(item.kind.value == "missing_direct_source" for item in issues)
 
 
 def _public_analysis(source_refs: list[str]) -> AnalysisPackage:
