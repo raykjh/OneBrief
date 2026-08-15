@@ -13,13 +13,14 @@ from onebrief.unity_semantic_observation import (
 
 
 class FakeGateway:
-    def __init__(self, result: dict[str, object]) -> None:
+    def __init__(self, result: dict[str, object] | list[dict[str, object]]) -> None:
         self.result = result
         self.calls: list[dict[str, object]] = []
 
     def generate_json_with_images(self, **kwargs):
         self.calls.append(kwargs)
-        return UnitySemanticObservation.model_validate(self.result)
+        payload = self.result.pop(0) if isinstance(self.result, list) else self.result
+        return UnitySemanticObservation.model_validate(payload)
 
 
 def _evidence(tmp_path: Path) -> Path:
@@ -103,6 +104,39 @@ def test_unity_semantic_observer_rejects_blank_runtime_frame(tmp_path: Path) -> 
 
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["status"] == "failed"
+
+
+def test_unity_semantic_observer_compact_retries_truncated_structured_output(
+    tmp_path: Path,
+) -> None:
+    gateway = FakeGateway([
+        {"frames": []},
+        {
+            "frames": [
+                {"artifact_path": "screenshots/desktop.png", "visible_text_samples": ["Lobby"],
+                 "findings": ["Dark lobby is visible."], "passed": True},
+                {"artifact_path": "screenshots/mobile.png", "visible_text_samples": ["Lobby"],
+                 "findings": ["Dark lobby is visible."], "passed": True},
+            ],
+            "overall_findings": ["Both requested viewports pass."],
+        },
+    ])
+
+    receipt = observe_unity_visual_evidence(
+        gateway,
+        model="gemini-test",
+        evidence_dir=_evidence(tmp_path),
+        observation_path=tmp_path / "observation.json",
+        goal_text="Verify the responsive lobby.",
+    )
+
+    assert receipt.status == ObservationStatus.OBSERVED
+    assert [call["stage"] for call in gateway.calls] == [
+        "independent_verification",
+        "independent_verification_compact_retry",
+    ]
+    assert gateway.calls[1]["max_output_tokens"] == 3600
+    assert "previous structured response was invalid" in gateway.calls[1]["contents"]
 
 
 def test_unity_semantic_observer_persists_failed_criterion_binding(tmp_path: Path) -> None:

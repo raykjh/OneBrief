@@ -6,7 +6,7 @@ import json
 import re
 from pathlib import Path, PurePosixPath
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from onebrief.reality_check import (
     ObservationCriterionCheck,
@@ -102,15 +102,15 @@ def semantic_observation_contract(
 
 class UnityFrameObservation(BaseModel):
     artifact_path: str
-    visible_text_samples: list[str] = Field(default_factory=list, max_length=40)
-    findings: list[str] = Field(min_length=1, max_length=20)
+    visible_text_samples: list[str] = Field(default_factory=list, max_length=8)
+    findings: list[str] = Field(min_length=1, max_length=6)
     passed: bool
 
 
 class UnitySemanticObservation(BaseModel):
     frames: list[UnityFrameObservation] = Field(min_length=1, max_length=6)
     criterion_checks: list[ObservationCriterionCheck] = Field(default_factory=list, max_length=12)
-    overall_findings: list[str] = Field(min_length=1, max_length=20)
+    overall_findings: list[str] = Field(min_length=1, max_length=8)
 
     @model_validator(mode="after")
     def require_visible_content_for_pass(self) -> "UnitySemanticObservation":
@@ -182,19 +182,46 @@ def observe_unity_visual_evidence(
             if strict_visual_quality else ""
         )
     )
-    result = gateway.generate_json_with_images(
-        stage="independent_verification",
-        model=model,
-        contents=prompt,
-        image_paths=paths,
-        schema=UnitySemanticObservation,
-        max_output_tokens=1800,
-        system_instruction=(
-            "You are OneBrief's independent visual verifier. Be conservative, concrete, and "
-            "evidence-bound. Never infer invisible UI from test metadata."
-        ),
-        temperature=0.0,
+    system_instruction = (
+        "You are OneBrief's independent visual verifier. Be conservative, concrete, and "
+        "evidence-bound. Never infer invisible UI from test metadata. Keep each frame to no "
+        "more than three short findings and three short visible-text samples. Do not repeat a "
+        "finding across frames; use criterion_checks for the shared verdict."
     )
+    try:
+        result = gateway.generate_json_with_images(
+            stage="independent_verification",
+            model=model,
+            contents=prompt,
+            image_paths=paths,
+            schema=UnitySemanticObservation,
+            max_output_tokens=2400,
+            system_instruction=system_instruction,
+            temperature=0.0,
+        )
+    except ValidationError as exc:
+        # A provider can stop exactly at MAX_TOKENS and leave an otherwise useful
+        # structured observation as truncated JSON.  The invalid response is not
+        # evidence. Retry the same immutable frames once with a deliberately compact
+        # contract instead of failing the whole long-running job or rerunning Unity.
+        compact_prompt = (
+            prompt
+            + "\n\nThe previous structured response was invalid and discarded. Validation detail: "
+            + " ".join(str(exc).split())[:600]
+            + ". Return fresh valid JSON. Use one short finding per frame, at most two visible "
+            "text samples per frame, one short check per applicable criterion, and one overall "
+            "finding. Do not repeat explanations."
+        )
+        result = gateway.generate_json_with_images(
+            stage="independent_verification_compact_retry",
+            model=model,
+            contents=compact_prompt,
+            image_paths=paths,
+            schema=UnitySemanticObservation,
+            max_output_tokens=3600,
+            system_instruction=system_instruction,
+            temperature=0.0,
+        )
 
     seen: set[str] = set()
     normalized: list[UnityFrameObservation] = []
