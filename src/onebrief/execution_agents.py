@@ -729,6 +729,11 @@ class DeveloperAgent:
             for item in getattr(previous_change_set, "changes", [])
             if getattr(item, "base_sha256", None) is None
         }
+        previous_candidate_paths = {
+            str(getattr(item, "path", ""))
+            for item in getattr(previous_change_set, "changes", [])
+            if getattr(item, "path", None)
+        }
         approved_new_roots = sorted({
             path.split("/", 1)[0] + "/"
             for path in approved_existing_paths
@@ -794,7 +799,11 @@ class DeveloperAgent:
                         # approved HEAD", so preserve the trusted null base hash.
                         change = change.model_copy(update={"base_sha256": None})
                         base_sha256 = None
-                    if base_sha256 is not None and path not in approved_existing_paths:
+                    if (
+                        base_sha256 is not None
+                        and path not in approved_existing_paths
+                        and path not in previous_candidate_paths
+                    ):
                         raise ValueError(
                             "existing file is absent from approved_repository_files and cannot be replaced: "
                             f"{path}. Use only a listed repository_path, or add a small new sidecar/partial "

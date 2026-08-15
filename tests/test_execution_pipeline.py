@@ -3575,6 +3575,47 @@ def test_project_developer_compact_retry_keeps_existing_files_as_exact_edits() -
     assert result.changes[0].content == "export const label = 'English';\n"
 
 
+def test_project_developer_can_repair_prior_milestone_file_from_candidate_state() -> None:
+    previous = ProjectCodeChangeSet(
+        summary="Prior milestone evidence candidate.",
+        changes=[{
+            "path": "Assets/Tests/PlayMode/OneBriefGeneratedJourneyTest.cs",
+            "base_sha256": "b" * 64,
+            "content": "AssertLobby();\n",
+            "reason": "Evidence source inherited from the verified prior milestone.",
+        }],
+    )
+    proposal = CompactProposedProjectCodeChangeSet.model_validate({
+        "summary": "Extend the inherited journey.",
+        "changes": [{
+            "path": "Assets/Tests/PlayMode/OneBriefGeneratedJourneyTest.cs",
+            "base_sha256": "b" * 64,
+            "search": "AssertLobby();",
+            "replace": "AssertLobby();\nAssertSettings();",
+            "reason": "Add the next milestone's required rendered state.",
+        }],
+    })
+
+    class Gateway:
+        def generate_json(self, **_: object):
+            return proposal
+
+    developer = DeveloperAgent(
+        Gateway(),
+        change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/",
+        path_approver=lambda path: path,
+    )
+    result = developer.run(
+        {}, _analysis(), [],
+        verification_feedback="Settings rendered scenario is missing.",
+        previous_change_set=previous,
+    )
+
+    assert result.changes[0].base_sha256 == "b" * 64
+    assert result.changes[0].content == "AssertLobby();\nAssertSettings();\n"
+
+
 def test_project_developer_compact_retry_can_add_bounded_new_evidence_files() -> None:
     proposal = CompactProposedProjectCodeChangeSet.model_validate({
         "summary": "Add the missing Unity test contract.",
