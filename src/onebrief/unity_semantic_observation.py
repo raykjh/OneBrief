@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel, Field, model_validator
@@ -27,6 +28,31 @@ _VISUAL_QUALITY_MARKERS = (
     "mobile",
     "desktop aspect",
 )
+
+
+def _semantic_criterion_ids(goal_text: str) -> set[str]:
+    """Return only contract criteria an image observer is authorized to judge."""
+
+    try:
+        payload = json.loads(goal_text)
+    except (TypeError, json.JSONDecodeError):
+        return set(re.findall(r"\bQ[0-9]{2}\b", goal_text))
+    completion = payload.get("completion_contract") if isinstance(payload, dict) else None
+    criteria = completion.get("quality_criteria") if isinstance(completion, dict) else None
+    if not isinstance(criteria, list):
+        return set()
+    allowed: set[str] = set()
+    for criterion in criteria:
+        if not isinstance(criterion, dict):
+            continue
+        criterion_id = str(criterion.get("criterion_id", ""))
+        text = " ".join(
+            str(criterion.get(key, ""))
+            for key in ("description", "evidence_required")
+        ).casefold()
+        if criterion_id and any(marker in text for marker in _VISUAL_QUALITY_MARKERS):
+            allowed.add(criterion_id)
+    return allowed
 
 
 def contract_requires_strict_visual_quality(contract: dict[str, object]) -> bool:
@@ -136,6 +162,9 @@ def observe_unity_visual_evidence(
         "localization, or responsiveness issues unless an active criterion below explicitly "
         "requires them. Record such unrelated observations as non-blocking findings."
     )
+    semantic_criterion_ids = (
+        _semantic_criterion_ids(goal_text) if strict_visual_quality else set()
+    )
     prompt = (
         "Independently inspect every attached Unity runtime screenshot. The maker cannot approve "
         "its own output. Judge only what is visibly rendered, not filenames or claims. Reject a "
@@ -146,6 +175,9 @@ def observe_unity_visual_evidence(
         + (
             "\n\nFor every active completion criterion whose truth is visible in these frames, "
             "return criterion_checks with the exact Q-number, passed boolean, and concrete visual evidence. "
+            "The only criterion IDs you may judge are: "
+            + ", ".join(sorted(semantic_criterion_ids))
+            + ". "
             "A frame being present is not proof of style, layout, language, or glyph compliance."
             if strict_visual_quality else ""
         )
@@ -180,9 +212,13 @@ def observe_unity_visual_evidence(
             "Unity semantic observer omitted screenshot(s): " + ", ".join(missing)
         )
 
+    criterion_checks = [
+        item for item in result.criterion_checks
+        if item.criterion_id in semantic_criterion_ids
+    ]
     passed = (
         all(frame.passed for frame in normalized)
-        and all(item.passed for item in result.criterion_checks)
+        and all(item.passed for item in criterion_checks)
     )
     findings = [
         f"{frame.artifact_path}: {finding}"
@@ -197,7 +233,7 @@ def observe_unity_visual_evidence(
         artifact_paths=[frame.artifact_path for frame in normalized],
         findings=findings,
         limitations=[] if passed else ["At least one rendered Unity state failed semantic inspection."],
-        criterion_checks=result.criterion_checks,
+        criterion_checks=criterion_checks,
     )
     observation_path.parent.mkdir(parents=True, exist_ok=True)
     observation_path.write_text(receipt.model_dump_json(indent=2) + "\n", encoding="utf-8")

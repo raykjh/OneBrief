@@ -332,7 +332,19 @@ def is_evidence_path(path: str) -> bool:
     )
 
 
+def is_project_history_path(path: str) -> bool:
+    """Return generated/manual project history that can never repair runtime behavior."""
+
+    normalized = path.replace("\\", "/").strip("/").casefold()
+    parts = {part for part in PurePosixPath(normalized).parts if part}
+    return bool(parts.intersection({
+        "_patch_notes", "patch_notes", "patch-notes", "changelogs", "change_logs",
+    }))
+
+
 def path_allowed_for_phase(path: str, phase: ExecutionPhase) -> bool:
+    if is_project_history_path(path):
+        return False
     if phase == ExecutionPhase.PRODUCT_IMPLEMENTATION:
         return not is_evidence_path(path)
     if phase == ExecutionPhase.EVIDENCE_CONSTRUCTION:

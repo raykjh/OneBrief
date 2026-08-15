@@ -134,6 +134,14 @@ def test_phase_routing_and_path_authority_are_disjoint() -> None:
         "Assets/Tests/PlayMode/UiEvidenceTests.cs",
         ExecutionPhase.EVIDENCE_CONSTRUCTION,
     )
+    assert not path_allowed_for_phase(
+        "Assets/JULPAE/_PATCH_NOTES/old_layout_fix.md",
+        ExecutionPhase.PRODUCT_IMPLEMENTATION,
+    )
+    assert not path_allowed_for_phase(
+        "Assets/JULPAE/_PATCH_NOTES/old_layout_fix.md",
+        ExecutionPhase.EVIDENCE_CONSTRUCTION,
+    )
 
 
 def test_trusted_failure_selects_product_or_evidence_owner() -> None:

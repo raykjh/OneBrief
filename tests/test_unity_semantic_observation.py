@@ -191,6 +191,44 @@ def test_behavioral_observation_prompt_does_not_expand_to_visual_milestone(
     assert "do not fail pre-existing style" in prompt
 
 
+def test_behavioral_observer_cannot_fail_compile_criterion_from_screenshots(
+    tmp_path: Path,
+) -> None:
+    gateway = FakeGateway({
+        "frames": [
+            {"artifact_path": "screenshots/desktop.png", "visible_text_samples": ["Login"],
+             "findings": ["Login is visible."], "passed": True},
+            {"artifact_path": "screenshots/mobile.png", "visible_text_samples": ["Lobby"],
+             "findings": ["Lobby is visible."], "passed": True},
+        ],
+        "criterion_checks": [{
+            "criterion_id": "Q01",
+            "passed": False,
+            "evidence": "Compilation logs are not visible in screenshots.",
+        }],
+        "overall_findings": ["The requested behavioral states are visible."],
+    })
+
+    receipt = observe_unity_visual_evidence(
+        gateway,
+        model="gemini-test",
+        evidence_dir=_evidence(tmp_path),
+        observation_path=tmp_path / "behavioral-observation.json",
+        goal_text=json.dumps({
+            "completion_contract": {"quality_criteria": [{
+                "criterion_id": "Q01",
+                "description": "Unity compilation success",
+                "evaluation_mode": "deterministic",
+                "evidence_required": "Unity compilation logs showing zero errors.",
+            }]}
+        }),
+        strict_visual_quality=False,
+    )
+
+    assert receipt.status == ObservationStatus.OBSERVED
+    assert receipt.criterion_checks == []
+
+
 def test_behavioral_observation_excludes_advisory_whole_project_architecture() -> None:
     contract = {
         "goal": "Login reaches Lobby.",
