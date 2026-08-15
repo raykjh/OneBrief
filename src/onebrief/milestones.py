@@ -505,6 +505,9 @@ def build_milestone_plan(
     )]
     cumulative: list[str] = []
     cumulative_slice_criteria: list[QualityCriterion] = []
+    presentation_criterion_ids = {
+        item.criterion_id for item in presentation_items
+    }
     previous = "M00"
     implementation_count = len(groups)
     working_fraction = 0.84
@@ -529,7 +532,10 @@ def build_milestone_plan(
             kind=MilestoneKind.IMPLEMENTATION,
             initial_execution_phase=(
                 ExecutionPhase.EVIDENCE_CONSTRUCTION
-                if unity_surface_flow and index == 1
+                if unity_surface_flow and (
+                    index == 1
+                    or bool(presentation_criterion_ids.intersection(primary_ids))
+                )
                 else ExecutionPhase.PRODUCT_IMPLEMENTATION
             ),
             dependencies=[previous],

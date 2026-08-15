@@ -34,6 +34,7 @@ from onebrief.execution_schemas import (
 from onebrief.generic_development_toolpack import ProjectCodeChangeSet, ProjectFileChange
 from onebrief.schemas import (
     CompletionContract,
+    ExecutionPhase,
     EvaluationMode,
     QualityCriterion,
     RequirementsAnalysis,
@@ -293,6 +294,9 @@ def test_unity_flow_is_decomposed_into_real_vertical_slices() -> None:
     assert [item.criterion_id for item in scoped.completion_contract.quality_criteria] == [
         "Q01", "Q91", "Q92"
     ]
+    presentation = plan.milestones[4]
+    assert presentation.initial_execution_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
+    assert lobby.initial_execution_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
 
 
 def test_budget_reserves_every_milestone_before_owner_approval() -> None:
