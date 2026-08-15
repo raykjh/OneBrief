@@ -81,6 +81,11 @@ _FINDING_CITATION = re.compile(
     re.IGNORECASE,
 )
 _WEB_SOURCE_CITATION = re.compile(r"\[(W\d{2,})\]", re.IGNORECASE)
+_MIXED_CITATION_GROUP = re.compile(
+    r"\[((?:[FW]\d{2,})(?:\s*,\s*[FW]\d{2,})*)\]",
+    re.IGNORECASE,
+)
+_LABEL_ONLY = re.compile(r"^(?:[-*]\s*)?\*\*[^*]+\*\*:?\s*$")
 _ESTIMATE_UNCERTAINTY = re.compile(
     r"(?:추정치|가정|estimate|assumption).*(?:서면\s*견적|확인\s*필요|검증\s*필요|"
     r"written\s+quotation|requires?\s+(?:verification|confirmation))",
@@ -97,8 +102,12 @@ _NORMATIVE_TEST_PROCEDURE = re.compile(
     re.IGNORECASE,
 )
 _NORMATIVE_CHECKLIST = re.compile(
-    r"(?:RFQ|체크리스트).*(?:확인|요구사항|질문|검토)|"
-    r"(?:확인|검토).*(?:RFQ|체크리스트)",
+    r"(?:RFQ|견적\s*요청|체크리스트).*(?:확인|요구사항|질문|검토)|"
+    r"(?:확인|검토).*(?:RFQ|견적\s*요청|체크리스트)",
+    re.IGNORECASE,
+)
+_EVALUATION_METRIC = re.compile(
+    r"^(?:[-*]\s*)?\*\*[^*]+\*\*:?\s*.*(?:정도|여부|평가|점수|관찰)\.?$",
     re.IGNORECASE,
 )
 
@@ -271,19 +280,30 @@ def _uncited_material_claims(
             match.casefold() in allowed_source_ids
             for match in _WEB_SOURCE_CITATION.findall(line)
         )
+        has_supported_mixed_citation = any(
+            any(
+                token.strip().casefold().startswith("f")
+                or token.strip().casefold() in allowed_source_ids
+                for token in group.split(",")
+            )
+            for group in _MIXED_CITATION_GROUP.findall(line)
+        )
         if (
             not line
             or line.startswith("#")
+            or _LABEL_ONLY.fullmatch(line)
             or is_table_header
             or re.fullmatch(r"[-|: ]+", line)
             or not _MATERIAL_CLAIM.search(line)
             or _URL.search(line)
             or _FINDING_CITATION.search(line)
             or has_grounded_web_citation
+            or has_supported_mixed_citation
             or _ESTIMATE_UNCERTAINTY.search(line)
             or _PROPOSAL_SCOPE_STATEMENT.search(line)
             or _NORMATIVE_TEST_PROCEDURE.search(line)
             or _NORMATIVE_CHECKLIST.search(line)
+            or _EVALUATION_METRIC.fullmatch(line)
         ):
             continue
         claims.append(re.sub(r"\s+", " ", line)[:240])

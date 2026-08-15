@@ -301,6 +301,44 @@ def test_grounded_web_source_id_counts_but_invented_id_does_not() -> None:
     assert any(item.kind.value == "uncited_material_claim" for item in invented.issues)
 
 
+def test_mixed_finding_and_grounded_web_citations_count_on_same_claim() -> None:
+    source = InternalSource(
+        name="public_research.md",
+        priority=SourcePriority.MANDATORY,
+        requirement_keys=["research"],
+        content=(
+            "Research summary.\n\n## 공개 출처\n"
+            "- [W03] Regulation — https://example.com/regulation [HTTP 200]"
+        ),
+    )
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="규제 경로를 조사해줘.", public_research_allowed=True),
+        _requirements(),
+        [source],
+        _draft(
+            "이 제품은 신고 대상입니다. [F03, W03]\n\n"
+            "https://example.com/products/a"
+        ),
+    )
+
+    assert not any(item.kind.value == "uncited_material_claim" for item in result.issues)
+
+
+def test_bold_section_label_is_not_a_material_claim() -> None:
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="안전 규격을 조사해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft(
+            "* **유해물질 안전 기준:**\n\n"
+            "세부 수치는 RFQ 시험성적서로 확인합니다. [F01]\n\n"
+            "https://example.com/products/a"
+        ),
+    )
+
+    assert not any(item.kind.value == "uncited_material_claim" for item in result.issues)
+
+
 def test_explicit_estimate_disclaimer_is_not_itself_an_uncited_price_claim() -> None:
     result = validate_evidence_sufficiency(
         IntakeRequest(goal="시장 가격을 조사해줘.", public_research_allowed=True),
@@ -362,7 +400,21 @@ def test_rfq_checklist_instruction_is_not_a_research_claim() -> None:
         _requirements(),
         [_public_source()],
         _draft(
-            "OEM 제조사 선정 및 RFQ 발송 시 확인해야 할 기술적 요구사항입니다.\n\n"
+            "OEM 제조사 선정 및 견적 요청 시 확인해야 할 기술적 요구사항입니다.\n\n"
+            "https://example.com/products/a"
+        ),
+    )
+
+    assert not any(item.kind.value == "uncited_material_claim" for item in result.issues)
+
+
+def test_usability_evaluation_metric_is_not_a_research_claim() -> None:
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="사용성 평가 항목을 작성해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft(
+            "* **체온 보호성:** 물기를 닦는 동안 사용자가 느끼는 한기 완화 정도.\n\n"
             "https://example.com/products/a"
         ),
     )
