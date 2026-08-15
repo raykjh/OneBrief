@@ -1,3 +1,5 @@
+import json
+
 from onebrief.completion_evidence import (
     CompletionEvidenceKind,
     apply_completion_evidence_override,
@@ -265,3 +267,96 @@ def test_trusted_receipt_populates_compile_behavior_and_visual_dimensions() -> N
         EvidenceKind.BEHAVIOR,
         EvidenceKind.VISUAL,
     }
+
+
+def test_generic_playmode_pass_cannot_settle_named_settings_control_contract() -> None:
+    base = requirements("Verify Settings controls in the running Unity client.")
+    contract = CompletionContract(
+        target_state="Settings controls work and the flow returns to Lobby.",
+        quality_criteria=[
+            QualityCriterion(
+                criterion_id="Q02",
+                description="Login -> Lobby -> Settings -> Lobby flow",
+                evaluation_mode=EvaluationMode.DETERMINISTIC,
+                evidence_required="PlayMode interaction evidence including the return from Settings to Lobby.",
+            ),
+            QualityCriterion(
+                criterion_id="Q04",
+                description="BGM, SFX, volume, and language controls work",
+                evaluation_mode=EvaluationMode.DETERMINISTIC,
+                evidence_required="PlayMode slider and language interactions assert persisted client state.",
+            ),
+        ],
+    )
+    payload = evidence("unity_playmode_visual_tests")
+    payload["runtime_evidence"] = [{
+        "path": "development/unity_visual_evidence/runtime-evidence.json",
+        "content": json.dumps({
+            "scenarios": [
+                {"scenario_id": "login", "interaction": "load_scene:LoginScene_All"},
+                {"scenario_id": "lobby", "interaction": "click:DirectEnterButton"},
+                {"scenario_id": "settings", "interaction": "click:SettingsButton"},
+            ]
+        }),
+    }]
+
+    corrected = apply_trusted_development_evidence(
+        passing_report(),
+        base.model_copy(update={"completion_contract": contract}),
+        payload,
+    )
+
+    assert corrected.verdict == Verdict.REVISE
+    failed = {item.criterion_id for item in corrected.criterion_checks if not item.passed}
+    assert failed == {"Q02", "Q04"}
+    assert any("generic PlayMode PASS is insufficient" in item for item in corrected.blocking_issues)
+
+
+def test_named_settings_control_contract_passes_with_effect_assertions_and_return() -> None:
+    base = requirements("Verify Settings controls in the running Unity client.")
+    contract = CompletionContract(
+        target_state="Settings controls work and the flow returns to Lobby.",
+        quality_criteria=[
+            QualityCriterion(
+                criterion_id="Q02",
+                description="Login -> Lobby -> Settings -> Lobby flow",
+                evaluation_mode=EvaluationMode.DETERMINISTIC,
+                evidence_required="PlayMode interaction evidence including the return from Settings to Lobby.",
+            ),
+            QualityCriterion(
+                criterion_id="Q04",
+                description="BGM, SFX, volume, and language controls work",
+                evaluation_mode=EvaluationMode.DETERMINISTIC,
+                evidence_required="PlayMode slider and language interactions assert persisted client state.",
+            ),
+        ],
+    )
+    payload = evidence("unity_playmode_visual_tests")
+    payload["runtime_evidence"] = [{
+        "path": "development/unity_visual_evidence/runtime-evidence.json",
+        "content": json.dumps({
+            "scenarios": [
+                {"scenario_id": "settings", "interaction": "click:SettingsButton"},
+                {
+                    "scenario_id": "settings_controls",
+                    "interaction": (
+                        "set_slider:SfxSlider:0.4 -> assert_player_pref_float:JULPAE_SETTING_SFX_VOLUME:0.4 -> "
+                        "set_slider:BgmSlider:0.5 -> assert_player_pref_float:JULPAE_SETTING_BGM_VOLUME:0.5 -> "
+                        "select_dropdown:LanguageDropdown:1 -> assert_player_pref_string:JULPAE_LANGUAGE:en"
+                    ),
+                },
+                {"scenario_id": "lobby_return", "interaction": "click:CloseButton"},
+            ]
+        }),
+    }]
+
+    corrected = apply_trusted_development_evidence(
+        passing_report(),
+        base.model_copy(update={"completion_contract": contract}),
+        payload,
+    )
+
+    checks = {item.criterion_id: item for item in corrected.criterion_checks if item.criterion_id}
+    assert checks["Q02"].passed is True
+    assert checks["Q04"].passed is True
+    assert corrected.verdict == Verdict.PASS

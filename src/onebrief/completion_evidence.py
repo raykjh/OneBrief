@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from enum import StrEnum
 
@@ -233,6 +234,91 @@ def apply_trusted_development_evidence(
     if not isinstance(commands, list):
         return model_report
 
+    runtime_scenarios: list[dict[str, object]] = []
+    raw_runtime_evidence = development_evidence.get("runtime_evidence")
+    if isinstance(raw_runtime_evidence, list):
+        for item in raw_runtime_evidence:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path", "")).casefold()
+            content = item.get("content")
+            if not path.endswith("runtime-evidence.json") or not isinstance(content, str):
+                continue
+            try:
+                payload = json.loads(content)
+            except json.JSONDecodeError:
+                continue
+            scenarios = payload.get("scenarios") if isinstance(payload, dict) else None
+            if isinstance(scenarios, list):
+                runtime_scenarios.extend(
+                    scenario for scenario in scenarios if isinstance(scenario, dict)
+                )
+
+    def behavior_contract_gaps(text: str) -> list[str]:
+        """Require named control effects in the executed journey, not any PlayMode pass."""
+
+        normalized = " ".join(text.casefold().split())
+        interactions = [
+            str(scenario.get("interaction", "")).casefold()
+            for scenario in runtime_scenarios
+        ]
+        trace = " -> ".join(interactions)
+        gaps: list[str] = []
+        asks_language = any(marker in normalized for marker in (
+            "language", "locale", "localization", "translation",
+        ))
+        asks_volume = any(marker in normalized for marker in (
+            "volume", "audio", "bgm", "sfx",
+        ))
+        if asks_language and not (
+            "select_dropdown:" in trace
+            and "language" in trace
+            and "assert_player_pref_string:" in trace
+        ):
+            gaps.append(
+                "the executed journey must select the shipped language control and assert its persisted client state"
+            )
+        if asks_volume:
+            slider_traces = re.findall(r"set_slider:([^\s>]+)", trace)
+            preference_traces = re.findall(
+                r"assert_player_pref_float:([^\s>]+)", trace
+            )
+            required_count = 2 if "bgm" in normalized and "sfx" in normalized else 1
+            if (
+                len(set(slider_traces)) < required_count
+                or len(set(preference_traces)) < required_count
+            ):
+                gaps.append(
+                    "the executed journey must operate each required volume slider and assert the corresponding persisted client state"
+                )
+        asks_settings_return = (
+            "settings" in normalized
+            and any(marker in normalized for marker in (
+                "back to lobby", "return to lobby", "settings -> lobby",
+                "settings to lobby",
+            ))
+        )
+        if asks_settings_return:
+            settings_index = next((
+                index for index, scenario in enumerate(runtime_scenarios)
+                if "settings" in str(scenario.get("scenario_id", "")).casefold()
+            ), None)
+            returned = bool(
+                settings_index is not None
+                and any(
+                    "lobby" in str(scenario.get("scenario_id", "")).casefold()
+                    and any(marker in str(scenario.get("interaction", "")).casefold() for marker in (
+                        "click:close", "click:back", "click:settings",
+                    ))
+                    for scenario in runtime_scenarios[settings_index + 1:]
+                )
+            )
+            if not returned:
+                gaps.append(
+                    "the executed journey must close Settings through a shipped control and capture the returned Lobby state"
+                )
+        return gaps
+
     passed_commands: dict[EvidenceKind, str] = {}
     for item in commands:
         if not isinstance(item, dict) or item.get("exit_code") != 0:
@@ -282,13 +368,27 @@ def apply_trusted_development_evidence(
                     trusted_bindings.setdefault(binding.kind, binding)
 
     replacements: dict[str, CriterionCheck] = {}
+    deterministic_gaps: list[str] = []
     used_binding_ids: set[str] = set()
     for criterion in contract.quality_criteria:
-        kind = criterion_kind(
-            f"{criterion.description} {criterion.evidence_required}"
-        )
+        criterion_text = f"{criterion.description} {criterion.evidence_required}"
+        kind = criterion_kind(criterion_text)
         command_id = passed_commands.get(kind) if kind is not None else None
         if command_id is None:
+            continue
+        gaps = behavior_contract_gaps(criterion_text) if kind == EvidenceKind.BEHAVIOR else []
+        if gaps:
+            message = "; ".join(gaps) + ". A generic PlayMode PASS is insufficient."
+            deterministic_gaps.append(
+                f"{criterion.criterion_id} ({criterion.description}): {message}"
+            )
+            replacements[criterion.criterion_id] = CriterionCheck(
+                criterion_id=criterion.criterion_id,
+                criterion=criterion.description,
+                passed=False,
+                evidence=message,
+                evidence_bindings=[],
+            )
             continue
         trusted = trusted_bindings.get(kind)
         binding = (
@@ -326,4 +426,17 @@ def apply_trusted_development_evidence(
             evidence=binding.summary,
             evidence_bindings=[binding],
         ))
-    return model_report.model_copy(update={"criterion_checks": checks})
+    update: dict[str, object] = {"criterion_checks": checks}
+    if deterministic_gaps:
+        update.update({
+            "verdict": Verdict.REVISE,
+            "blocking_issues": list(dict.fromkeys([
+                *model_report.blocking_issues,
+                *deterministic_gaps,
+            ])),
+            "revision_instructions": list(dict.fromkeys([
+                *model_report.revision_instructions,
+                "Update the declarative runtime journey to execute and assert every named control effect before recapturing evidence.",
+            ])),
+        })
+    return model_report.model_copy(update=update)
