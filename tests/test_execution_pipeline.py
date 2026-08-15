@@ -3055,6 +3055,47 @@ def test_detached_product_edit_is_rolled_back_without_losing_evidence() -> None:
     ]
 
 
+def test_detached_unity_target_is_excluded_from_next_semantic_repair_scope() -> None:
+    contract = RepairContract.model_validate({
+        "contract_id": "RC-3123456789abcdef",
+        "observation_id": "FO-3123456789abcdef",
+        "progress_kind": "first_observation",
+        "occurrence": 1,
+        "hypothesis": {
+            "hypothesis_id": "RH-3123456789abcdef",
+            "suspected_cause": "The edited component is detached.",
+            "cheapest_probe": "Repair one reachable component.",
+            "expected_signal": "The executed view changes.",
+            "repair_boundary": "One active Unity component.",
+            "requires_model_reasoning": True,
+        },
+        "permitted_paths": [
+            "Assets/UI/DetachedSettingsBinder.cs",
+            "Assets/UI/ActiveSettingsController.cs",
+        ],
+        "verification_ladder": ["compile", "targeted_state"],
+        "execution_allowed": True,
+        "escalation_required": False,
+        "rationale": "Use the smallest reachable repair.",
+    })
+    sources = [
+        {"repository_path": "Assets/UI/DetachedSettingsBinder.cs",
+         "content": "public class DetachedSettingsBinder {}"},
+        {"repository_path": "Assets/UI/ActiveSettingsController.cs",
+         "content": "public class ActiveSettingsController { void OpenSettings() {} }"},
+    ]
+    failure = (
+        "changed Unity UI MonoBehaviour DetachedSettingsBinder is not reachable "
+        "from any committed .unity/.prefab script GUID, runtime initialization entrypoint, "
+        "or other production source reference; repair or attach the active component instead"
+    )
+
+    rebound = bind_semantic_product_repair_scope(contract, sources, failure)
+
+    assert "Assets/UI/DetachedSettingsBinder.cs" not in rebound.permitted_paths
+    assert "Assets/UI/ActiveSettingsController.cs" in rebound.permitted_paths
+
+
 def test_runtime_product_failure_uses_one_bounded_exact_repair() -> None:
     report = ExecutionPipeline._development_failure_report(
         "development verification failed: unity_playmode_visual_tests | "

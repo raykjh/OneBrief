@@ -535,6 +535,14 @@ def bind_semantic_product_repair_scope(
     and continues to exclude evidence paths.
     """
 
+    detached_class_names = {
+        match.casefold()
+        for match in re.findall(
+            r"changed\s+unity\s+ui\s+monobehaviour\s+([A-Za-z_][A-Za-z0-9_]*)\s+is\s+not\s+reachable",
+            failure_text,
+            flags=re.IGNORECASE,
+        )
+    }
     selected_paths = [
         str(source.get("repository_path") or "").replace("\\", "/")
         for source in relevant_product_repair_sources(sources, failure_text)
@@ -549,6 +557,7 @@ def bind_semantic_product_repair_scope(
         if path and path.casefold() not in {"none", "null"}
         if path_allowed_for_phase(path, ExecutionPhase.PRODUCT_IMPLEMENTATION)
         and visual_repair_production_target_allowed(path)
+        and Path(path).stem.casefold() not in detached_class_names
     ]
     return contract.model_copy(update={
         "permitted_paths": list(dict.fromkeys(permitted))[:16]
