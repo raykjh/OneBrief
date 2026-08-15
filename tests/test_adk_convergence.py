@@ -748,6 +748,73 @@ def test_real_adk_llm_agents_exchange_structured_revision_state() -> None:
     assert [event["author"] for event in trace].count("onebrief_maker") == 2
 
 
+def test_maker_revisions_use_current_state_projection_without_conversation_replay() -> None:
+    class InspectingGateway(BudgetedGeminiClient):
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, list[types.Content], str]] = []
+            self.outputs = [
+                DraftArtifact(
+                    title="First draft",
+                    body_markdown="A first bounded artifact that still needs one precise repair.",
+                    cited_finding_ids=["F01"],
+                    drafting_decisions=[],
+                ).model_dump(mode="json"),
+                _report(Verdict.REVISE),
+                DraftArtifact(
+                    title="Revised draft",
+                    body_markdown="The bounded artifact now contains the precise requested repair.",
+                    cited_finding_ids=["F01"],
+                    drafting_decisions=["Applied the verification feedback."],
+                ).model_dump(mode="json"),
+                _report(Verdict.PASS),
+            ]
+
+        def generate_adk_response(self, **kwargs: Any) -> types.GenerateContentResponse:
+            self.calls.append((
+                str(kwargs["stage"]),
+                list(kwargs["contents"]),
+                str(getattr(kwargs["config"], "system_instruction", "")),
+            ))
+            payload = self.outputs.pop(0)
+            return types.GenerateContentResponse(candidates=[types.Candidate(
+                content=types.Content(
+                    role="model", parts=[types.Part(text=json.dumps(payload))]
+                ),
+                finish_reason=types.FinishReason.STOP,
+            )])
+
+    gateway = InspectingGateway()
+    agent = build_text_convergence_agent(
+        gateway=gateway,
+        maker_model="maker-model",
+        verifier_model="verifier-model",
+        maker_schema=DraftArtifact,
+        max_revision_rounds=1,
+        maker_instruction="Create the artifact.",
+        verifier_instruction="Verify the artifact.",
+    )
+    asyncio.run(run_convergence_agent(agent, {
+        "work_contract": {"goal": "Finish it."},
+        "analysis_package": {"findings": [{"finding_id": "F01"}]},
+        "authoritative_sources": [{"name": "source", "content": "authority"}],
+    }))
+
+    maker_calls = [item for item in gateway.calls if item[0] == "long_form_draft"]
+    assert len(maker_calls) == 2
+    for _stage, contents, _instruction in maker_calls:
+        assert all(content.role != "model" for content in contents)
+        assert "First draft" not in json.dumps(
+            [content.model_dump(mode="json") for content in contents]
+        )
+    first_instruction = maker_calls[0][2]
+    second_instruction = maker_calls[1][2]
+    assert '"work_contract": {"goal": "Finish it."}' in first_instruction
+    assert '"authoritative_sources": [{"name": "source", "content": "authority"}]' in first_instruction
+    assert '"previous_artifact": null' in first_instruction
+    assert '"previous_artifact": {"title": "First draft"' in second_instruction
+    assert '"verification_feedback": {"verdict": "REVISE"' in second_instruction
+
+
 def test_independent_verifier_receives_state_projection_not_repository_conversation() -> None:
     class InspectingGateway(BudgetedGeminiClient):
         def __init__(self) -> None:

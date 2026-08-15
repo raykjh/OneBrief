@@ -26,6 +26,7 @@ ROUND_STATE_KEY = "onebrief_convergence_round"
 VERIFIER_CONTEXT_STATE_KEY = "onebrief_verifier_context"
 WORK_CONTRACT_STATE_KEY = "onebrief_work_contract"
 ANALYSIS_PACKAGE_STATE_KEY = "onebrief_analysis_package"
+AUTHORITATIVE_SOURCES_STATE_KEY = "onebrief_authoritative_sources"
 SKIP_VERIFIER_STATE_KEY = "onebrief_skip_verifier"
 REVERIFY_EXISTING_STATE_KEY = "onebrief_reverify_existing_candidate"
 EXACT_EDIT_ANCHORS_STATE_KEY = "onebrief_exact_edit_anchors"
@@ -446,6 +447,11 @@ def build_text_convergence_agent(
         verification = ctx.state.get(VERIFICATION_STATE_KEY)
         return maker_instruction + "\n\nCURRENT REVISION CONTEXT:\n" + json.dumps(
             {
+                "work_contract": ctx.state.get(WORK_CONTRACT_STATE_KEY),
+                "analysis_package": ctx.state.get(ANALYSIS_PACKAGE_STATE_KEY),
+                "authoritative_sources": ctx.state.get(
+                    AUTHORITATIVE_SOURCES_STATE_KEY, []
+                ),
                 "previous_artifact": previous,
                 "verification_feedback": verification,
                 "repair_plan": ctx.state.get(REPAIR_PLAN_STATE_KEY),
@@ -477,7 +483,11 @@ def build_text_convergence_agent(
         instruction=contextual_maker_instruction,
         output_schema=maker_schema,
         output_key=MAKER_STATE_KEY,
-        include_contents="default",
+        # The durable state projection above is the complete maker handoff.
+        # Replaying the ADK conversation makes every full prior artifact appear
+        # again on each revision, grows tokens quadratically, and can cause the
+        # model to copy the unchanged draft instead of applying the repair plan.
+        include_contents="none",
         mode="single_turn",
         generate_content_config=types.GenerateContentConfig(
             temperature=0.1, max_output_tokens=maker_output_tokens
@@ -533,6 +543,10 @@ async def run_convergence_agent(
         session_state[WORK_CONTRACT_STATE_KEY] = payload["work_contract"]
     if "analysis_package" in payload:
         session_state[ANALYSIS_PACKAGE_STATE_KEY] = payload["analysis_package"]
+    if "authoritative_sources" in payload:
+        session_state[AUTHORITATIVE_SOURCES_STATE_KEY] = payload[
+            "authoritative_sources"
+        ]
     sessions = InMemorySessionService()
     await sessions.create_session(
         app_name=app_name,
