@@ -37,6 +37,7 @@ from onebrief.execution_pipeline import (
     visual_repair_production_target_allowed,
     semantic_visual_edit_context,
     relevant_product_repair_sources,
+    bind_semantic_product_repair_scope,
     product_failure_edit_anchors,
     active_exact_edit_anchors,
     candidate_first_edit_anchors,
@@ -785,6 +786,53 @@ def test_visual_product_repair_cannot_target_tests_or_evidence(path: str) -> Non
 ])
 def test_visual_product_repair_allows_shipped_product_sources(path: str) -> None:
     assert visual_repair_production_target_allowed(path) is True
+
+
+def test_semantic_product_contract_binds_only_bounded_approved_product_sources() -> None:
+    contract = RepairContract.model_validate({
+        "contract_id": "RC-2123456789abcdef",
+        "observation_id": "FO-2123456789abcdef",
+        "progress_kind": "criterion_advance",
+        "occurrence": 2,
+        "hypothesis": {
+            "hypothesis_id": "RH-2123456789abcdef",
+            "suspected_cause": "The rendered login account panel remains semantically wrong.",
+            "cheapest_probe": "Inspect the bounded owning source.",
+            "expected_signal": "The trusted rendered state improves.",
+            "repair_boundary": "One product surface.",
+            "requires_model_reasoning": True,
+        },
+        "permitted_paths": ["Assets/JULPAE/_LOCALIZATION_NOTES/attempt.md"],
+        "verification_ladder": ["compile", "semantic_observation"],
+        "execution_allowed": True,
+        "escalation_required": False,
+        "rationale": "Continue from trusted evidence.",
+    })
+    sources = [
+        {
+            "repository_path": "Assets/JULPAE/Scripts/Localization/JulpaeLoginAccountPanelBinder.cs",
+            "content": "public sealed class JulpaeLoginAccountPanelBinder {}",
+        },
+        {
+            "repository_path": "Assets/Tests/PlayMode/LoginAccountPanelTest.cs",
+            "content": "login account panel",
+        },
+        {
+            "repository_path": "Assets/JULPAE/Scripts/Billing/Store.cs",
+            "content": "unrelated purchase flow",
+        },
+    ]
+
+    bound = bind_semantic_product_repair_scope(
+        contract,
+        sources,
+        "independent semantic observation failed: login account panel style",
+    )
+
+    assert bound.permitted_paths == [
+        "Assets/JULPAE/_LOCALIZATION_NOTES/attempt.md",
+        "Assets/JULPAE/Scripts/Localization/JulpaeLoginAccountPanelBinder.cs",
+    ]
 
 
 def test_cross_surface_visual_failure_rejects_unrelated_local_anchor() -> None:

@@ -116,6 +116,7 @@ from onebrief.convergence_policy import (
     CURRENT_CONVERGENCE_POLICY_REVISION,
     ConvergenceLedger,
     ConvergencePolicy,
+    FailureLayer,
     RepairContract,
     new_convergence_ledger,
     repair_contract_blocks_resume,
@@ -482,6 +483,36 @@ def relevant_product_repair_sources(
         ranked.append((score, path_hits, path_folded, dict(source)))
     ranked.sort(key=lambda item: (-item[0], -item[1], item[2]))
     return [item[3] for item in ranked[:limit]]
+
+
+def bind_semantic_product_repair_scope(
+    contract: RepairContract,
+    sources: list[dict[str, object]],
+    failure_text: str,
+) -> RepairContract:
+    """Bind the semantic repair contract to its approved diagnostic sources.
+
+    A semantic observation names rendered behavior, while the preceding failed
+    candidate may name only a proof or documentation path.  The deterministic
+    source selector already exposes a small approved product working set to the
+    maker.  Record that same set in the repair contract so read visibility and
+    edit authority cannot disagree.  This never expands the ToolPack boundary
+    and continues to exclude evidence paths.
+    """
+
+    selected_paths = [
+        str(source.get("repository_path", "")).replace("\\", "/")
+        for source in relevant_product_repair_sources(sources, failure_text)
+    ]
+    permitted = [
+        path.replace("\\", "/")
+        for path in [*contract.permitted_paths, *selected_paths]
+        if path_allowed_for_phase(path, ExecutionPhase.PRODUCT_IMPLEMENTATION)
+        and visual_repair_production_target_allowed(path)
+    ]
+    return contract.model_copy(update={
+        "permitted_paths": list(dict.fromkeys(permitted))[:16]
+    })
 
 
 def product_failure_edit_anchors(
@@ -2497,6 +2528,12 @@ class ExecutionPipeline:
                 observation,
                 preserve_criterion_ids=preserve_criterion_ids,
             )
+            if observation.layer == FailureLayer.SEMANTIC_PRODUCT:
+                contract = bind_semantic_product_repair_scope(
+                    contract,
+                    prepared_sources,
+                    failure_text,
+                )
             convergence_ledger = convergence_policy.record(
                 convergence_ledger, observation, contract
             )
