@@ -35,6 +35,7 @@ from onebrief.execution_pipeline import (
     visual_repair_production_candidate,
     visual_repair_has_uncommitted_product_candidate,
     visual_repair_production_target_allowed,
+    semantic_visual_edit_context,
     relevant_product_repair_sources,
     product_failure_edit_anchors,
     active_exact_edit_anchors,
@@ -784,6 +785,36 @@ def test_visual_product_repair_cannot_target_tests_or_evidence(path: str) -> Non
 ])
 def test_visual_product_repair_allows_shipped_product_sources(path: str) -> None:
     assert visual_repair_production_target_allowed(path) is True
+
+
+def test_cross_surface_visual_failure_rejects_unrelated_local_anchor() -> None:
+    context = [
+        {"path": "Assets/Scripts/StoreCatalogImageBinding.cs", "anchors": [{"anchor_id": "A1"}]},
+        {"path": "Assets/Scripts/GlobalVisualTheme.cs", "anchors": [{"anchor_id": "A2"}]},
+    ]
+    feedback = (
+        "independent semantic visual observation failed: "
+        "screenshots/login.png: wrong style; screenshots/lobby.png: wrong style"
+    )
+
+    selected = semantic_visual_edit_context(context, feedback)
+
+    assert [item["path"] for item in selected] == [
+        "Assets/Scripts/GlobalVisualTheme.cs"
+    ]
+
+
+def test_cross_surface_visual_failure_allows_new_owner_when_none_exists() -> None:
+    context = [{
+        "path": "Assets/Scripts/StoreCatalogImageBinding.cs",
+        "anchors": [{"anchor_id": "A1"}],
+    }]
+    feedback = (
+        "independent semantic visual observation failed: "
+        "screenshots/login.png: wrong style; screenshots/lobby.png: wrong style"
+    )
+
+    assert semantic_visual_edit_context(context, feedback) == []
 
 
 def test_development_toolpack_focus_includes_the_full_completion_contract() -> None:

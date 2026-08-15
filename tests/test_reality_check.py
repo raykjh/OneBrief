@@ -4,8 +4,10 @@ from onebrief.observation_packs import (
     UnityLocalizationObservationPack,
 )
 from onebrief.reality_check import (
+    ObservationReceipt,
     RealityCapability,
     apply_reality_check_override,
+    bind_failed_observation_receipt,
     evaluate_reality_check,
 )
 from onebrief.schemas import (
@@ -158,6 +160,42 @@ def test_failed_semantic_receipt_is_bound_to_its_contract_criterion() -> None:
     failed = [item for item in overridden.criterion_checks if not item.passed]
     assert [(item.criterion_id, item.criterion) for item in failed] == [
         ("Q05", "Visual style compliance")
+    ]
+
+
+def test_early_semantic_exception_binds_failure_before_repair_planning() -> None:
+    contract = CompletionContract(
+        target_state="The requested visual design is visible.",
+        quality_criteria=[QualityCriterion(
+            criterion_id="Q05",
+            description="Visual style compliance",
+            evidence_required="Independent rendered screenshot review.",
+        )],
+    )
+    report = VerificationReport(
+        verdict=Verdict.REVISE,
+        criterion_checks=[CriterionCheck(
+            criterion_id="Q05", criterion="Visual style compliance", passed=True,
+            evidence="The screenshot exists.",
+        )],
+        blocking_issues=["Independent semantic observation failed."],
+        revision_instructions=["Repair the product."], missing_information=[],
+    )
+    receipt = ObservationReceipt.model_validate({
+        "capability": "semantic_observation",
+        "observer_pack_id": "independent_visual",
+        "status": "failed",
+        "independent_from_maker": True,
+        "criterion_checks": [{
+            "criterion_id": "Q05", "passed": False,
+            "evidence": "The rendered lobby violates the visual style.",
+        }],
+    })
+
+    bound = bind_failed_observation_receipt(report, receipt, contract)
+
+    assert [(item.criterion_id, item.passed) for item in bound.criterion_checks] == [
+        ("Q05", True), ("Q05", False)
     ]
 
 

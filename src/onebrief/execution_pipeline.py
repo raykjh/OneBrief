@@ -131,7 +131,12 @@ from onebrief.grounded_search import run_grounded_research
 from onebrief.public_research import merge_public_sources
 from onebrief.recovery_policy import RecoveryAction, RecoveryDecision, RecoveryPolicy
 from onebrief.repair_planning import RepairPlan, build_repair_plan
-from onebrief.reality_check import apply_reality_check_override, evaluate_reality_check
+from onebrief.reality_check import (
+    ObservationReceipt,
+    apply_reality_check_override,
+    bind_failed_observation_receipt,
+    evaluate_reality_check,
+)
 from onebrief.requirements_gate import require_ready_for_estimate
 from onebrief.schemas import (
     ExecutionPhase,
@@ -390,6 +395,41 @@ def visual_repair_production_target_allowed(path: str) -> bool:
     ):
         return False
     return True
+
+
+def semantic_visual_edit_context(
+    context: list[dict[str, object]], failure_text: str,
+) -> list[dict[str, object]]:
+    """Select only plausible owning sources for a rendered product defect."""
+
+    screenshot_paths = set(re.findall(
+        r"screenshots[/\\][^;|\s]+\.png", failure_text.casefold()
+    ))
+    lowered = failure_text.casefold()
+    cross_surface = (
+        len(screenshot_paths) >= 2
+        or "across multiple" in lowered
+        or "across all scenes" in lowered
+    )
+    candidates = [
+        item for item in context
+        if item.get("anchors")
+        and visual_repair_production_target_allowed(str(item.get("path", "")))
+    ]
+    if not cross_surface:
+        return candidates
+    shared_owner_tokens = {
+        "theme", "style", "visual", "appearance", "responsive", "layout",
+        "canvas", "localization", "typography", "font", "ui",
+    }
+    selected: list[dict[str, object]] = []
+    for item in candidates:
+        path = re.sub(
+            r"(?<=[a-z0-9])(?=[A-Z])", " ", str(item.get("path", ""))
+        ).casefold()
+        if any(token in path for token in shared_owner_tokens):
+            selected.append(item)
+    return selected
 
 
 _PRODUCT_REPAIR_SOURCE_STOP_WORDS = {
@@ -2283,11 +2323,20 @@ class ExecutionPipeline:
                 output_dir / "development" / "verification_commands.json",
                 DevelopmentVerificationReceipt,
             )
-            return self._development_failure_report(
+            report = self._development_failure_report(
                 feedback,
                 requirements.completion_contract,
                 receipt,
             )
+            observation = self._load(
+                output_dir / "independent_observations" / "unity_ui_observation.json",
+                ObservationReceipt,
+            )
+            if observation is not None:
+                report = bind_failed_observation_receipt(
+                    report, observation, requirements.completion_contract
+                )
+            return report
 
         def refresh_diagnostic_repository_context(
             feedback: str, ctx, round_number: int
@@ -2312,24 +2361,31 @@ class ExecutionPipeline:
                 feedback,
             )
             if context:
-                ctx.session.state[MAKER_DIAGNOSTIC_CONTEXT_STATE_KEY] = context
                 if any(marker in normalized for marker in (
                     "semantic visual observation failed",
                     "semantic observation failed",
                     "unity layout diagnostics",
                 )):
+                    selected = semantic_visual_edit_context(context, feedback)
+                    ctx.session.state[MAKER_DIAGNOSTIC_CONTEXT_STATE_KEY] = selected
+                    for item in selected:
+                        path = str(item.get("path", ""))
+                        if not any(
+                            str(source.get("repository_path", "")) == path
+                            for source in prepared_sources
+                        ):
+                            prepared_sources.append(
+                                development_pack.trusted_promotion_source(path)
+                            )
                     ctx.session.state[EXACT_EDIT_ANCHORS_STATE_KEY] = [
                         {
                             "path": str(item["path"]),
                             "anchors": list(item.get("anchors", [])),
                         }
-                        for item in context
-                        if item.get("anchors")
-                        and path_allowed_for_phase(
-                            str(item.get("path", "")),
-                            ExecutionPhase.PRODUCT_IMPLEMENTATION,
-                        )
+                        for item in selected
                     ]
+                else:
+                    ctx.session.state[MAKER_DIAGNOSTIC_CONTEXT_STATE_KEY] = context
             return context
 
         # A Cloud continuation may restore the last verified-or-failed candidate

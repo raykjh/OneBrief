@@ -275,3 +275,39 @@ def apply_reality_check_override(
         missing_information=report.missing_information,
         temperament_decisions=report.temperament_decisions,
     )
+
+
+def bind_failed_observation_receipt(
+    report: VerificationReport,
+    receipt: ObservationReceipt,
+    contract: CompletionContract | None,
+) -> VerificationReport:
+    """Bind an early observer exception to the exact failed Quest criteria."""
+
+    if receipt.status != ObservationStatus.FAILED:
+        return report
+    failed = [item for item in receipt.criterion_checks if not item.passed]
+    if not failed:
+        return report
+    criterion_by_id = {
+        item.criterion_id: item.description
+        for item in (contract.quality_criteria if contract is not None else [])
+    }
+    checks = [*report.criterion_checks]
+    existing = {
+        (item.criterion_id, item.passed)
+        for item in checks
+        if item.criterion_id
+    }
+    for item in failed:
+        if (item.criterion_id, False) in existing:
+            continue
+        checks.append(CriterionCheck(
+            criterion_id=item.criterion_id,
+            criterion=criterion_by_id.get(
+                item.criterion_id, "Independent semantic observation"
+            ),
+            passed=False,
+            evidence=item.evidence,
+        ))
+    return report.model_copy(update={"criterion_checks": checks})
