@@ -43,6 +43,7 @@ from onebrief.deterministic_verification import (
     validate_draft_grounding,
 )
 from onebrief.evidence_sufficiency import (
+    append_grounded_public_source_registry,
     apply_evidence_sufficiency_override,
     research_reentry_issues,
     validate_evidence_sufficiency,
@@ -2108,6 +2109,7 @@ class ExecutionPipeline:
             )
             if intake.output_target == OutputTarget.SPREADSHEET:
                 draft = append_authoritative_csv_tables(sources, draft)
+            draft = append_grounded_public_source_registry(sources, draft)
             self._write(
                 output_dir / f"draft_r{round_number}.json",
                 draft.model_dump_json(indent=2),

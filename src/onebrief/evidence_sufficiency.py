@@ -86,6 +86,21 @@ _ESTIMATE_UNCERTAINTY = re.compile(
     r"written\s+quotation|requires?\s+(?:verification|confirmation))",
     re.IGNORECASE,
 )
+_PROPOSAL_SCOPE_STATEMENT = re.compile(
+    r"(?:제안서|계획서).*(?:목표|목적|대상|기획|담고)|"
+    r"\b(?:proposal|plan)\b.*\b(?:goal|purpose|intended|scope)\b",
+    re.IGNORECASE,
+)
+_NORMATIVE_TEST_PROCEDURE = re.compile(
+    r"(?:테스트|시험|검사|평가).*(?:관찰|측정|확인|검증|중단|설계)|"
+    r"\b(?:test|evaluation|inspection).*(?:observe|measure|verify|stop|design)",
+    re.IGNORECASE,
+)
+_NORMATIVE_CHECKLIST = re.compile(
+    r"(?:RFQ|체크리스트).*(?:확인|요구사항|질문|검토)|"
+    r"(?:확인|검토).*(?:RFQ|체크리스트)",
+    re.IGNORECASE,
+)
 
 
 def _research_text(requirements: RequirementsAnalysis) -> str:
@@ -185,6 +200,34 @@ def _grounded_source_ids(sources: list[InternalSource]) -> set[str]:
     return grounded
 
 
+def append_grounded_public_source_registry(
+    sources: list[InternalSource],
+    draft: DraftArtifact,
+) -> DraftArtifact:
+    """Expose the trusted public-source registry without asking the maker to copy it."""
+
+    trusted_lines: list[str] = []
+    for source in sources:
+        if source.name != "public_research.md" or "## 공개 출처" not in source.content:
+            continue
+        registry = source.content.rsplit("## 공개 출처", 1)[-1]
+        for raw in registry.splitlines():
+            line = raw.strip()
+            if _WEB_SOURCE_CITATION.search(line) and _URL.search(line):
+                trusted_lines.append(line)
+    missing_lines = [
+        line for line in dict.fromkeys(trusted_lines)
+        if not any(url in draft.body_markdown for url in _URL.findall(line))
+    ]
+    if not missing_lines:
+        return draft
+    body = draft.body_markdown.rstrip()
+    registry = "\n".join(missing_lines)
+    return draft.model_copy(update={
+        "body_markdown": f"{body}\n\n## 검증된 공개 출처\n\n{registry}\n",
+    })
+
+
 def _unbounded_negative_segments(markdown: str) -> list[str]:
     segments = [
         item.strip()
@@ -238,6 +281,9 @@ def _uncited_material_claims(
             or _FINDING_CITATION.search(line)
             or has_grounded_web_citation
             or _ESTIMATE_UNCERTAINTY.search(line)
+            or _PROPOSAL_SCOPE_STATEMENT.search(line)
+            or _NORMATIVE_TEST_PROCEDURE.search(line)
+            or _NORMATIVE_CHECKLIST.search(line)
         ):
             continue
         claims.append(re.sub(r"\s+", " ", line)[:240])

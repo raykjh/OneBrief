@@ -1,4 +1,5 @@
 from onebrief.evidence_sufficiency import (
+    append_grounded_public_source_registry,
     apply_evidence_sufficiency_override,
     research_reentry_issues,
     validate_evidence_sufficiency,
@@ -307,6 +308,61 @@ def test_explicit_estimate_disclaimer_is_not_itself_an_uncited_price_claim() -> 
         [_public_source()],
         _draft(
             "아래 가격은 시장 추정치이며 실제 발주 전 서면 견적으로 확인 필요합니다.\n\n"
+            "https://example.com/products/a"
+        ),
+    )
+
+    assert not any(item.kind.value == "uncited_material_claim" for item in result.issues)
+
+
+def test_trusted_public_source_registry_is_appended_without_model_copying() -> None:
+    source = InternalSource(
+        name="public_research.md",
+        priority=SourcePriority.MANDATORY,
+        requirement_keys=["research"],
+        content=(
+            "Research summary.\n\n## 공개 출처\n"
+            "- [W01] Alpha — https://example.com/products/a [HTTP 200]\n"
+            "- [W02] Beta — https://example.com/products/b [HTTP 200]"
+        ),
+    )
+    draft = _draft(
+        "# 결과\n\n근거에 따른 결론입니다. [W01] "
+        "이 문장은 검증된 공개 출처 레지스트리가 결정론적으로 첨부되는지 확인하기 위한 "
+        "충분한 길이의 일반 문서 본문입니다."
+    )
+
+    appended = append_grounded_public_source_registry([source], draft)
+    appended_twice = append_grounded_public_source_registry([source], appended)
+
+    assert "## 검증된 공개 출처" in appended.body_markdown
+    assert "https://example.com/products/a" in appended.body_markdown
+    assert "https://example.com/products/b" in appended.body_markdown
+    assert appended_twice.body_markdown == appended.body_markdown
+
+
+def test_proposal_scope_and_test_method_are_not_treated_as_research_claims() -> None:
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="사용성 시험 제안서를 작성해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft(
+            "본 제안서는 고령 사용자를 대상으로 안전한 건조 경험을 시험하도록 기획했습니다.\n\n"
+            "보풀 테스트는 샘플을 문지른 뒤 탈락 섬유를 관찰하여 피부 자극 가능성을 확인합니다.\n\n"
+            "https://example.com/products/a"
+        ),
+    )
+
+    assert not any(item.kind.value == "uncited_material_claim" for item in result.issues)
+
+
+def test_rfq_checklist_instruction_is_not_a_research_claim() -> None:
+    result = validate_evidence_sufficiency(
+        IntakeRequest(goal="OEM RFQ 체크리스트를 작성해줘.", public_research_allowed=True),
+        _requirements(),
+        [_public_source()],
+        _draft(
+            "OEM 제조사 선정 및 RFQ 발송 시 확인해야 할 기술적 요구사항입니다.\n\n"
             "https://example.com/products/a"
         ),
     )
