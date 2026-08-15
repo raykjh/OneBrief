@@ -621,6 +621,7 @@ class DeveloperAgent:
         sources: list[dict[str, Any]],
         verification_feedback: str | None = None,
         previous_change_set: BaseModel | None = None,
+        response_schema: type[BaseModel] | None = None,
     ) -> BaseModel:
         self.last_recovery_decisions = []
         developer_sources = []
@@ -730,6 +731,18 @@ class DeveloperAgent:
             "Keep the combined replacement "
             "content below 60000 UTF-8 bytes. Return only the schema."
         )
+        typed_unity_journey = (
+            response_schema is not None
+            and response_schema.__name__ == "UnityEvidenceJourneyPlan"
+        )
+        if typed_unity_journey:
+            base_instruction += (
+                " The required response is a declarative UnityEvidenceJourneyPlan. "
+                "Do not author, quote, patch, or repair C# or asmdef content. Describe only the ordered "
+                "scene and real-control interactions, runtime assertions, and screenshot captures needed "
+                "to address every verification issue while preserving the already passing journey. "
+                "OneBrief alone compiles this plan into the trusted atomic PlayMode C# and asmdef bundle."
+            )
         approved_existing_paths = {
             str(item["repository_path"])
             for item in developer_sources
@@ -767,7 +780,7 @@ class DeveloperAgent:
         last_contract_error = ""
         for attempt in range(2):
             instruction = base_instruction
-            if attempt:
+            if attempt and not typed_unity_journey:
                 instruction += (
                     " The previous response failed structured-output or repository-path validation. Retry from "
                     "scratch with at most three changed files. Every existing-file path must exactly equal the "
@@ -782,11 +795,21 @@ class DeveloperAgent:
                 )
                 if last_contract_error:
                     instruction += " Exact validation failure: " + last_contract_error
+            elif attempt and last_contract_error:
+                instruction += (
+                    " The previous declarative journey failed structured validation. Retry the complete "
+                    "ordered journey without source code. Exact validation failure: "
+                    + last_contract_error
+                )
             try:
                 provider_schema = (
-                    CompactProposedProjectCodeChangeSet
-                    if self.change_set_schema is ProjectCodeChangeSet
-                    else self.change_set_schema
+                    response_schema
+                    if response_schema is not None
+                    else (
+                        CompactProposedProjectCodeChangeSet
+                        if self.change_set_schema is ProjectCodeChangeSet
+                        else self.change_set_schema
+                    )
                 )
                 candidate = self.gateway.generate_json(
                     stage=stage_base if not attempt else f"{stage_base}_compact_retry",
@@ -797,9 +820,15 @@ class DeveloperAgent:
                     system_instruction=instruction + (("\n\n" + self.skill_context) if self.skill_context else ""),
                     temperature=0.1,
                 )
-                candidate = self.promote_candidate(
-                    candidate, developer_sources, previous_change_set, exact_edit_anchors
-                )
+                if response_schema is not None:
+                    candidate = response_schema.model_validate(candidate)
+                else:
+                    candidate = self.promote_candidate(
+                        candidate, developer_sources, previous_change_set, exact_edit_anchors
+                    )
+                if typed_unity_journey:
+                    result = candidate
+                    break
                 normalized_changes = []
                 for change in getattr(candidate, "changes", []):
                     path = str(getattr(change, "path", ""))
@@ -833,7 +862,8 @@ class DeveloperAgent:
                 self.last_recovery_decisions.append(decision)
                 if decision.action != RecoveryAction.AUTO_RETRY or not decision.retry_allowed:
                     raise
-        if not isinstance(result, self.change_set_schema):
+        expected_schema = response_schema or self.change_set_schema
+        if not isinstance(result, expected_schema):
             raise TypeError("developer returned an invalid code change set")
         return result
 

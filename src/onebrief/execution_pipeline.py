@@ -5276,13 +5276,60 @@ class ExecutionPipeline:
                         *report.blocking_issues,
                         *report.revision_instructions,
                     ])
-                    retry_change_set = developer.run(
-                        contract,
-                        analysis,
-                        source_payload,
-                        verification_feedback=feedback,
-                        previous_change_set=previous_change_set,
+                    revision_phase = decide_repair_phase(
+                        context="development_acceptance_verification",
+                        failure_text=feedback,
+                        round_number=revision_round,
+                        affected_paths=[
+                            str(getattr(item, "path", ""))
+                            for item in getattr(previous_change_set, "changes", [])
+                        ],
                     )
+                    self._write(
+                        output_dir / f"legacy_phase_decision_r{revision_round}.json",
+                        revision_phase.model_dump_json(indent=2),
+                    )
+                    retry_schema = development_maker_schema_for(
+                        report,
+                        previous_change_set,
+                        active_phase=revision_phase.next_phase,
+                    )
+                    if retry_schema is UnityEvidenceJourneyPlan:
+                        journey_plan = developer.run(
+                            contract,
+                            analysis,
+                            source_payload,
+                            verification_feedback=feedback,
+                            previous_change_set=previous_change_set,
+                            response_schema=UnityEvidenceJourneyPlan,
+                        )
+                        self._write(
+                            output_dir / f"unity_evidence_journey_plan_r{revision_round}.json",
+                            journey_plan.model_dump_json(indent=2),
+                        )
+                        approved_existing_evidence = (
+                            approved_unity_evidence_bundle_bindings(development_pack)
+                            if isinstance(
+                                development_pack, ApprovedProjectDevelopmentToolPack
+                            )
+                            and development_pack._uses_unity_runtime(
+                                development_pack._profile()
+                            )
+                            else {}
+                        )
+                        retry_change_set = normalize_atomic_unity_evidence_bundle(
+                            journey_plan,
+                            previous_change_set,
+                            approved_existing_evidence,
+                        )
+                    else:
+                        retry_change_set = developer.run(
+                            contract,
+                            analysis,
+                            source_payload,
+                            verification_feedback=feedback,
+                            previous_change_set=previous_change_set,
+                        )
                     self._write(
                         output_dir / f"code_change_set_revision_delta_r{revision_round}.json",
                         retry_change_set.model_dump_json(indent=2),

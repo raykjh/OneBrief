@@ -57,6 +57,7 @@ from onebrief.execution_pipeline import (
 from onebrief.execution_agents import DeveloperAgent
 from onebrief.execution_limits import DEVELOPER_OUTPUT_CAP
 from onebrief.guarded_gemini import BudgetedGeminiClient
+from onebrief.phase_execution import decide_repair_phase
 from onebrief.unity_evidence_plan import (
     UnityEvidenceJourneyPlan,
     render_unity_evidence_journey,
@@ -798,6 +799,41 @@ def test_evidence_phase_selects_declarative_plan_for_runtime_failure() -> None:
         active_phase=ExecutionPhase.EVIDENCE_CONSTRUCTION,
     )
 
+    assert selected is UnityEvidenceJourneyPlan
+
+
+def test_acceptance_feedback_about_playmode_journey_selects_declarative_plan() -> None:
+    report = VerificationReport(
+        verdict=Verdict.REVISE,
+        criterion_checks=[{
+            "criterion": "Settings controls invoke the running client systems",
+            "passed": False,
+            "evidence": "The test opened Settings but did not operate its controls.",
+        }],
+        blocking_issues=[
+            "The PlayMode test does not interact with the volume sliders or language dropdown."
+        ],
+        revision_instructions=[
+            "Update the PlayMode test journey to interact with the volume sliders and language dropdown."
+        ],
+        missing_information=[],
+    )
+
+    phase = decide_repair_phase(
+        context="development_acceptance_verification",
+        failure_text=" | ".join([
+            *report.blocking_issues,
+            *report.revision_instructions,
+        ]),
+        round_number=2,
+    )
+    selected = development_maker_schema_for(
+        report,
+        current_payload=None,
+        active_phase=phase.next_phase,
+    )
+
+    assert phase.next_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
     assert selected is UnityEvidenceJourneyPlan
 
 
@@ -2550,6 +2586,48 @@ def test_developer_retries_truncated_json_with_a_larger_bounded_output() -> None
         "long_form_draft",
         "long_form_draft_compact_retry",
     ]
+
+
+def test_developer_can_return_typed_unity_journey_without_source_promotion() -> None:
+    plan = UnityEvidenceJourneyPlan.model_validate({
+        "summary": "Operate Settings controls and return to Lobby.",
+        "test_directory": "Assets/JULPAE/Tests/PlayMode",
+        "steps": [
+            {"action": "load_scene", "scene_name": "LobbyScene"},
+            {"action": "click_button", "target": "SettingsButton"},
+            {"action": "set_slider_value", "target": "SfxSlider", "number_value": 0.4},
+            {"action": "click_button", "target": "CloseButton"},
+            {"action": "assert_active", "target": "LobbyRoot"},
+            {"action": "capture", "scenario_id": "lobby_return"},
+        ],
+    })
+
+    class JourneyGateway:
+        def __init__(self) -> None:
+            self.schema = None
+            self.instruction = ""
+
+        def generate_json(self, *, schema: type, system_instruction: str, **_: object):
+            self.schema = schema
+            self.instruction = system_instruction
+            return plan
+
+    gateway = JourneyGateway()
+    result = DeveloperAgent(
+        gateway,
+        change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/",
+    ).run(
+        {},
+        _analysis(),
+        [],
+        verification_feedback="Update the PlayMode test journey to operate Settings.",
+        response_schema=UnityEvidenceJourneyPlan,
+    )
+
+    assert result == plan
+    assert gateway.schema is UnityEvidenceJourneyPlan
+    assert "Do not author, quote, patch, or repair C# or asmdef content" in gateway.instruction
 
 
 def test_developer_stops_after_repeated_truncated_output() -> None:
