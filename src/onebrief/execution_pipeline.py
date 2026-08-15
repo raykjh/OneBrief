@@ -987,6 +987,7 @@ def is_unity_evidence_contract_feedback(feedback: str) -> bool:
         "playmode test journey to include steps that interact",
         "update the declarative runtime journey",
         "generic playmode pass is insufficient",
+        "active shipped ui object is unavailable",
         "unity visual evidence requires a distinct rendered scenario",
         "responsive unity visual evidence must define and capture",
         "unity visual evidence reused an identical screenshot",

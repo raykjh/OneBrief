@@ -846,6 +846,28 @@ def test_named_control_effect_gap_is_unity_evidence_contract_feedback() -> None:
     assert is_unity_evidence_contract_feedback(feedback)
 
 
+def test_missing_shipped_ui_target_selects_a_new_declarative_journey() -> None:
+    report = VerificationReport(
+        verdict=Verdict.REVISE,
+        criterion_checks=[{
+            "criterion": "The shipped language control is exercised.",
+            "passed": False,
+            "evidence": "The requested UI target did not exist in the running scene.",
+        }],
+        blocking_issues=[
+            "Active shipped UI object is unavailable: Canvas/SafeArea/LanguageDropdown"
+        ],
+        revision_instructions=["Select the real committed control from the scene catalog."],
+        missing_information=[],
+    )
+
+    assert development_maker_schema_for(
+        report,
+        current_payload=None,
+        active_phase=ExecutionPhase.EVIDENCE_CONSTRUCTION,
+    ) is UnityEvidenceJourneyPlan
+
+
 def test_product_handoff_never_inherits_failing_test_path() -> None:
     paths = phase_owned_handoff_paths(
         phase=ExecutionPhase.PRODUCT_IMPLEMENTATION,

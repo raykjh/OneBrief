@@ -203,6 +203,21 @@ def test_named_control_effect_gap_remains_evidence_owned() -> None:
     assert decision.model_repair_allowed
 
 
+def test_missing_shipped_ui_target_remains_declarative_evidence_owned() -> None:
+    decision = decide_repair_phase(
+        context="development_verification",
+        failure_text=(
+            "UNITY TEST FAILURES OneBrief.Visual.Flow: Active shipped UI object is unavailable: "
+            "Canvas/SafeArea/LanguageDropdown Expected: not null But was: null"
+        ),
+        round_number=4,
+        affected_paths=["Assets/JULPAE/Tests/PlayMode/OneBriefGeneratedJourneyTest.cs"],
+    )
+
+    assert decision.failure_owner == FailureOwner.EVIDENCE
+    assert decision.next_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
+
+
 def test_batchmode_framebuffer_failure_cannot_open_product_edit_authority() -> None:
     decision = decide_repair_phase(
         context="development_verification",

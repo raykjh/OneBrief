@@ -367,6 +367,7 @@ def classify_failure_owner(
         "playmode test journey to include steps that interact",
         "update the declarative runtime journey",
         "generic playmode pass is insufficient",
+        "active shipped ui object is unavailable",
     )):
         return FailureOwner.EVIDENCE
     # Build/runtime codes normally indicate a shipped-product defect, but the
@@ -408,6 +409,7 @@ def classify_failure_owner(
         "playmode test journey to include steps that interact",
         "update the declarative runtime journey",
         "generic playmode pass is insufficient",
+        "active shipped ui object is unavailable",
     )):
         return FailureOwner.EVIDENCE
     if any(marker in normalized for marker in (
