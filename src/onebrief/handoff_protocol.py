@@ -82,6 +82,11 @@ class EvidenceBinding(BaseModel):
     def discard_non_contract_criterion_id(cls, value: object) -> object:
         return normalize_criterion_id(value)
 
+    @field_validator("observation_id", mode="before")
+    @classmethod
+    def normalize_absent_observation_id(cls, value: object) -> object:
+        return normalize_optional_observation_id(value)
+
 
 def normalize_criterion_id(value: object) -> str | None:
     """Keep only completion-contract IDs; foreign labels remain unbound evidence."""
@@ -90,6 +95,20 @@ def normalize_criterion_id(value: object) -> str | None:
         return None
     candidate = str(value).strip().upper()
     return candidate if re.fullmatch(r"Q[0-9]{2}", candidate) else None
+
+
+def normalize_optional_observation_id(value: object) -> str | None:
+    """Accept common JSON-null sentinels only where provenance is optional.
+
+    Model-generated verification reports sometimes serialize an absent optional
+    identifier as ``"none"`` or ``"null"``. Treat those exact sentinels as
+    absence while retaining strict validation for every non-sentinel identifier.
+    """
+
+    if value is None:
+        return None
+    candidate = str(value).strip()
+    return None if candidate.casefold() in {"", "none", "null"} else candidate
 
 
 class WorkHandoffEnvelopeV1(BaseModel):
@@ -117,6 +136,11 @@ class WorkHandoffEnvelopeV1(BaseModel):
     required_evidence: list[str] = Field(default_factory=list, max_length=32)
     created_at: str
     handoff_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @field_validator("failure_observation_id", mode="before")
+    @classmethod
+    def normalize_absent_failure_observation_id(cls, value: object) -> object:
+        return normalize_optional_observation_id(value)
 
     @model_validator(mode="after")
     def validate_authority_boundary(self) -> "WorkHandoffEnvelopeV1":

@@ -1,6 +1,7 @@
 import pytest
 
 from onebrief.handoff_protocol import (
+    EvidenceBinding,
     EvidenceKind,
     EvidenceStatus,
     accept_work_handoff,
@@ -65,3 +66,29 @@ def test_owned_and_preserved_criteria_cannot_overlap() -> None:
                 update={"preserve_passed_criterion_ids": ["Q01", "Q92"]}
             ).model_dump(mode="json")
         )
+
+
+@pytest.mark.parametrize("sentinel", [None, "", "none", "NONE", "null"])
+def test_optional_observation_id_normalizes_only_absent_sentinels(sentinel) -> None:
+    binding = EvidenceBinding.model_validate({
+        "binding_id": "EB-0123456789abcdef",
+        "criterion_id": "Q01",
+        "kind": "compile",
+        "status": "passed",
+        "summary": "Unity compiled without an independent failure observation.",
+        "observation_id": sentinel,
+    })
+
+    assert binding.observation_id is None
+
+
+def test_optional_observation_id_still_rejects_untrusted_identifier() -> None:
+    with pytest.raises(ValueError, match="observation_id"):
+        EvidenceBinding.model_validate({
+            "binding_id": "EB-0123456789abcdef",
+            "criterion_id": "Q01",
+            "kind": "compile",
+            "status": "passed",
+            "summary": "Unity compiled.",
+            "observation_id": "unknown-observation",
+        })
