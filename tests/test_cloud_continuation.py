@@ -377,6 +377,7 @@ def test_targeted_repair_estimate_charges_only_remaining_work() -> None:
             for stage in (
                 "long_form_draft",
                 "independent_verification",
+                "policy_guard",
                 "final_approval",
             )
         ],
@@ -385,13 +386,14 @@ def test_targeted_repair_estimate_charges_only_remaining_work() -> None:
     targeted = _targeted_repair_estimate(estimate)
 
     assert [item.stage for item in targeted.stages] == [
-        "long_form_draft", "independent_verification", "final_approval"
+        "long_form_draft", "independent_verification", "policy_guard", "final_approval"
     ]
-    assert targeted.minimum_cost_usd < 0.25
+    assert targeted.minimum_cost_usd < targeted.recommended_cost_usd
     calls = {item.stage: (item.minimum_calls, item.maximum_calls) for item in targeted.stages}
     assert calls == {
         "long_form_draft": (1, 2),
-        "independent_verification": (1, 1),
+        "independent_verification": (1, 3),
+        "policy_guard": (1, 1),
         "final_approval": (1, 1),
     }
     assert targeted.maximum_cost_usd > targeted.recommended_cost_usd
@@ -410,4 +412,4 @@ def test_targeted_repair_estimate_charges_only_remaining_work() -> None:
     low_cost = _targeted_repair_estimate(estimate, low_cost_models=True)
 
     assert all(item.model == "gemini-3.5-flash-lite" for item in low_cost.stages)
-    assert low_cost.minimum_cost_usd < 0.098586
+    assert low_cost.minimum_cost_usd < targeted.minimum_cost_usd

@@ -69,42 +69,54 @@ def _targeted_repair_estimate(
 ) -> BudgetEnvelope:
     """Re-estimate one evidenced code repair without charging completed stages."""
     caps = {
-        "long_form_draft": (40_000, 8_000),
-        "independent_verification": (25_000, 1_000),
-        "final_approval": (10_000, 500),
+        # A restored candidate is verified before repair, verified again after
+        # the bounded repair, and may expose one narrower follow-up repair.
+        # Count those real calls instead of pricing only the maker turn.
+        "long_form_draft": (40_000, 8_000, 1, 1, 2),
+        "independent_verification": (45_000, 2_200, 1, 2, 3),
+        "policy_guard": (20_000, 1_200, 1, 1, 1),
+        "final_approval": (10_000, 1_200, 1, 1, 1),
     }
     selected = []
     for stage in estimate.stages:
         if stage.stage not in caps:
             continue
-        input_tokens, output_tokens = caps[stage.stage]
+        (
+            input_tokens,
+            output_tokens,
+            minimum_calls,
+            recommended_calls,
+            maximum_calls,
+        ) = caps[stage.stage]
         model = "gemini-3.5-flash-lite" if low_cost_models else stage.model
         price = PRICES[model]
         per_call = (
             input_tokens * price.input_per_million
             + output_tokens * price.output_per_million
         ) / 1_000_000 + stage.fixed_cost_usd_per_call
-        maximum_calls = 2 if stage.stage == "long_form_draft" else 1
         selected.append(stage.model_copy(update={
             "model": model,
             "input_tokens_per_call": input_tokens,
             "output_tokens_per_call": output_tokens,
-            "minimum_calls": 1,
-            "recommended_calls": 1,
+            "minimum_calls": minimum_calls,
+            "recommended_calls": recommended_calls,
             "maximum_calls": maximum_calls,
-            "minimum_cost_usd": round(per_call, 6),
-            "recommended_cost_usd": round(per_call, 6),
+            "minimum_cost_usd": round(per_call * minimum_calls, 6),
+            "recommended_cost_usd": round(per_call * recommended_calls, 6),
             "maximum_cost_usd": round(per_call * maximum_calls, 6),
         }))
     if len(selected) != len(caps):
         raise RuntimeError("targeted repair estimate is missing a required model stage")
-    base = sum(item.minimum_cost_usd for item in selected)
-    maker_cost = next(
-        item.minimum_cost_usd for item in selected
+    minimum_total = sum(item.minimum_cost_usd for item in selected)
+    recommended_total = sum(item.recommended_cost_usd for item in selected)
+    maximum_total = sum(item.maximum_cost_usd for item in selected)
+    maker = next(
+        item for item in selected
         if item.stage == "long_form_draft"
     )
-    verification_cost = base - maker_cost
-    maximum_total = base + maker_cost
+    verification_minimum = minimum_total - maker.minimum_cost_usd
+    verification_recommended = recommended_total - maker.recommended_cost_usd
+    verification_maximum = maximum_total - maker.maximum_cost_usd
     owner = classify_failure_owner(
         context="development_verification",
         failure_text=failure_text or "targeted product repair",
@@ -130,9 +142,9 @@ def _targeted_repair_estimate(
     phase_budgets = [
         PhaseBudgetEstimate(
             phase=repair_phase,
-            minimum_cost_usd=round(maker_cost * 1.10, 6),
-            recommended_cost_usd=round(maker_cost * 1.20, 6),
-            maximum_cost_usd=round(maker_cost * 2 * 1.25, 6),
+            minimum_cost_usd=round(maker.minimum_cost_usd * 1.10, 6),
+            recommended_cost_usd=round(maker.recommended_cost_usd * 1.20, 6),
+            maximum_cost_usd=round(maker.maximum_cost_usd * 1.25, 6),
             # One semantic repair often exposes a narrower, newly evidenced
             # defect. Permit one bounded learning turn in the same owning
             # phase; the convergence ledger still blocks identical/no-progress
@@ -150,25 +162,25 @@ def _targeted_repair_estimate(
             phase=alternate_repair_phase,
             minimum_cost_usd=0.0,
             recommended_cost_usd=0.0,
-            maximum_cost_usd=round(maker_cost * 2 * 1.25, 6),
+            maximum_cost_usd=round(maker.maximum_cost_usd * 1.25, 6),
             max_ai_repair_calls=2,
             max_deterministic_attempts=2,
             editable_scope=repair_scope(alternate_repair_phase),
         ),
         PhaseBudgetEstimate(
             phase=ExecutionPhase.FINAL_VERIFICATION,
-            minimum_cost_usd=round(verification_cost * 1.10, 6),
-            recommended_cost_usd=round(verification_cost * 1.20, 6),
-            maximum_cost_usd=round(verification_cost * 1.25, 6),
+            minimum_cost_usd=round(verification_minimum * 1.10, 6),
+            recommended_cost_usd=round(verification_recommended * 1.20, 6),
+            maximum_cost_usd=round(verification_maximum * 1.25, 6),
             max_deterministic_attempts=2,
         ),
     ]
     return estimate.model_copy(update={
         "stages": selected,
-        "minimum_cost_usd": round(base * 1.10, 4),
-        "recommended_cost_usd": round(base * 1.20, 4),
+        "minimum_cost_usd": round(minimum_total * 1.10, 4),
+        "recommended_cost_usd": round(recommended_total * 1.20, 4),
         "maximum_cost_usd": round(maximum_total * 1.25, 4),
-        "recommended_approval_usd": round(base * 1.20, 4),
+        "recommended_approval_usd": round(recommended_total * 1.20, 4),
         "estimated_minutes_minimum": 17,
         "estimated_minutes_recommended": 17,
         "estimated_minutes_maximum": 17,
