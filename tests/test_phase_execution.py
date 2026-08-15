@@ -186,6 +186,23 @@ def test_missing_playmode_control_interaction_remains_evidence_owned() -> None:
     assert decision.model_repair_allowed
 
 
+def test_named_control_effect_gap_remains_evidence_owned() -> None:
+    decision = decide_repair_phase(
+        context="development_acceptance_verification",
+        failure_text=(
+            "Q04: the executed journey must operate each required volume slider and assert "
+            "the corresponding persisted client state. A generic PlayMode PASS is insufficient. "
+            "Update the declarative runtime journey to execute every named control effect."
+        ),
+        round_number=3,
+        affected_paths=["Assets/JULPAE/Scripts/Localization/JulpaeLanguageSelectorGroup.cs"],
+    )
+
+    assert decision.failure_owner == FailureOwner.EVIDENCE
+    assert decision.next_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
+    assert decision.model_repair_allowed
+
+
 def test_batchmode_framebuffer_failure_cannot_open_product_edit_authority() -> None:
     decision = decide_repair_phase(
         context="development_verification",

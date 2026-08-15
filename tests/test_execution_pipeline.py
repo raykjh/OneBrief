@@ -837,6 +837,15 @@ def test_acceptance_feedback_about_playmode_journey_selects_declarative_plan() -
     assert selected is UnityEvidenceJourneyPlan
 
 
+def test_named_control_effect_gap_is_unity_evidence_contract_feedback() -> None:
+    feedback = (
+        "Q04: the executed journey must operate each required volume slider and assert persisted state. "
+        "A generic PlayMode PASS is insufficient. Update the declarative runtime journey."
+    )
+
+    assert is_unity_evidence_contract_feedback(feedback)
+
+
 def test_product_handoff_never_inherits_failing_test_path() -> None:
     paths = phase_owned_handoff_paths(
         phase=ExecutionPhase.PRODUCT_IMPLEMENTATION,

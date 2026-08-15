@@ -985,6 +985,8 @@ def is_unity_evidence_contract_feedback(feedback: str) -> bool:
         "generated playmode test does not interact",
         "update the playmode test journey",
         "playmode test journey to include steps that interact",
+        "update the declarative runtime journey",
+        "generic playmode pass is insufficient",
         "unity visual evidence requires a distinct rendered scenario",
         "responsive unity visual evidence must define and capture",
         "unity visual evidence reused an identical screenshot",

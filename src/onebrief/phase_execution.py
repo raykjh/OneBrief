@@ -365,6 +365,8 @@ def classify_failure_owner(
         "generated playmode test does not interact",
         "update the playmode test journey",
         "playmode test journey to include steps that interact",
+        "update the declarative runtime journey",
+        "generic playmode pass is insufficient",
     )):
         return FailureOwner.EVIDENCE
     # Build/runtime codes normally indicate a shipped-product defect, but the
@@ -404,6 +406,8 @@ def classify_failure_owner(
         "generated playmode test does not interact",
         "update the playmode test journey",
         "playmode test journey to include steps that interact",
+        "update the declarative runtime journey",
+        "generic playmode pass is insufficient",
     )):
         return FailureOwner.EVIDENCE
     if any(marker in normalized for marker in (
