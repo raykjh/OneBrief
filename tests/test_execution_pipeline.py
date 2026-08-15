@@ -70,6 +70,11 @@ from onebrief.execution_schemas import (
     VerificationReport,
     Verdict,
 )
+from onebrief.evidence_sufficiency import (
+    EvidenceSufficiencyIssue,
+    EvidenceSufficiencyIssueKind,
+    EvidenceSufficiencyVerification,
+)
 from onebrief.producer import estimate_budget
 from onebrief.toolpack_lifecycle import ApprovedRuntimeArgument
 from onebrief.schemas import (
@@ -120,6 +125,33 @@ def test_complete_checkpoint_fails_closed_when_completion_ledger_is_incomplete(t
     assert checkpoint["status"] == "partial"
     assert checkpoint["final_verdict"] == "REVISE"
     assert ledger["complete"] is False
+
+
+def test_research_owned_failure_routes_to_investigator_without_maker_retry(tmp_path: Path) -> None:
+    pipeline = ExecutionPipeline(tmp_path / "run", gateway=object())
+    report = VerificationReport(
+        verdict=Verdict.PASS,
+        criterion_checks=[CriterionCheck(
+            criterion_id="Q01", criterion="Grounded result",
+            passed=True, evidence="The requested structure is present.",
+        )],
+        blocking_issues=[], revision_instructions=[], missing_information=[],
+    )
+    evidence = EvidenceSufficiencyVerification(
+        issues=[EvidenceSufficiencyIssue(
+            kind=EvidenceSufficiencyIssueKind.UNTRACEABLE_FINDING,
+            message="F01 has no successful grounded W source.",
+        )],
+        verdict_override=Verdict.REVISE,
+    )
+
+    routed = pipeline._route_investigator_reentry(report, evidence, tmp_path)
+
+    request = json.loads((tmp_path / "research_reentry_request.json").read_text("utf-8"))
+    assert routed.verdict == Verdict.UNVERIFIABLE
+    assert routed.revision_instructions == []
+    assert request["failure_owner"] == "investigator"
+    assert request["issue_kinds"] == ["untraceable_finding"]
 
 
 def test_dict_development_proposal_cannot_bypass_phase_authority() -> None:

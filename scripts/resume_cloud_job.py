@@ -29,6 +29,8 @@ def main() -> None:
     parser.add_argument("--targeted-repair", action="store_true")
     parser.add_argument("--low-cost-targeted-repair", action="store_true")
     parser.add_argument("--reverify-existing-candidate", action="store_true")
+    parser.add_argument("--research-reentry", action="store_true")
+    parser.add_argument("--research-blocking-issue", action="append", default=[])
     args = parser.parse_args()
 
     os.environ.update({
@@ -51,6 +53,8 @@ def main() -> None:
         targeted_repair=args.targeted_repair,
         low_cost_targeted_repair=args.low_cost_targeted_repair,
         reverify_existing_candidate=args.reverify_existing_candidate,
+        research_reentry=args.research_reentry,
+        research_blocking_issues=args.research_blocking_issue,
     )
     print(json.dumps({
         **receipt.__dict__,

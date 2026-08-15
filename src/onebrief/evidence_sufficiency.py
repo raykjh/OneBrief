@@ -617,6 +617,25 @@ _RESEARCH_REENTRY_KINDS = frozenset({
     EvidenceSufficiencyIssueKind.MISSING_PRIMARY_REGULATORY_SOURCE,
 })
 
+_INVESTIGATOR_REENTRY_KINDS = frozenset({
+    EvidenceSufficiencyIssueKind.MISSING_DIRECT_SOURCE,
+    EvidenceSufficiencyIssueKind.QUANTIFIED_EVIDENCE_SHORTFALL,
+    EvidenceSufficiencyIssueKind.UNGROUNDED_MODEL_URL,
+    EvidenceSufficiencyIssueKind.UNTRACEABLE_FINDING,
+    EvidenceSufficiencyIssueKind.MISSING_PRIMARY_REGULATORY_SOURCE,
+})
+
+
+def investigator_reentry_issues(
+    evidence: EvidenceSufficiencyVerification,
+) -> list[EvidenceSufficiencyIssue]:
+    """Return defects owned by research/analysis rather than artifact prose."""
+
+    return [
+        item for item in evidence.issues
+        if item.kind in _INVESTIGATOR_REENTRY_KINDS
+    ]
+
 
 def research_reentry_issues(
     intake: IntakeRequest,

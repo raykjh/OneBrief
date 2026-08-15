@@ -44,8 +44,10 @@ from onebrief.deterministic_verification import (
     validate_draft_grounding,
 )
 from onebrief.evidence_sufficiency import (
+    EvidenceSufficiencyVerification,
     append_grounded_public_source_registry,
     apply_evidence_sufficiency_override,
+    investigator_reentry_issues,
     research_reentry_issues,
     validate_evidence_sufficiency,
 )
@@ -2149,6 +2151,7 @@ class ExecutionPipeline:
                 sufficiency.model_dump_json(indent=2),
             )
             report = apply_evidence_sufficiency_override(report, sufficiency)
+            report = self._route_investigator_reentry(report, sufficiency, output_dir)
             reality = evaluate_reality_check(intake, requirements, None)
             self._write(
                 output_dir / f"reality_check_r{round_number}.json",
@@ -4556,6 +4559,38 @@ class ExecutionPipeline:
             output_dir / f"draft_r{round_number}.json", draft.model_dump_json(indent=2)
         )
         return draft, report, round_number
+
+    def _route_investigator_reentry(
+        self,
+        report: VerificationReport,
+        evidence: EvidenceSufficiencyVerification,
+        output_dir: Path,
+    ) -> VerificationReport:
+        issues = investigator_reentry_issues(evidence)
+        if not issues:
+            return report
+        payload = {
+            "schema_version": "onebrief-research-reentry-request-v1",
+            "failure_owner": "investigator",
+            "reason": "verification found evidence defects that artifact prose cannot repair",
+            "blocking_issues": [item.message for item in issues],
+            "issue_kinds": [item.kind.value for item in issues],
+            "max_refinement_calls": 2,
+        }
+        self._write(
+            output_dir / "research_reentry_request.json",
+            json.dumps(payload, ensure_ascii=False, indent=2),
+        )
+        message = (
+            "Investigator re-entry is required. The accountable maker cannot repair missing, "
+            "failed, or untraceable public evidence by rewriting the artifact."
+        )
+        return report.model_copy(update={
+            "verdict": Verdict.UNVERIFIABLE,
+            "blocking_issues": list(dict.fromkeys([*report.blocking_issues, message])),
+            "revision_instructions": [],
+        })
+
     def _checkpoint(
         self,
         output_dir: Path,
@@ -5206,6 +5241,9 @@ class ExecutionPipeline:
                 report = apply_evidence_sufficiency_override(
                     report, evidence_sufficiency
                 )
+                report = self._route_investigator_reentry(
+                    report, evidence_sufficiency, output_dir
+                )
                 reality_check = evaluate_reality_check(
                     intake, requirements, self._development_evidence(output_dir)
                 )
@@ -5339,6 +5377,9 @@ class ExecutionPipeline:
                     report = apply_evidence_sufficiency_override(
                         report, evidence_sufficiency
                     )
+                    report = self._route_investigator_reentry(
+                        report, evidence_sufficiency, output_dir
+                    )
                     reality_check = evaluate_reality_check(
                         intake, requirements, self._development_evidence(output_dir)
                     )
@@ -5436,6 +5477,9 @@ class ExecutionPipeline:
                     )
                     next_report = apply_evidence_sufficiency_override(
                         next_report, evidence_sufficiency
+                    )
+                    next_report = self._route_investigator_reentry(
+                        next_report, evidence_sufficiency, output_dir
                     )
                     reality_check = evaluate_reality_check(
                         intake, requirements, self._development_evidence(output_dir)

@@ -1,6 +1,7 @@
 from onebrief.evidence_sufficiency import (
     append_grounded_public_source_registry,
     apply_evidence_sufficiency_override,
+    investigator_reentry_issues,
     research_reentry_issues,
     validate_evidence_sufficiency,
 )
@@ -725,6 +726,10 @@ def test_absolute_causal_benefit_is_rejected_even_in_a_proposal() -> None:
     )
 
     assert any(item.kind.value == "unsupported_causal_absolute" for item in result.issues)
+    assert not any(
+        item.kind.value == "unsupported_causal_absolute"
+        for item in investigator_reentry_issues(result)
+    )
 
 
 def test_material_neutrality_is_not_mistaken_for_market_exclusivity() -> None:
