@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from enum import StrEnum
 
 from pydantic import BaseModel
 
-from onebrief.schemas import AssuranceSelection, AssuranceUse, RequirementsAnalysis
+from onebrief.schemas import (
+    AssuranceSelection,
+    AssuranceUse,
+    IntakeRequest,
+    OutputTarget,
+    RequirementsAnalysis,
+    SixSensePlan,
+)
 
 
 class ClaimMode(StrEnum):
@@ -79,6 +87,71 @@ _POLICIES: dict[AssuranceUse, dict[str, object]] = {
         "require_deterministic_artifact_verification": True,
     },
 }
+
+_REGULATORY_USE = re.compile(
+    r"regulatory[ -]submission|submission\s+to\s+(?:mfds|a\s+regulator)|"
+    r"인허가\s*제출용|허가\s*신청서|규제기관\s*제출",
+    re.IGNORECASE,
+)
+_PUBLIC_MARKETING_USE = re.compile(
+    r"public[ -]marketing|consumer[ -]facing\s+(?:advertising|marketing)|"
+    r"advertising\s+copy|광고문|소비자용\s*(?:광고|판매)\s*문구",
+    re.IGNORECASE,
+)
+_PROPOSAL_USE = re.compile(
+    r"commercial[ -]proposal|OEM\s+(?:proposal|RFQ)|\bRFQ\b|"
+    r"제안서|견적\s*요청서|OEM\s*(?:생산|판매|제안)",
+    re.IGNORECASE,
+)
+_EXPLORATION_USE = re.compile(
+    r"exploration\s+only|concept\s+exploration|research\s+only|아이디어\s*탐색|탐색\s*전용",
+    re.IGNORECASE,
+)
+
+
+def _explicit_intended_use(intake: IntakeRequest) -> AssuranceUse | None:
+    text = "\n".join(filter(None, [intake.goal, intake.desired_output or ""]))
+    if _REGULATORY_USE.search(text):
+        return AssuranceUse.REGULATORY_SUBMISSION
+    if _PUBLIC_MARKETING_USE.search(text):
+        return AssuranceUse.PUBLIC_MARKETING
+    if _PROPOSAL_USE.search(text):
+        return AssuranceUse.COMMERCIAL_PROPOSAL
+    if intake.output_target in {
+        OutputTarget.EXISTING_PROJECT,
+        OutputTarget.WEB_APP,
+        OutputTarget.UNITY_APP,
+    }:
+        return AssuranceUse.OPERATIONAL_RELEASE
+    if _EXPLORATION_USE.search(text):
+        return AssuranceUse.EXPLORATION
+    return None
+
+
+def apply_assurance_policy(
+    intake: IntakeRequest, requirements: RequirementsAnalysis
+) -> RequirementsAnalysis:
+    """Bind an explicit delivery use deterministically instead of trusting model defaults."""
+
+    intended_use = _explicit_intended_use(intake)
+    if intended_use is None:
+        return requirements
+    plan = requirements.sixsense or SixSensePlan(
+        standard_profile="Use approved professional defaults for the requested delivery."
+    )
+    if plan.assurance.intended_use == intended_use:
+        return requirements
+    rationale = {
+        AssuranceUse.EXPLORATION: "The requested delivery is explicitly limited to exploration.",
+        AssuranceUse.COMMERCIAL_PROPOSAL: "The requested delivery is an OEM or commercial proposal, not public advertising or a filing.",
+        AssuranceUse.PUBLIC_MARKETING: "The requested delivery will be used as public-facing marketing.",
+        AssuranceUse.REGULATORY_SUBMISSION: "The requested delivery will be submitted to a regulator.",
+        AssuranceUse.OPERATIONAL_RELEASE: "The requested delivery is a runnable software or project release.",
+    }[intended_use]
+    assurance = AssuranceSelection(intended_use=intended_use, rationale=rationale)
+    return requirements.model_copy(update={
+        "sixsense": plan.model_copy(update={"assurance": assurance})
+    })
 
 
 def assurance_selection(requirements: RequirementsAnalysis) -> AssuranceSelection:
