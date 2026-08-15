@@ -2147,53 +2147,6 @@ class ExecutionPipeline:
                 report = settle_consistent_verification(
                     requirements.completion_contract, report
                 )
-            if report.verdict == Verdict.REVISE:
-                failed_ids = [
-                    str(check.criterion_id) for check in report.criterion_checks
-                    if not check.passed and check.criterion_id
-                ]
-                passing_ids = [
-                    str(check.criterion_id) for check in report.criterion_checks
-                    if check.passed and check.criterion_id
-                ]
-                failure_text = " | ".join([
-                    *report.blocking_issues,
-                    *[
-                        check.evidence for check in report.criterion_checks
-                        if not check.passed
-                    ],
-                ])[:12_000]
-                active_paths = [
-                    str(item.path)
-                    for item in getattr(previous_change_set, "changes", [])
-                ]
-                convergence_contract = record_convergence_failure(
-                    context="development_acceptance_verification",
-                    failure_text=failure_text or "Acceptance verification requested revision.",
-                    attempt_number=round_number + 1,
-                    affected_paths=active_paths,
-                    failed_criterion_ids=failed_ids,
-                    preserve_criterion_ids=passing_ids,
-                    strategy_fingerprint=(
-                        development_change_strategy_fingerprint(previous_change_set)
-                        if previous_change_set is not None else None
-                    ),
-                )
-                ctx.session.state[REPAIR_CONTRACT_STATE_KEY] = (
-                    convergence_contract.model_dump(mode="json")
-                )
-                if not convergence_contract.execution_allowed:
-                    report = VerificationReport(
-                        verdict=Verdict.UNVERIFIABLE,
-                        criterion_checks=report.criterion_checks,
-                        blocking_issues=list(dict.fromkeys([
-                            *report.blocking_issues,
-                            "The convergence progress gate found no new causal evidence; blind repair is stopped.",
-                        ])),
-                        revision_instructions=[],
-                        missing_information=report.missing_information,
-                        temperament_decisions=report.temperament_decisions,
-                    )
             repair_plan = prepare_repair(report, round_number)
             if repair_plan is not None:
                 _ctx.session.state[REPAIR_PLAN_STATE_KEY] = repair_plan.model_dump(mode="json")

@@ -1372,6 +1372,50 @@ def test_cloud_document_continuation_reenters_adk_convergence_with_restored_draf
     assert "same accountable maker" in (output_dir / "final.md").read_text("utf-8")
 
 
+def test_adk_document_revision_does_not_require_development_change_set(
+    tmp_path: Path,
+) -> None:
+    class DocumentGateway(BudgetedGeminiClient):
+        def __init__(self) -> None:
+            self.outputs = [
+                _draft().model_dump(mode="json"),
+                _verification("REVISE").model_dump(mode="json"),
+                _draft(
+                    "Employees must submit a request and receive manager approval "
+                    "before remote work. [F01]"
+                ).model_dump(mode="json"),
+                _verification("PASS").model_dump(mode="json"),
+            ]
+
+        def generate_adk_response(self, **_kwargs: object) -> types.GenerateContentResponse:
+            payload = self.outputs.pop(0)
+            return types.GenerateContentResponse(candidates=[types.Candidate(
+                content=types.Content(
+                    role="model", parts=[types.Part(text=json.dumps(payload))]
+                ),
+                finish_reason=types.FinishReason.STOP,
+            )])
+
+    output_dir = tmp_path / "document-convergence"
+    draft, report, revision_round = ExecutionPipeline(
+        tmp_path / "run", gateway=DocumentGateway()
+    )._run_adk_document_convergence(
+        intake=IntakeRequest(goal="Create a grounded guide.", max_revision_rounds=2),
+        requirements=_requirements(),
+        sources=[_source()],
+        source_payload=[_source().model_dump(mode="json")],
+        contract={"goal": "Create a grounded guide."},
+        analysis=_analysis(),
+        output_dir=output_dir,
+    )
+
+    assert report.verdict == Verdict.PASS
+    assert revision_round == 1
+    assert "submit a request" in draft.body_markdown
+    assert (output_dir / "repair_plan_r0.json").is_file()
+    assert not (output_dir / "convergence_ledger.json").exists()
+
+
 def test_adk_software_loop_repairs_failed_isolated_test_before_independent_review(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
