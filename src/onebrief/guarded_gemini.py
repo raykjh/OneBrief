@@ -38,10 +38,11 @@ class BudgetedGeminiClient:
         return any(marker in text for marker in (
             "429", "resource_exhausted", "resource exhausted",
             "503", "service_unavailable", "temporarily unavailable",
+            "504", "deadline_exceeded", "deadline exceeded",
         ))
 
     def _invoke_with_transient_retry(self, operation):
-        """Retry only capacity failures under the existing hard cost reservation."""
+        """Retry only transient provider failures under the existing hard cost reservation."""
         delays = (5, 15, 30)
         for attempt in range(len(delays) + 1):
             try:
