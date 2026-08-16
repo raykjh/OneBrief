@@ -453,6 +453,22 @@ def semantic_visual_edit_context(
     return selected
 
 
+def needs_diagnostic_repository_context(feedback: str) -> bool:
+    """Return whether trusted failure text authorizes a bounded read probe."""
+
+    normalized = " ".join(feedback.split()).casefold()
+    return any(marker in normalized for marker in (
+        "protected destination evidence",
+        "preserved authentication/server journey",
+        "precondition-free click test",
+        "inspect the approved repository context",
+        "existing file was not included in approved model context",
+        "independent unity semantic visual observation failed",
+        "independent semantic observation failed",
+        "deterministic unity layout diagnostics",
+    ))
+
+
 def is_cross_surface_visual_style_failure(feedback: str) -> bool:
     """Return true when evidence proves a shared presentation owner is missing.
 
@@ -1857,8 +1873,10 @@ class ExecutionPipeline:
             ):
                 return (
                     "Remove the new product controller's direct destination SceneManager.LoadScene path. "
-                    "Bind its control to the committed authentication/controller/router mechanism that already "
-                    "owns the protected transition, and let that existing path decide when navigation is valid. "
+                    "Inspect the bounded diagnostic repository context for the committed authentication "
+                    "controller's real success/direct-entry action and bind the new control to that mechanism. "
+                    "A scene-name resolver such as JulpaeSceneRouter does not authenticate or authorize a "
+                    "direct LoadScene call; let the existing controller decide when navigation is valid. "
                     "Do not replace authentication with a new scene-loading shortcut or edit the evidence harness."
                 )
             if "must be committed in one atomic manifest" in lowered:
@@ -2513,19 +2531,11 @@ class ExecutionPipeline:
         ) -> list[dict[str, object]]:
             """Expose new read-only source excerpts only when trusted evidence asks for inspection."""
 
-            normalized = " ".join(feedback.split()).casefold()
             if not isinstance(development_pack, ApprovedProjectDevelopmentToolPack):
                 return []
-            if not any(marker in normalized for marker in (
-                "protected destination evidence",
-                "precondition-free click test",
-                "inspect the approved repository context",
-                "existing file was not included in approved model context",
-                "independent unity semantic visual observation failed",
-                "independent semantic observation failed",
-                "deterministic unity layout diagnostics",
-            )):
+            if not needs_diagnostic_repository_context(feedback):
                 return []
+            normalized = " ".join(feedback.split()).casefold()
             context = development_pack.inspect_diagnostic_context(
                 output_dir / "diagnostic_repository_context" / f"r{round_number:02d}",
                 feedback,

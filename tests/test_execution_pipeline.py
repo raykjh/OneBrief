@@ -47,6 +47,7 @@ from onebrief.execution_pipeline import (
     candidate_first_edit_anchors,
     is_unity_evidence_contract_feedback,
     is_development_product_target_failure,
+    needs_diagnostic_repository_context,
     missing_unity_evidence_bundle_paths,
     missing_unity_evidence_bundle_paths_for_phase,
     normalize_atomic_unity_evidence_bundle,
@@ -3462,8 +3463,16 @@ def test_authentication_scene_shortcut_gets_product_router_repair_instruction() 
     )
 
     instruction = " ".join(report.revision_instructions)
-    assert "committed authentication/controller/router mechanism" in instruction
+    assert "diagnostic repository context" in instruction
+    assert "JulpaeSceneRouter does not authenticate" in instruction
     assert "Do not replace authentication" in instruction
+
+
+def test_authentication_scene_shortcut_authorizes_bounded_diagnostic_read() -> None:
+    assert needs_diagnostic_repository_context(
+        "Unity visual test contract: a preserved authentication/server journey must not "
+        "be satisfied by a product UI onClick listener directly to SceneManager.LoadScene"
+    ) is True
 
 
 def test_maker_schema_phase_uses_newer_decision_over_stale_phase_state() -> None:
