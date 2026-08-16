@@ -345,9 +345,41 @@ def _control_candidates(action: str, object_names: list[str], requested: str) ->
     )[:12]
 
 
+def candidate_unity_scene_names(change_set: object | None) -> set[str]:
+    """Return exact new scene identities already backed by product changes."""
+
+    if isinstance(change_set, BaseModel):
+        payload = change_set.model_dump(mode="json")
+    elif isinstance(change_set, Mapping):
+        payload = change_set
+    else:
+        return set()
+    changes = payload.get("changes")
+    if not isinstance(changes, list):
+        return set()
+    names: set[str] = set()
+    for change in changes:
+        if not isinstance(change, Mapping):
+            continue
+        path = str(change.get("path", "")).replace("\\", "/")
+        lowered = f"/{path.casefold()}"
+        if "/tests/" in lowered or "/test/" in lowered:
+            continue
+        if path.casefold().endswith(".unity") and change.get("base_sha256") is None:
+            names.add(PurePosixPath(path).stem)
+        if path.casefold().endswith(".cs") and change.get("base_sha256") is None:
+            content = str(change.get("content") or change.get("replace") or "")
+            names.update(re.findall(
+                r"SceneManager\.CreateScene\(\s*\"([^\"\r\n]{1,160})\"",
+                content,
+            ))
+    return names
+
+
 def validate_unity_journey_targets(
     plan: UnityEvidenceJourneyPlan,
     scene_catalog: Mapping[str, object] | None,
+    candidate_scene_names: set[str] | None = None,
 ) -> list[str]:
     """Reject guessed committed-scene controls before paying for a Unity run.
 
@@ -380,6 +412,17 @@ def validate_unity_journey_targets(
     for step in plan.steps:
         if step.action in {"load_scene", "wait_for_scene"}:
             current_scene = step.scene_name
+            if (
+                current_scene
+                and candidate_scene_names is not None
+                and current_scene not in by_scene
+                and current_scene not in candidate_scene_names
+            ):
+                exact = sorted([*by_scene, *candidate_scene_names])
+                issues.append(
+                    f"Journey names scene {current_scene!r}, but no committed scene or new product "
+                    f"change creates it. Exact available scene identities: {', '.join(exact) or 'none'}."
+                )
             continue
         if step.action not in _TARGET_ACTIONS or not step.target or current_scene not in by_scene:
             continue
@@ -464,14 +507,16 @@ def _step_source(step: UnityEvidenceJourneyStep) -> list[str]:
     if step.action == "wait_frames":
         return [f"yield return WaitFrames({step.frames});"]
     if step.action == "assert_active":
+        leaf = (step.target or "").replace("\\", "/").split("/")[-1]
         return [
             f"RequireActive({_cs(step.target or '')});",
-            f"assertions++; trace.Add({_cs('assert_active:' + (step.target or ''))});",
+            f"assertions++; trace.Add({_cs('assert_active:' + leaf)});",
         ]
     if step.action == "select_dropdown_index":
+        leaf = (step.target or "").replace("\\", "/").split("/")[-1]
         lines = [
             f"SelectDropdown(RequireActive({_cs(step.target or '')}), {step.value_index});",
-            f"assertions++; trace.Add({_cs('select_dropdown:' + (step.target or '') + ':' + str(step.value_index))});",
+            f"assertions++; trace.Add({_cs('select_dropdown:' + leaf + ':' + str(step.value_index))});",
             f"yield return WaitFrames({step.frames});",
         ]
         if _target_contains(step, ("language", "locale")):
@@ -479,21 +524,24 @@ def _step_source(step: UnityEvidenceJourneyStep) -> list[str]:
         return lines
     if step.action == "set_slider_value":
         value = float(step.number_value or 0.0)
+        leaf = (step.target or "").replace("\\", "/").split("/")[-1]
         return [
             f"SetSliderValue(RequireActive({_cs(step.target or '')}), {value:g}f);",
-            f"assertions++; trace.Add({_cs('set_slider:' + (step.target or '') + ':' + format(value, 'g'))});",
+            f"assertions++; trace.Add({_cs('set_slider:' + leaf + ':' + format(value, 'g'))});",
             f"yield return WaitFrames({step.frames});",
         ]
     if step.action == "set_toggle_on":
+        leaf = (step.target or "").replace("\\", "/").split("/")[-1]
         return [
             f"SetToggleOn(RequireActive({_cs(step.target or '')}));",
-            f"assertions++; trace.Add({_cs('set_toggle_on:' + (step.target or ''))});",
+            f"assertions++; trace.Add({_cs('set_toggle_on:' + leaf)});",
             f"yield return WaitFrames({step.frames});",
         ]
     if step.action == "set_input_text":
+        leaf = (step.target or "").replace("\\", "/").split("/")[-1]
         return [
             f"SetInputText(RequireActive({_cs(step.target or '')}), {_cs(step.text_value or '')});",
-            f"assertions++; trace.Add({_cs('set_input:' + (step.target or ''))});",
+            f"assertions++; trace.Add({_cs('set_input:' + leaf)});",
             f"yield return WaitFrames({step.frames});",
         ]
     if step.action == "assert_player_pref_float":
@@ -508,9 +556,10 @@ def _step_source(step: UnityEvidenceJourneyStep) -> list[str]:
             f"assertions++; trace.Add({_cs('assert_player_pref_string:' + (step.preference_key or '') + ':' + (step.text_value or ''))});",
         ]
     if step.action == "click_button":
+        leaf = (step.target or "").replace("\\", "/").split("/")[-1]
         return [
             f"ClickButton(RequireActive({_cs(step.target or '')}));",
-            f"assertions++; trace.Add({_cs('click:' + (step.target or ''))});",
+            f"assertions++; trace.Add({_cs('click:' + leaf)});",
         ]
     if step.action == "wait_for_scene":
         return [

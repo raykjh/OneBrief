@@ -14,3 +14,6 @@ def test_detects_explicit_new_client_construction_without_matching_maintenance()
     assert not requires_new_product_construction(
         "Modernize the existing Unity client and add a new behavior test to the existing UI."
     )
+    assert requires_new_product_construction(
+        "A newly constructed Login surface reaches a new Lobby shell."
+    )

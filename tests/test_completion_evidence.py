@@ -117,6 +117,22 @@ def test_new_unrelated_production_source_does_not_count_as_client_surface() -> N
     }
 
 
+def test_newly_constructed_login_surface_requires_product_manifest() -> None:
+    goal = "A newly constructed Login surface reaches a new Lobby shell in Unity PlayMode."
+    result = validate_completion_evidence(
+        IntakeRequest(goal=goal, output_target=OutputTarget.UNITY_APP),
+        requirements(goal),
+        construction_evidence(
+            path="Assets/Tests/PlayMode/GeneratedJourney.cs", base_sha256=None
+        ),
+    )
+
+    assert CompletionEvidenceKind.PRODUCT_CONSTRUCTION in result.required
+    assert CompletionEvidenceKind.PRODUCT_CONSTRUCTION in {
+        item.kind for item in result.issues
+    }
+
+
 def passing_report() -> VerificationReport:
     return VerificationReport(
         verdict=Verdict.PASS,

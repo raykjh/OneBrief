@@ -1,5 +1,7 @@
 from onebrief.unity_evidence_plan import (
     UnityEvidenceJourneyPlan,
+    candidate_unity_scene_names,
+    render_unity_evidence_journey,
     validate_unity_journey_targets,
 )
 
@@ -49,8 +51,37 @@ def test_preflight_accepts_exact_control_from_extended_control_catalog() -> None
     )
 
 
-def test_preflight_leaves_genuinely_new_scene_to_runtime_verification() -> None:
+def test_preflight_accepts_new_scene_only_when_product_change_creates_it() -> None:
+    candidate = {
+        "changes": [{
+            "path": "Assets/KhalinosClient/Scenes/KhalinosLobby.unity",
+            "base_sha256": None,
+            "content": "%YAML 1.1",
+        }]
+    }
     assert not validate_unity_journey_targets(
         _plan("KhalinosLobby", "KhalinosSfxSlider"),
         _catalog(),
+        candidate_unity_scene_names(candidate),
     )
+
+
+def test_preflight_rejects_new_scene_name_without_product_backing() -> None:
+    issues = validate_unity_journey_targets(
+        _plan("LoginScene_New", "StartButton"),
+        _catalog(),
+        set(),
+    )
+
+    assert issues
+    assert "no committed scene or new product change creates it" in issues[0]
+
+
+def test_trusted_journey_compacts_long_hierarchy_paths_in_receipt_trace() -> None:
+    rendered = render_unity_evidence_journey(_plan(
+        "LobbyScene_All",
+        "Canvas/SafeArea/CenterPanel/SettingsPanel/AudioPanel/SfxSlider",
+    ))
+
+    assert 'trace.Add("set_slider:SfxSlider:0.5")' in rendered.playmode_test_source
+    assert "set_slider:Canvas/SafeArea" not in rendered.playmode_test_source

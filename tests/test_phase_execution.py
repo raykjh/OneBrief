@@ -286,6 +286,22 @@ def test_compile_error_in_generated_test_stays_in_evidence_construction() -> Non
     assert decision.next_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
 
 
+def test_missing_new_product_surface_overrides_test_only_runtime_path() -> None:
+    decision = decide_repair_phase(
+        context="development_acceptance_verification",
+        failure_text=(
+            "Unity visual test contract: the change set contains only verification code; "
+            "add an actual production UI implementation. The implementation uses legacy "
+            "scenes instead of creating new production scenes or prefabs."
+        ),
+        round_number=3,
+        affected_paths=["Assets/Tests/PlayMode/OneBriefGeneratedJourneyTest.cs"],
+    )
+
+    assert decision.failure_owner == FailureOwner.PRODUCT
+    assert decision.next_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+
+
 def test_visual_preflight_authentication_bypass_stays_product_owned() -> None:
     decision = decide_repair_phase(
         context="development_verification",

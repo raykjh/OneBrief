@@ -11,6 +11,8 @@ _NEW_PRODUCT_SURFACE = re.compile(
     r"(?:client|ui|user[ -]?interface|screen|surface|scene|prefab|presentation[ -]?layer)\b"
     r"|\b(?:rebuild|reconstruct|recreate|replace|build[ -]?from[ -]?scratch)\b.{0,40}"
     r"\b(?:client|ui|user[ -]?interface|screen|surface|scene|prefab|presentation[ -]?layer)\b"
+    r"|\b(?:new|newly\s+constructed|newly[ -]?built)\s+"
+    r"(?:login|lobby|settings)(?:\s+(?:production\s+)?(?:surface|scene|prefab|ui|screen|shell))\b"
     r"|(?:새로운|신규)\s*(?:Unity\s*)?(?:클라이언트|UI|화면|씬|프리팹|표현\s*계층)"
     r"|(?:Unity\s*)?(?:클라이언트|UI|화면|씬|프리팹|표현\s*계층)(?:을|를|은|는)\s*"
     r"(?:새롭게|신규로|새로\s*(?:만들|제작|구축)|재구축|교체)"

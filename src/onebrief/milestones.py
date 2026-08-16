@@ -573,8 +573,11 @@ def build_milestone_plan(
             initial_execution_phase=(
                 ExecutionPhase.EVIDENCE_CONSTRUCTION
                 if unity_surface_flow and (
-                    index == 1
-                    or bool(presentation_criterion_ids.intersection(primary_ids))
+                    (index == 1 and not new_client_construction)
+                    or (
+                        index > 1
+                        and bool(presentation_criterion_ids.intersection(primary_ids))
+                    )
                 )
                 else ExecutionPhase.PRODUCT_IMPLEMENTATION
             ),

@@ -174,6 +174,7 @@ from onebrief.unity_semantic_observation import (
 from onebrief.unity_layout_diagnostics import compact_unity_layout_diagnostic_context
 from onebrief.unity_evidence_plan import (
     UnityEvidenceJourneyPlan,
+    candidate_unity_scene_names,
     render_unity_evidence_journey,
     unity_scene_catalog_from_sources,
     validate_unity_journey_targets,
@@ -3114,7 +3115,9 @@ class ExecutionPipeline:
                 })
             if provider_journey is not None:
                 target_issues = validate_unity_journey_targets(
-                    provider_journey, unity_scene_catalog
+                    provider_journey,
+                    unity_scene_catalog,
+                    candidate_unity_scene_names(previous_change_set),
                 )
                 if target_issues:
                     journey_target_preflight_failures += 1
@@ -5381,6 +5384,16 @@ class ExecutionPipeline:
                             previous_change_set=previous_change_set,
                             response_schema=UnityEvidenceJourneyPlan,
                         )
+                        target_issues = validate_unity_journey_targets(
+                            journey_plan,
+                            unity_scene_catalog,
+                            candidate_unity_scene_names(previous_change_set),
+                        )
+                        if target_issues:
+                            raise RuntimeError(
+                                "Unity journey target preflight rejected an unbacked scene plan: "
+                                + " | ".join(target_issues)
+                            )
                         self._write(
                             output_dir / f"unity_evidence_journey_plan_r{revision_round}.json",
                             journey_plan.model_dump_json(indent=2),

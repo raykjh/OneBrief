@@ -362,6 +362,16 @@ def classify_failure_owner(
     evidence_targeted = bool(paths) and all(is_evidence_path(path) for path in paths)
     normalized = failure_text.casefold()
     if any(marker in normalized for marker in (
+        "change set contains only verification code",
+        "add an actual production ui implementation",
+        "no new production scene",
+        "no new production prefab",
+        "new production surface is missing",
+        "uses legacy scenes",
+        "instead of creating new production scenes or prefabs",
+    )):
+        return FailureOwner.PRODUCT
+    if any(marker in normalized for marker in (
         "generated playmode test does not interact",
         "update the playmode test journey",
         "playmode test journey to include steps that interact",

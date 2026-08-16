@@ -136,6 +136,7 @@ def test_new_client_goal_keeps_construction_in_first_vertical_slices() -> None:
 
     login, lobby, settings = current.milestones[1:4]
     assert "newly constructed Login" in login.contract.target_state
+    assert login.initial_execution_phase.value == "product_implementation"
     assert "New Login production surface" in login.contract.slice_quality_criteria[0].description
     assert "newly constructed Lobby" in lobby.contract.target_state
     assert "newly constructed Settings" in settings.contract.target_state
