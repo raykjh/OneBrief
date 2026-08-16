@@ -42,16 +42,19 @@ from onebrief.temperament import (
 T = TypeVar("T", bound=BaseModel)
 
 
+_CSHARP_METHOD_SIGNATURE = re.compile(
+    r"^\s*(?:(?:public|private|protected|internal|static|virtual|override|async|new)\s+)*"
+    r"(?!(?:return|if|for|foreach|while|switch|catch|using|lock|throw)\b)"
+    r"[A-Za-z_][A-Za-z0-9_.<>\[\],?]*\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\([^;{}]*\)"
+)
+
+
 def _csharp_method_line_spans(lines: list[str]) -> list[tuple[int, int]]:
     """Return complete, bounded method spans for generated C# repair anchors."""
 
-    signature = re.compile(
-        r"^\s*(?:(?:public|private|protected|internal|static|virtual|override|async|new)\s+)*"
-        r"[A-Za-z_][A-Za-z0-9_.<>\[\],?]*\s+[A-Za-z_][A-Za-z0-9_]*\s*\([^;{}]*\)"
-    )
     spans: list[tuple[int, int]] = []
     for index, line in enumerate(lines):
-        if not signature.search(line):
+        if not _CSHARP_METHOD_SIGNATURE.search(line):
             continue
         open_line = next(
             (cursor for cursor in range(index, min(len(lines), index + 4)) if "{" in lines[cursor]),
@@ -79,6 +82,84 @@ def _csharp_method_line_spans(lines: list[str]) -> list[tuple[int, int]]:
         if len(text) <= 12_000:
             spans.append((start, end))
     return spans
+
+
+def _csharp_method_blocks(text: str) -> list[tuple[str, int, int, str]]:
+    """Return named complete method blocks with character offsets."""
+
+    lines = text.splitlines(keepends=True)
+    plain_lines = [line.rstrip("\r\n") for line in lines]
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+    blocks: list[tuple[str, int, int, str]] = []
+    for start_line, end_line in _csharp_method_line_spans(plain_lines):
+        signature = next(
+            (
+                _CSHARP_METHOD_SIGNATURE.search(plain_lines[index])
+                for index in range(start_line, end_line)
+                if _CSHARP_METHOD_SIGNATURE.search(plain_lines[index])
+            ),
+            None,
+        )
+        if signature is None:
+            continue
+        start = offsets[start_line]
+        end = offsets[end_line]
+        blocks.append((signature.group("name"), start, end, text[start:end].rstrip("\r\n")))
+    return blocks
+
+
+def _expand_csharp_catalog_method_repair(
+    change: dict[str, Any],
+    catalog: dict[tuple[str, str], str],
+) -> list[dict[str, Any]]:
+    """Split an over-broad C# replacement across verified method anchors.
+
+    Smaller models sometimes select one method anchor but return two adjacent
+    complete methods.  Applying that text to the first anchor duplicates the
+    second method.  Normalize the proposal only when every returned method has
+    one same-named, digest-bound catalog anchor; otherwise leave it for the
+    strict boundary check to reject.
+    """
+
+    path = str(change.get("path", ""))
+    anchor_id = str(change.get("anchor_id") or "")
+    replacement = str(change.get("replace") or "")
+    if not path.casefold().endswith(".cs") or not anchor_id or not replacement:
+        return [change]
+    selected = catalog.get((path, anchor_id), "")
+    selected_blocks = _csharp_method_blocks(selected)
+    replacement_blocks = _csharp_method_blocks(replacement)
+    if len(selected_blocks) != 1 or len(replacement_blocks) <= 1:
+        return [change]
+
+    covered = list(replacement)
+    for _, start, end, _ in replacement_blocks:
+        covered[start:end] = " " * (end - start)
+    if "".join(covered).strip():
+        return [change]
+
+    anchors_by_name: dict[str, list[str]] = {}
+    for (catalog_path, catalog_id), text in catalog.items():
+        if catalog_path != path:
+            continue
+        blocks = _csharp_method_blocks(text)
+        if len(blocks) == 1:
+            anchors_by_name.setdefault(blocks[0][0], []).append(catalog_id)
+    if selected_blocks[0][0] not in {block[0] for block in replacement_blocks}:
+        return [change]
+
+    expanded: list[dict[str, Any]] = []
+    for name, _, _, block_text in replacement_blocks:
+        matching = anchors_by_name.get(name, [])
+        if len(matching) != 1:
+            return [change]
+        item = dict(change)
+        item["anchor_id"] = matching[0]
+        item["replace"] = block_text
+        expanded.append(item)
+    return expanded
 
 
 class StructuredGateway(Protocol):
@@ -260,8 +341,14 @@ class DeveloperAgent:
             # Compose several bounded edits for one file into one final change.
             # The trusted schema still receives exactly one row per path.
             changes_by_path: dict[str, dict[str, Any]] = {}
+            proposed_changes: list[dict[str, Any]] = []
             for item in proposed.changes:
-                change = item.model_dump(mode="json")
+                proposed_changes.extend(
+                    _expand_csharp_catalog_method_repair(
+                        item.model_dump(mode="json"), catalog
+                    )
+                )
+            for change in proposed_changes:
                 path = str(change.get("path", ""))
                 if self.path_approver(path) is None:
                     continue
@@ -311,6 +398,24 @@ class DeveloperAgent:
                             raise ValueError(
                                 f"catalog anchor is not approved for path: {path}#{anchor_id}"
                             )
+                        if path.casefold().endswith(".cs"):
+                            anchored_methods = [
+                                block[0] for block in _csharp_method_blocks(needle)
+                            ]
+                            replacement_methods = [
+                                block[0]
+                                for block in _csharp_method_blocks(
+                                    str(change.get("replace") or "")
+                                )
+                            ]
+                            if (
+                                len(anchored_methods) == 1
+                                and replacement_methods != anchored_methods
+                            ):
+                                raise ValueError(
+                                    "catalog C# method replacement must preserve exactly one "
+                                    f"method boundary: {path}#{anchor_id}"
+                                )
                     if needle:
                         for candidate in (
                             pending_baseline,
@@ -728,6 +833,8 @@ class DeveloperAgent:
             "correct every reported failure while retaining all previously passing behavior. Do not return a report "
             "When exact_edit_anchors contains a matching verified source window, prefer its anchor_id and return "
             "the complete replacement for that displayed window; never invent or retype the anchor text. "
+            "For C# method anchors, replace exactly that one method. If two methods must change, return two "
+            "change rows using the separate supplied anchor_id for each method. "
             "in place of runnable source code. Keep existing correct behavior, make no unsupported financial claim, "
             "and stay within the acceptance criteria. For Unity visual or localization work, include a real PlayMode "
             "test whose full name begins with OneBrief.Visual. The test must perform the requested runtime interaction, "

@@ -4544,6 +4544,103 @@ def test_project_developer_resolves_verified_anchor_id_without_retyping_source()
     assert "Historical Model Performance" not in result.changes[0].content
 
 
+def test_project_developer_splits_adjacent_csharp_methods_across_catalog_anchors() -> None:
+    previous = ProjectCodeChangeSet(
+        summary="Generated Unity controller.",
+        changes=[{
+            "path": "Assets/UI/LoginController.cs", "base_sha256": None,
+            "content": (
+                "class LoginController {\n"
+                "    private void SetupUI() {\n"
+                "        button.onClick.AddListener(OnClick);\n"
+                "    }\n\n"
+                "    private void OnClick() {\n"
+                "        ShowLobby();\n"
+                "    }\n"
+                "}\n"
+            ),
+            "reason": "Current generated candidate.",
+        }],
+    )
+    anchors = DeveloperAgent.exact_edit_anchors(
+        previous,
+        "The onClick handler must authenticate instead of ShowLobby.",
+    )
+    by_text = {
+        str(anchor["text"]): str(anchor["anchor_id"])
+        for group in anchors for anchor in group["anchors"]
+    }
+    setup_anchor = next(
+        anchor_id for text, anchor_id in by_text.items() if "SetupUI" in text
+    )
+    proposal = CompactProposedProjectCodeChangeSet.model_validate({
+        "summary": "Bind the verified authentication path.",
+        "changes": [{
+            "path": "Assets/UI/LoginController.cs",
+            "anchor_id": setup_anchor,
+            "replace": (
+                "    private void SetupUI() {\n"
+                "        button.onClick.AddListener(OnClick);\n"
+                "    }\n\n"
+                "    private void OnClick() {\n"
+                "        Authenticate();\n"
+                "    }"
+            ),
+            "reason": "Update both complete methods supplied by the catalog.",
+        }],
+    })
+    developer = DeveloperAgent(
+        object(), change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/", path_approver=lambda path: path,
+    )
+
+    result = developer.promote_candidate(proposal, [], previous, anchors)
+
+    content = result.changes[0].content
+    assert content.count("private void SetupUI()") == 1
+    assert content.count("private void OnClick()") == 1
+    assert "Authenticate();" in content
+    assert "ShowLobby();" not in content
+
+
+def test_project_developer_rejects_csharp_sibling_without_catalog_anchor() -> None:
+    previous = ProjectCodeChangeSet(
+        summary="Generated Unity controller.",
+        changes=[{
+            "path": "Assets/UI/LoginController.cs", "base_sha256": None,
+            "content": (
+                "class LoginController {\n"
+                "    private void SetupUI() {\n"
+                "        button.onClick.AddListener(OnClick);\n"
+                "    }\n"
+                "}\n"
+            ),
+            "reason": "Current generated candidate.",
+        }],
+    )
+    anchors = DeveloperAgent.exact_edit_anchors(previous, "Fix the onClick listener.")
+    anchor_id = str(anchors[0]["anchors"][0]["anchor_id"])
+    proposal = CompactProposedProjectCodeChangeSet.model_validate({
+        "summary": "Attempt an unbound sibling insertion.",
+        "changes": [{
+            "path": "Assets/UI/LoginController.cs",
+            "anchor_id": anchor_id,
+            "replace": (
+                "    private void SetupUI() { }\n"
+                "    private void UnapprovedSibling() { }"
+            ),
+            "reason": "This second method has no verified anchor.",
+        }],
+    })
+    developer = DeveloperAgent(
+        object(), change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/", path_approver=lambda path: path,
+    )
+
+    with pytest.raises(ValueError, match="preserve exactly one method boundary"):
+        developer.promote_candidate(proposal, [], previous, anchors)
+
+
 def test_project_developer_normalizes_catalog_id_misplaced_in_range_fields() -> None:
     previous = ProjectCodeChangeSet(
         summary="Existing Unity candidate.",
