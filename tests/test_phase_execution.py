@@ -8,6 +8,8 @@ from onebrief.phase_execution import (
     FailureOwner,
     active_execution_phase,
     allocate_phase_policy,
+    classify_failure_owner,
+    compiler_error_paths,
     decide_repair_phase,
     is_evidence_path,
     path_allowed_for_phase,
@@ -357,6 +359,37 @@ def test_mixed_unity_failure_exposes_only_product_blockers_to_product_repair() -
     assert "PlayMode test" not in product
     assert "TestAssemblies" not in product
     assert "Rejected repair delta" not in product
+
+
+def test_compile_error_path_overrides_last_evidence_delta_owner() -> None:
+    failure = (
+        "development verification failed: unity_compile (exit_code=1) "
+        "Assets\\JULPAE\\Scripts\\Login\\NewLoginLobbyController.cs(78,32): "
+        "error CS0122: member is inaccessible"
+    )
+
+    assert compiler_error_paths(failure) == [
+        "Assets/JULPAE/Scripts/Login/NewLoginLobbyController.cs"
+    ]
+    assert classify_failure_owner(
+        context="development_verification",
+        failure_text=failure,
+        affected_paths=["Assets/JULPAE/Tests/PlayMode/OneBriefGeneratedJourneyTest.cs"],
+    ) == FailureOwner.PRODUCT
+
+
+def test_compile_error_in_test_stays_evidence_owned() -> None:
+    failure = (
+        "development verification failed: unity_compile (exit_code=1) "
+        "Assets\\JULPAE\\Tests\\PlayMode\\OneBriefGeneratedJourneyTest.cs(18,7): "
+        "error CS0103: name is unavailable"
+    )
+
+    assert classify_failure_owner(
+        context="development_verification",
+        failure_text=failure,
+        affected_paths=["Assets/JULPAE/Scripts/Login/NewLoginLobbyController.cs"],
+    ) == FailureOwner.EVIDENCE
 
 
 def test_mixed_unity_failure_defers_product_blockers_from_evidence_repair() -> None:

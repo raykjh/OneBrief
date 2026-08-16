@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from typing import Mapping
@@ -352,6 +353,20 @@ def path_allowed_for_phase(path: str, phase: ExecutionPhase) -> bool:
     return False
 
 
+def compiler_error_paths(failure_text: str) -> list[str]:
+    """Extract source paths from actual compiler errors, excluding warnings."""
+
+    return list(dict.fromkeys(
+        match.replace("\\", "/")
+        for match in re.findall(
+            r"((?:Assets|Packages)[\\/][^\r\n|]*?\.(?:cs|asmdef))"
+            r"\(\d+\s*,\s*\d+\)\s*:\s*error\s+CS\d+",
+            failure_text,
+            re.IGNORECASE,
+        )
+    ))
+
+
 def classify_failure_owner(
     *, context: str, failure_text: str, affected_paths: list[str] | None = None
 ) -> FailureOwner:
@@ -361,6 +376,13 @@ def classify_failure_owner(
     paths = affected_paths or []
     evidence_targeted = bool(paths) and all(is_evidence_path(path) for path in paths)
     normalized = failure_text.casefold()
+    diagnostic_paths = compiler_error_paths(failure_text)
+    if layer == FailureLayer.BUILD and diagnostic_paths:
+        return (
+            FailureOwner.EVIDENCE
+            if all(is_evidence_path(path) for path in diagnostic_paths)
+            else FailureOwner.PRODUCT
+        )
     if any(marker in normalized for marker in (
         "change set contains only verification code",
         "add an actual production ui implementation",
