@@ -3459,6 +3459,22 @@ def test_phase_decision_delta_persists_schema_authority_for_next_adk_turn() -> N
     assert delta[PHASE_DECISION_STATE_KEY]["next_phase"] == "product_implementation"
 
 
+def test_maker_schema_phase_uses_current_report_before_event_delta_is_visible() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "Unity visual test contract: new Unity UI MonoBehaviour NewLoginSurface is not attached "
+        "to a changed scene/prefab; an inert source file does not implement the UI | "
+        "Unity visual test contract: add a discoverable Unity PlayMode test"
+    )
+    stale_state = {
+        PHASE_STATE_KEY: ExecutionPhase.EVIDENCE_CONSTRUCTION.value,
+    }
+
+    assert maker_schema_phase(
+        stale_state,
+        report,
+    ) == ExecutionPhase.PRODUCT_IMPLEMENTATION
+
+
 def test_cross_surface_style_failure_can_propose_one_new_theme_sidecar() -> None:
     report = ExecutionPipeline._development_failure_report(
         "independent Unity semantic visual observation failed: "

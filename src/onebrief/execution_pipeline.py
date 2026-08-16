@@ -986,7 +986,10 @@ def development_maker_schema_for(
     return CompactProposedProjectCodeChangeSet
 
 
-def maker_schema_phase(state: dict[str, object]) -> ExecutionPhase:
+def maker_schema_phase(
+    state: dict[str, object],
+    report: VerificationReport | None = None,
+) -> ExecutionPhase:
     """Resolve schema authority from the newest phase decision.
 
     ADK asks the schema hook before the model-binding hook.  A repair decision
@@ -1000,8 +1003,23 @@ def maker_schema_phase(state: dict[str, object]) -> ExecutionPhase:
     try:
         decision = PhaseDecision.model_validate(payload)
     except (ValidationError, TypeError):
-        return phase
-    return decision.next_phase or phase
+        decision = None
+    if decision is not None and decision.next_phase is not None:
+        return decision.next_phase
+    if report is not None and report.verdict == Verdict.REVISE:
+        feedback = " | ".join([
+            *report.blocking_issues,
+            *report.revision_instructions,
+        ]).strip()
+        if feedback:
+            report_decision = decide_repair_phase(
+                context="development_verification",
+                failure_text=feedback,
+                round_number=0,
+            )
+            if report_decision.next_phase is not None:
+                return report_decision.next_phase
+    return phase
 
 
 def phase_decision_state_delta(decision: PhaseDecision) -> dict[str, object]:
@@ -4611,7 +4629,7 @@ class ExecutionPipeline:
         def select_maker_schema(
             report: VerificationReport | None, _ctx, _round_number: int
         ) -> type | None:
-            schema_phase = maker_schema_phase(_ctx.session.state)
+            schema_phase = maker_schema_phase(_ctx.session.state, report)
             _ctx.session.state[PHASE_STATE_KEY] = schema_phase.value
             selected = development_maker_schema_for(
                 report,
