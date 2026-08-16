@@ -60,3 +60,22 @@ class QuestKernelEngine:
             "path": f"transition_decisions/{decision_id}.json",
         })
         return decision
+
+    def latest(self) -> tuple[RawQuestReceipt, QuestTransitionDecision] | None:
+        """Read and revalidate the current append-only transition pointer."""
+
+        if not self.current.is_file():
+            return None
+        pointer = json.loads(self.current.read_text(encoding="utf-8"))
+        relative = str(pointer.get("path", ""))
+        target = (self.root / relative).resolve()
+        if not target.is_relative_to(self.root.resolve()) or not target.is_file():
+            raise RuntimeError("current Quest transition points outside its store")
+        payload = json.loads(target.read_text(encoding="utf-8"))
+        if canonical_sha256(payload) != pointer.get("decision_sha256"):
+            raise RuntimeError("current Quest transition digest changed")
+        if payload.get("decision_id") != pointer.get("decision_id"):
+            raise RuntimeError("current Quest transition pointer identifies another decision")
+        raw = RawQuestReceipt.model_validate(payload.get("raw_receipt"))
+        decision = QuestTransitionDecision.model_validate(payload.get("decision"))
+        return raw, validate_transition(raw, decision)

@@ -221,3 +221,26 @@ def test_kernel_records_an_append_only_decision_and_current_pointer(tmp_path) ->
         encoding="utf-8"
     )
     assert decisions[0].stem in pointer
+    loaded_raw, loaded_decision = engine.latest()
+    assert loaded_raw == raw
+    assert loaded_decision == first
+
+
+def test_kernel_rejects_a_tampered_current_decision(tmp_path) -> None:
+    raw = RawQuestReceipt(
+        checkpoint=checkpoint(),
+        phase_decision=phase(
+            FailureOwner.PRODUCT,
+            ExecutionPhase.PRODUCT_IMPLEMENTATION,
+        ),
+    )
+    engine = QuestKernelEngine(tmp_path / "quest_state")
+    engine.record(raw)
+    pointer = __import__("json").loads(engine.current.read_text(encoding="utf-8"))
+    target = engine.root / pointer["path"]
+    tampered = __import__("json").loads(target.read_text(encoding="utf-8"))
+    tampered["decision"]["rationale"] = "Tampered after the decision was recorded."
+    target.write_text(__import__("json").dumps(tampered), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="digest changed"):
+        engine.latest()

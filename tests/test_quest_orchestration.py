@@ -369,6 +369,16 @@ def test_same_milestone_followup_shares_budget_instead_of_reserving_twice(tmp_pa
     first = quests.issue(milestone=milestone, milestone_store=milestone_store, source_revision="a" * 40)
     output = tmp_path / "failed"
     output.mkdir()
+    (output / "phase_decision_deterministic_r1.json").write_text(json.dumps({
+        "schema_version": "onebrief-phase-decision-v1",
+        "round_number": 1,
+        "failure_code": "evidence_topology_invalid",
+        "failure_layer": "evidence_topology",
+        "failure_owner": "evidence",
+        "next_phase": "evidence_construction",
+        "model_repair_allowed": True,
+        "rationale": "The trusted Receipt assigns this repair to evidence.",
+    }), encoding="utf-8")
     checkpoint = ExecutionCheckpoint(
         status=PipelineStatus.PARTIAL,
         current_stage="finished",
@@ -384,7 +394,63 @@ def test_same_milestone_followup_shares_budget_instead_of_reserving_twice(tmp_pa
     issued_before = quests.canvas().issued_budget_usd
     second = quests.issue(milestone=milestone, milestone_store=milestone_store, source_revision="a" * 40)
     assert second.parent_quest_id == first.quest_id
+    assert second.initial_execution_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
+    assert "From blocked receipt" in second.objective
     assert quests.canvas().issued_budget_usd == issued_before
+
+
+def test_structural_stop_cannot_issue_a_followup_quest(tmp_path: Path) -> None:
+    current_plan, milestone_store = baseline_store(tmp_path)
+    quests = QuestStore(tmp_path / "quests", plan=current_plan, requirements=requirements())
+    milestone = current_plan.milestones[1]
+    quest = quests.issue(
+        milestone=milestone,
+        milestone_store=milestone_store,
+        source_revision="a" * 40,
+    )
+    output = tmp_path / "structural-stop"
+    output.mkdir()
+    (output / "repair_contract_f02.json").write_text(json.dumps({
+        "schema_version": "onebrief-repair-contract-v1",
+        "contract_id": "RC-" + "4" * 16,
+        "observation_id": "FO-" + "5" * 16,
+        "progress_kind": "no_progress",
+        "occurrence": 2,
+        "hypothesis": {
+            "hypothesis_id": "RH-" + "6" * 16,
+            "suspected_cause": "The same strategy did not change trusted evidence.",
+            "cheapest_probe": "Redesign the product construction mechanism.",
+            "expected_signal": "A new mechanism changes the trusted failure.",
+            "repair_boundary": "No maker mutation is currently permitted.",
+            "requires_model_reasoning": False,
+        },
+        "permitted_paths": [],
+        "preserve_criterion_ids": [],
+        "verification_ladder": ["structural_review"],
+        "execution_allowed": False,
+        "escalation_required": True,
+        "rationale": "The same strategy produced no new evidence.",
+    }), encoding="utf-8")
+    checkpoint = ExecutionCheckpoint(
+        status=PipelineStatus.FAILED,
+        current_stage="failed",
+        completed_stages=[],
+        revision_round=2,
+        message="The same strategy produced no new evidence.",
+    )
+    quests.record_result(
+        quest=quest,
+        checkpoint=checkpoint,
+        output_dir=output,
+        failure_owner=QuestFailureOwner.ORCHESTRATOR,
+    )
+
+    with pytest.raises(RuntimeError, match="structural redesign"):
+        quests.issue(
+            milestone=milestone,
+            milestone_store=milestone_store,
+            source_revision="a" * 40,
+        )
 
 
 def test_quest_budget_binds_actual_user_approval_not_quote_maximum(tmp_path: Path) -> None:

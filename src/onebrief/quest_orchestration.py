@@ -24,6 +24,7 @@ from onebrief.completion_ledger import CompletionLedger, CompletionStatus
 from onebrief.execution_schemas import ExecutionCheckpoint, PipelineStatus, VerificationReport, Verdict
 from onebrief.schemas import ExecutionPhase, InternalSource, RequirementsAnalysis, SourcePriority
 from onebrief.quest_kernel import QuestKernelEngine, collect_raw_quest_receipt
+from onebrief.quest_kernel.models import QuestTransition
 
 
 def _now() -> str:
@@ -357,9 +358,29 @@ class QuestStore:
                 raise RuntimeError("another Quest is active; parallel milestone execution is forbidden")
             return active
         previous = self.latest_receipt()
+        kernel_transition = QuestKernelEngine(self.root).latest() if previous is not None else None
         if previous is not None and previous.state != QuestState.PASSED:
-            if previous.authorization_required:
+            if kernel_transition is None:
+                raise RuntimeError(
+                    "blocked Quest has no digest-bound Kernel transition; revalidate its Receipt"
+                )
+            _raw_receipt, transition_decision = kernel_transition
+            if (
+                previous.authorization_required
+                or transition_decision.transition == QuestTransition.NEEDS_AUTHORIZATION
+            ):
                 raise PermissionError("previous Quest requires authorization before a successor can be issued")
+            if transition_decision.transition == QuestTransition.STRUCTURAL_STOP:
+                raise RuntimeError(
+                    "previous Quest requires structural redesign before a successor can be issued"
+                )
+            if transition_decision.transition not in {
+                QuestTransition.REPAIR_PRODUCT,
+                QuestTransition.REPAIR_EVIDENCE,
+            }:
+                raise RuntimeError(
+                    "blocked Quest receipt does not authorize a repair successor"
+                )
         dependency_checkpoints = {}
         for dependency in milestone.dependencies:
             checkpoint = milestone_store.checkpoint(dependency)
@@ -371,10 +392,16 @@ class QuestStore:
         preserved = list(canvas.receipt_ids)
         objective = milestone.contract.target_state
         if previous is not None:
-            objective = (
-                f"From verified receipt {previous.receipt_id}, complete {milestone.milestone_id}: "
-                f"{milestone.contract.target_state} Preserve all prior PASS evidence."
-            )
+            if previous.state == QuestState.PASSED:
+                objective = (
+                    f"From verified receipt {previous.receipt_id}, complete {milestone.milestone_id}: "
+                    f"{milestone.contract.target_state} Preserve all prior PASS evidence."
+                )
+            else:
+                objective = (
+                    f"From blocked receipt {previous.receipt_id}, repair {milestone.milestone_id}: "
+                    f"{' | '.join(previous.gaps)} Preserve the approved target and all prior PASS evidence."
+                )
         budget = QuestBudget(
             minimum_usd=round(self.plan.minimum_cost_usd * milestone.budget_weight, 8),
             maximum_usd=round(self.approved_budget_usd * milestone.budget_weight, 8),
@@ -404,7 +431,13 @@ class QuestStore:
             "milestone_id": milestone.milestone_id,
             "objective": objective,
             "quest_type": QuestType.PROCESS_BOUND,
-            "initial_execution_phase": milestone.initial_execution_phase,
+            "initial_execution_phase": (
+                kernel_transition[1].next_phase
+                if previous is not None
+                and previous.state != QuestState.PASSED
+                and kernel_transition is not None
+                else milestone.initial_execution_phase
+            ),
             "input_checkpoint": QuestInputCheckpoint(
                 milestone_plan_sha256=self.plan.sha256,
                 source_revision=source_revision,
