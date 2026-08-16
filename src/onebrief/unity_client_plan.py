@@ -15,6 +15,8 @@ from typing import Mapping
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from onebrief.unity_evidence_plan import UnityEvidenceJourneyPlan
+
 
 TRUSTED_UNITY_CLIENT_MARKER = "KHALINOS_DECLARATIVE_CLIENT_V1"
 
@@ -439,6 +441,43 @@ namespace Khalinos.GeneratedClient
         runtime_source_path=path,
         runtime_source=source,
     )
+
+
+def derive_unity_client_evidence_journey(
+    plan: UnityClientConstructionPlan,
+) -> UnityEvidenceJourneyPlan:
+    """Derive the executable proof route from the trusted fixed client topology."""
+
+    product_parts = PurePosixPath(plan.product_directory).parts
+    product_root = PurePosixPath(*product_parts[:2])
+    test_directory = str(product_root / "Tests" / "PlayMode")
+    return UnityEvidenceJourneyPlan.model_validate({
+        "summary": "Verify the generated Login, Lobby, and Settings client journey.",
+        "test_directory": test_directory,
+        "steps": [
+            {"action": "load_scene", "scene_name": plan.initial_scene},
+            {"action": "wait_frames", "frames": 10},
+            {"action": "assert_active", "target": "OneBriefLoginPanel"},
+            {"action": "capture", "scenario_id": "login_surface_initial"},
+            {
+                "action": "select_dropdown_index",
+                "target": "NewClientTestAccountDropdown",
+                "value_index": 1,
+            },
+            {"action": "click_button", "target": "NewClientDirectEnterButton"},
+            {
+                "action": "wait_for_scene",
+                "scene_name": plan.destination_scene,
+                "timeout_seconds": 20.0,
+            },
+            {"action": "assert_active", "target": "NewClientLobbyPanel"},
+            {"action": "capture", "scenario_id": "lobby_surface_initial"},
+            {"action": "click_button", "target": "NewClientSettingsButton"},
+            {"action": "wait_frames", "frames": 5},
+            {"action": "assert_active", "target": "NewClientSettingsPanel"},
+            {"action": "capture", "scenario_id": "settings_panel_active"},
+        ],
+    })
 
 
 def is_trusted_unity_client_change_set(value: object | None) -> bool:

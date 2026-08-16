@@ -191,6 +191,7 @@ from onebrief.unity_evidence_plan import (
 from onebrief.unity_client_plan import (
     UnityClientConstructionPlan,
     bind_unity_client_plan_targets,
+    derive_unity_client_evidence_journey,
     is_trusted_unity_client_change_set,
     render_unity_client_construction,
 )
@@ -847,6 +848,7 @@ def normalize_atomic_unity_evidence_bundle(
     raw: object,
     current_payload: object | None = None,
     approved_existing_evidence: dict[str, str] | None = None,
+    trusted_client_plan: UnityClientConstructionPlan | None = None,
 ) -> object:
     """Restore the typed atomic contract after ADK state serialization.
 
@@ -887,6 +889,14 @@ def normalize_atomic_unity_evidence_bundle(
             plan,
             existing_test_path=existing_test,
             existing_assembly_path=existing_assembly,
+            proxy_authority_contract=(
+                (
+                    trusted_client_plan.authentication_account_selector,
+                    trusted_client_plan.authentication_submit_selector,
+                )
+                if trusted_client_plan is not None
+                else None
+            ),
         )
         # The provider authored only the bounded plan above. The C# and asmdef
         # below are trusted compiler output, so they must not be forced back
@@ -3211,6 +3221,16 @@ class ExecutionPipeline:
         quest_product_construction_lineage = new_product_construction_paths(
             previous_change_set
         )
+        trusted_client_plan: UnityClientConstructionPlan | None = None
+        for client_plan_path in sorted(
+            output_dir.glob("unity_client_construction_plan_r*.json")
+        ):
+            try:
+                trusted_client_plan = UnityClientConstructionPlan.model_validate_json(
+                    client_plan_path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValidationError):
+                continue
         rejected_change_fingerprints = discover_rejected_change_fingerprints(output_dir)
         rejected_change_history = discover_rejected_change_history(output_dir)
         rejected_strategy_fingerprints = {
@@ -3308,6 +3328,7 @@ class ExecutionPipeline:
             nonlocal journey_target_preflight_failures
             nonlocal client_plan_preflight_failures
             nonlocal product_construction_preflight_failures
+            nonlocal trusted_client_plan
             # The deterministic verifier can issue a new digest-bound source
             # catalog after the previous executable check. ADK session state is
             # authoritative for that turn; a closure captured before the check
@@ -3409,6 +3430,7 @@ class ExecutionPipeline:
                     output_dir / f"unity_client_construction_plan_r{round_number}.json",
                     provider_client_plan.model_dump_json(indent=2),
                 )
+                trusted_client_plan = provider_client_plan
                 raw = normalize_unity_client_construction_plan(provider_client_plan)
             provider_journey = None
             if isinstance(raw_provider_payload, UnityEvidenceJourneyPlan):
@@ -3423,6 +3445,15 @@ class ExecutionPipeline:
                     **raw_provider_payload,
                     "schema_version": "onebrief-unity-evidence-journey-plan-v1",
                 })
+            if (
+                provider_journey is not None
+                and trusted_client_plan is not None
+                and is_trusted_unity_client_change_set(previous_change_set)
+            ):
+                provider_journey = derive_unity_client_evidence_journey(
+                    trusted_client_plan
+                )
+                raw = provider_journey
             if provider_journey is not None:
                 target_issues = validate_unity_journey_targets(
                     provider_journey,
@@ -3488,6 +3519,7 @@ class ExecutionPipeline:
                     raw,
                     previous_change_set,
                     approved_existing_evidence,
+                    trusted_client_plan,
                 )
             if isinstance(raw_provider_payload, UnityEvidenceJourneyPlan) or (
                 isinstance(raw_provider_payload, dict)
@@ -3496,7 +3528,9 @@ class ExecutionPipeline:
                 and not raw_provider_payload.get("changes")
             ):
                 plan_text = (
-                    raw_provider_payload.model_dump_json(indent=2)
+                    provider_journey.model_dump_json(indent=2)
+                    if provider_journey is not None
+                    else raw_provider_payload.model_dump_json(indent=2)
                     if isinstance(raw_provider_payload, BaseModel)
                     else json.dumps(raw_provider_payload, ensure_ascii=False, indent=2)
                 )

@@ -387,15 +387,27 @@ def test_declarative_unity_journey_compiles_trusted_harness() -> None:
         ],
     })
 
-    rendered = render_unity_evidence_journey(plan)
+    rendered = render_unity_evidence_journey(
+        plan,
+        proxy_authority_contract=(
+            "DevPanel/TestAccountDropdown",
+            "DevPanel/DirectEnterButton",
+        ),
+    )
 
     assert "ONEBRIEF_DECLARATIVE_EVIDENCE_V1" in rendered.playmode_test_source
     assert "ONEBRIEF_AUTHENTICATION_PRECONDITION_V1" in rendered.playmode_test_source
+    assert (
+        "DevPanel/TestAccountDropdown -> DevPanel/DirectEnterButton"
+        in rendered.playmode_test_source
+    )
     assert 'RequireActive("TestAccountDropdown")' in rendered.playmode_test_source
     assert 'RequireActive("DirectEnterButton")' in rendered.playmode_test_source
     assert "ScenarioReceipt" in rendered.playmode_test_source
     assert "WriteManifestAtomically(receipts.ToArray())" in rendered.playmode_test_source
     assert "TestAssemblies" in rendered.test_assembly_source
+    assert "UnityEngine.TestRunner" not in rendered.test_assembly_source
+    assert "UnityEditor.TestRunner" not in rendered.test_assembly_source
     assert "item.gameObject.scene.IsValid()" in rendered.playmode_test_source
     assert "item.scene.IsValid() && item.isActiveAndEnabled" not in rendered.playmode_test_source
     assert len(rendered.playmode_test_source.encode("utf-8")) < 12_000

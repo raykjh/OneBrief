@@ -11,6 +11,7 @@ from onebrief.unity_client_plan import (
     TRUSTED_UNITY_CLIENT_MARKER,
     UnityClientConstructionPlan,
     bind_unity_client_plan_targets,
+    derive_unity_client_evidence_journey,
     render_unity_client_construction,
     validate_unity_client_plan_targets,
 )
@@ -72,6 +73,33 @@ def test_trusted_client_renderer_preserves_authentication_authority() -> None:
     assert "SceneManager.LoadScene" not in rendered.runtime_source
     assert "new TMP_Dropdown.OptionData(item.text, item.image)" not in rendered.runtime_source
     assert rendered.runtime_source.count("new TMP_Dropdown.OptionData(item.text)") == 2
+
+
+def test_client_plan_derives_complete_proxy_evidence_journey() -> None:
+    plan = _plan(
+        product_directory="Assets/JULPAE/Scripts/Presentation",
+        initial_scene="LoginScene_All",
+        destination_scene="LobbyScene_All",
+    )
+
+    journey = derive_unity_client_evidence_journey(plan)
+
+    assert journey.test_directory == "Assets/JULPAE/Tests/PlayMode"
+    assert [(step.action, step.target, step.scene_name) for step in journey.steps] == [
+        ("load_scene", None, "LoginScene_All"),
+        ("wait_frames", None, None),
+        ("assert_active", "OneBriefLoginPanel", None),
+        ("capture", None, None),
+        ("select_dropdown_index", "NewClientTestAccountDropdown", None),
+        ("click_button", "NewClientDirectEnterButton", None),
+        ("wait_for_scene", None, "LobbyScene_All"),
+        ("assert_active", "NewClientLobbyPanel", None),
+        ("capture", None, None),
+        ("click_button", "NewClientSettingsButton", None),
+        ("wait_frames", None, None),
+        ("assert_active", "NewClientSettingsPanel", None),
+        ("capture", None, None),
+    ]
 
 
 def test_client_plan_preflight_binds_exact_committed_controls() -> None:
