@@ -555,6 +555,7 @@ def bind_semantic_product_repair_scope(
     sources: list[dict[str, object]],
     failure_text: str,
     diagnostic_paths: list[str] | None = None,
+    candidate_paths: list[str] | None = None,
 ) -> RepairContract:
     """Bind the semantic repair contract to its approved diagnostic sources.
 
@@ -578,11 +579,18 @@ def bind_semantic_product_repair_scope(
         str(source.get("repository_path") or "").replace("\\", "/")
         for source in relevant_product_repair_sources(sources, failure_text)
     ]
+    normalized_failure = failure_text.replace("\\", "/").casefold()
+    named_candidate_paths = [
+        path.replace("\\", "/")
+        for path in (candidate_paths or [])
+        if path.replace("\\", "/").casefold() in normalized_failure
+    ]
     permitted = [
         path.replace("\\", "/")
         for path in [
             *contract.permitted_paths,
             *(diagnostic_paths or []),
+            *named_candidate_paths,
             *selected_paths,
         ]
         if path and path.casefold() not in {"none", "null"}
@@ -2692,6 +2700,10 @@ class ExecutionPipeline:
                     prepared_sources,
                     failure_text,
                     diagnostic_paths,
+                    [
+                        str(item.path)
+                        for item in getattr(previous_change_set, "changes", [])
+                    ],
                 )
             convergence_ledger = convergence_policy.record(
                 convergence_ledger, observation, contract

@@ -1167,6 +1167,45 @@ def test_semantic_product_contract_prioritizes_fresh_diagnostic_owner_paths() ->
     ]
 
 
+def test_semantic_product_contract_keeps_named_failing_candidate_path() -> None:
+    contract = RepairContract.model_validate({
+        "contract_id": "RC-4123456789abcdef",
+        "observation_id": "FO-4123456789abcdef",
+        "progress_kind": "new_hypothesis",
+        "occurrence": 2,
+        "hypothesis": {
+            "hypothesis_id": "RH-4123456789abcdef",
+            "suspected_cause": "A generated product surface remains invalid.",
+            "cheapest_probe": "Repair the named candidate source.",
+            "expected_signal": "The named blocker disappears.",
+            "repair_boundary": "Named candidate product sources only.",
+            "requires_model_reasoning": True,
+        },
+        "permitted_paths": ["Assets/JULPAE/Scripts/Login/NewLoginController.cs"],
+        "verification_ladder": ["compile", "targeted_state"],
+        "execution_allowed": True,
+        "escalation_required": False,
+        "rationale": "Preserve unresolved candidate ownership.",
+    })
+    lobby = "Assets/JULPAE/Scripts/Lobby/NewLobbyShellController.cs"
+
+    bound = bind_semantic_product_repair_scope(
+        contract,
+        [],
+        f"Unity visual test contract: inert source file in {lobby}",
+        candidate_paths=[
+            "Assets/JULPAE/Scripts/Login/NewLoginController.cs",
+            lobby,
+            "Assets/JULPAE/Tests/PlayMode/Flow.cs",
+        ],
+    )
+
+    assert bound.permitted_paths == [
+        "Assets/JULPAE/Scripts/Login/NewLoginController.cs",
+        lobby,
+    ]
+
+
 def test_cross_surface_visual_failure_rejects_unrelated_local_anchor() -> None:
     context = [
         {"path": "Assets/Scripts/StoreCatalogImageBinding.cs", "anchors": [{"anchor_id": "A1"}]},
