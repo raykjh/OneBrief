@@ -23,6 +23,7 @@ from onebrief.assurance import AssurancePolicy, resolve_assurance_policy
 from onebrief.completion_ledger import CompletionLedger, CompletionStatus
 from onebrief.execution_schemas import ExecutionCheckpoint, PipelineStatus, VerificationReport, Verdict
 from onebrief.schemas import ExecutionPhase, InternalSource, RequirementsAnalysis, SourcePriority
+from onebrief.quest_kernel import QuestKernelEngine, collect_raw_quest_receipt
 
 
 def _now() -> str:
@@ -530,6 +531,9 @@ class QuestStore:
             failure_owner = QuestFailureOwner.NONE
         elif authorization_required:
             failure_owner = QuestFailureOwner.AUTHORIZATION
+        QuestKernelEngine(self.root).record(
+            collect_raw_quest_receipt(output_dir, checkpoint)
+        )
         gaps: list[str] = []
         if ledger is not None:
             for criterion in ledger.criteria:

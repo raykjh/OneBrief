@@ -219,6 +219,10 @@ def test_only_m01_quest_exists_until_m01_receipt_passes(tmp_path: Path) -> None:
         failure_owner=QuestFailureOwner.NONE,
     )
     assert receipt.state == QuestState.PASSED
+    transition = json.loads((tmp_path / "quests" / "current_transition.json").read_text(
+        encoding="utf-8"
+    ))
+    assert transition["decision_id"].startswith("QD-")
     milestone_store.record_pass(
         milestone=m01,
         source_before="a" * 40,
@@ -283,6 +287,22 @@ def test_no_progress_authentication_receipt_blocks_successor(tmp_path: Path) -> 
     output = tmp_path / "blocked"
     output.mkdir()
     (output / "repair_contract_f03.json").write_text(json.dumps({
+        "schema_version": "onebrief-repair-contract-v1",
+        "contract_id": "RC-" + "1" * 16,
+        "observation_id": "FO-" + "2" * 16,
+        "progress_kind": "no_progress",
+        "occurrence": 2,
+        "hypothesis": {
+            "hypothesis_id": "RH-" + "3" * 16,
+            "suspected_cause": "Approved authentication fixture requires authorization.",
+            "cheapest_probe": "Request the missing authority.",
+            "expected_signal": "The approved runtime can cross the boundary.",
+            "repair_boundary": "No maker mutation is currently permitted.",
+            "requires_model_reasoning": False,
+        },
+        "permitted_paths": [],
+        "preserve_criterion_ids": [],
+        "verification_ladder": ["authorization"],
         "execution_allowed": False,
         "escalation_required": True,
         "rationale": "Approved authentication fixture requires authorization.",
@@ -300,6 +320,13 @@ def test_no_progress_authentication_receipt_blocks_successor(tmp_path: Path) -> 
     )
     assert receipt.state == QuestState.NEEDS_AUTHORIZATION
     assert receipt.failure_owner == QuestFailureOwner.AUTHORIZATION
+    transition = json.loads((tmp_path / "quests" / "current_transition.json").read_text(
+        encoding="utf-8"
+    ))
+    recorded = json.loads(
+        (tmp_path / "quests" / transition["path"]).read_text(encoding="utf-8")
+    )
+    assert recorded["decision"]["transition"] == "needs_authorization"
     with pytest.raises(PermissionError, match="requires authorization"):
         quests.issue(milestone=milestone, milestone_store=milestone_store, source_revision="a" * 40)
 

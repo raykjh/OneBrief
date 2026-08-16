@@ -19,6 +19,7 @@ from onebrief.execution_schemas import (
 from onebrief.handoff_protocol import FailureCode, FailureOwner
 from onebrief.phase_execution import PhaseDecision
 from onebrief.quest_kernel import (
+    QuestKernelEngine,
     QuestTransition,
     RawQuestReceipt,
     interpret_raw_receipt,
@@ -198,3 +199,25 @@ def test_decision_cannot_be_replayed_against_another_receipt() -> None:
 
     with pytest.raises(PermissionError, match="different raw receipt"):
         validate_transition(second, interpret_raw_receipt(first))
+
+
+def test_kernel_records_an_append_only_decision_and_current_pointer(tmp_path) -> None:
+    raw = RawQuestReceipt(
+        checkpoint=checkpoint(),
+        phase_decision=phase(
+            FailureOwner.PRODUCT,
+            ExecutionPhase.PRODUCT_IMPLEMENTATION,
+        ),
+    )
+
+    engine = QuestKernelEngine(tmp_path / "quest_state")
+    first = engine.record(raw)
+    second = engine.record(raw)
+
+    assert first == second
+    decisions = list((tmp_path / "quest_state" / "transition_decisions").glob("QD-*.json"))
+    assert len(decisions) == 1
+    pointer = (tmp_path / "quest_state" / "current_transition.json").read_text(
+        encoding="utf-8"
+    )
+    assert decisions[0].stem in pointer
