@@ -25,6 +25,7 @@ from onebrief.adk_convergence import (
     REVERIFY_EXISTING_STATE_KEY,
     EXACT_EDIT_ANCHORS_STATE_KEY,
     MAKER_DIAGNOSTIC_CONTEXT_STATE_KEY,
+    MAKER_SCHEMA_BINDING_STATE_KEY,
     MAKER_SCHEMA_FAILURE_STATE_KEY,
     REPAIR_CONTRACT_STATE_KEY,
     REPAIR_PLAN_STATE_KEY,
@@ -970,6 +971,38 @@ def normalize_unity_client_construction_plan(raw: object) -> object:
             "reason": "Trusted KHALINOS compilation of the declarative Unity client plan.",
         }],
     )
+
+
+def bound_unity_client_maker_schema(
+    active_phase: ExecutionPhase,
+    schema_binding: object,
+) -> type[UnityClientConstructionPlan] | None:
+    """Keep the typed product language until verification changes authority phase."""
+
+    if (
+        active_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+        and schema_binding == UnityClientConstructionPlan.__name__
+    ):
+        return UnityClientConstructionPlan
+    return None
+
+
+def compact_unity_client_planning_sources(
+    sources: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Expose only topology and approved public auth bindings to the planner."""
+
+    return [
+        source
+        for source in sources
+        if (
+            str(source.get("name", "")).replace("\\", "/").endswith(
+                "/unity-scene-catalog.json"
+            )
+            or str(source.get("name", ""))
+            == "onebrief-approved-runtime-authority.json"
+        )
+    ]
 
 
 def development_maker_schema_for(
@@ -2936,6 +2969,31 @@ class ExecutionPipeline:
                 initial_state[PHASE_DECISION_STATE_KEY] = (
                     initial_phase_decision.model_dump(mode="json")
                 )
+        initial_client_plan_schema = bool(
+            unity_runtime
+            and new_product_construction_required
+            and initial_maker_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+            and (
+                not prior_failure.is_file()
+                or previous_change_set is None
+                or is_trusted_unity_client_change_set(previous_change_set)
+            )
+        )
+        if initial_client_plan_schema:
+            # Persist the typed construction language as durable lineage. A
+            # preflight revision must not infer its next schema from prose and
+            # accidentally fall back to provider-authored C#.
+            initial_state[MAKER_SCHEMA_BINDING_STATE_KEY] = (
+                UnityClientConstructionPlan.__name__
+            )
+        if unity_runtime and new_product_construction_required:
+            # Declarative product and evidence plans need only the exact scene
+            # topology and the digest-bound public authentication route. Full
+            # repository C# remains trusted in ``prepared_sources`` for later
+            # diagnostics and promotion, but repeatedly sending it to the
+            # planner adds tens of thousands of tokens and invites it to edit
+            # preserved implementation details.
+            maker_sources = compact_unity_client_planning_sources(maker_sources)
         if prior_failure_text:
             # A durable lineage can outlive its failure classifier.  Rebind the
             # primary trusted failure when a newer runtime now recognizes a
@@ -4853,6 +4911,12 @@ class ExecutionPipeline:
         ) -> type | None:
             schema_phase = maker_schema_phase(_ctx.session.state, report)
             _ctx.session.state[PHASE_STATE_KEY] = schema_phase.value
+            bound_schema = bound_unity_client_maker_schema(
+                schema_phase,
+                _ctx.session.state.get(MAKER_SCHEMA_BINDING_STATE_KEY),
+            )
+            if bound_schema is not None:
+                return bound_schema
             selected = development_maker_schema_for(
                 report,
                 _ctx.session.state.get(MAKER_STATE_KEY),
@@ -4875,16 +4939,7 @@ class ExecutionPipeline:
             ),
             maker_schema=(
                 UnityClientConstructionPlan
-                if (
-                    unity_runtime
-                    and new_product_construction_required
-                    and initial_maker_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
-                    and (
-                        not prior_failure.is_file()
-                        or previous_change_set is None
-                        or is_trusted_unity_client_change_set(previous_change_set)
-                    )
-                )
+                if initial_client_plan_schema
                 else UnityEvidenceJourneyPlan
                 if (
                     unity_runtime

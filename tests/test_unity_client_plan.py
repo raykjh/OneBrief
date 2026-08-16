@@ -1,4 +1,6 @@
 from onebrief.execution_pipeline import (
+    bound_unity_client_maker_schema,
+    compact_unity_client_planning_sources,
     development_maker_schema_for,
     normalize_unity_client_construction_plan,
 )
@@ -151,3 +153,30 @@ def test_client_plan_preflight_failure_stays_in_dsl_without_a_candidate() -> Non
     )
 
     assert selected is UnityClientConstructionPlan
+
+
+def test_typed_client_schema_binding_survives_product_repairs_only() -> None:
+    assert bound_unity_client_maker_schema(
+        ExecutionPhase.PRODUCT_IMPLEMENTATION,
+        UnityClientConstructionPlan.__name__,
+    ) is UnityClientConstructionPlan
+    assert bound_unity_client_maker_schema(
+        ExecutionPhase.EVIDENCE_CONSTRUCTION,
+        UnityClientConstructionPlan.__name__,
+    ) is None
+
+
+def test_client_planner_context_excludes_preserved_implementation_source() -> None:
+    sources = [
+        {"name": "repository/Assets/Scripts/LoginController.cs", "content": "large"},
+        {"name": "repository/toolpack/unity-scene-catalog.json", "content": "scenes"},
+        {"name": "onebrief-approved-runtime-authority.json", "content": "auth"},
+        {"name": "requirements.md", "content": "duplicated contract"},
+    ]
+
+    compact = compact_unity_client_planning_sources(sources)
+
+    assert [item["name"] for item in compact] == [
+        "repository/toolpack/unity-scene-catalog.json",
+        "onebrief-approved-runtime-authority.json",
+    ]
