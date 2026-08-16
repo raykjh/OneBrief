@@ -35,6 +35,7 @@ from onebrief.execution_pipeline import (
     development_repair_difficulty,
     development_maker_schema_for,
     maker_schema_phase,
+    phase_decision_state_delta,
     visual_repair_production_candidate,
     visual_repair_has_uncommitted_product_candidate,
     visual_repair_production_target_allowed,
@@ -3441,6 +3442,21 @@ def test_maker_schema_phase_uses_newer_decision_over_stale_phase_state() -> None
     }
 
     assert maker_schema_phase(state) == ExecutionPhase.PRODUCT_IMPLEMENTATION
+
+
+def test_phase_decision_delta_persists_schema_authority_for_next_adk_turn() -> None:
+    decision = decide_repair_phase(
+        context="development_verification",
+        failure_text=(
+            "Unity visual test contract: an inert source file does not implement the UI"
+        ),
+        round_number=0,
+    )
+
+    delta = phase_decision_state_delta(decision)
+
+    assert delta[PHASE_STATE_KEY] == ExecutionPhase.PRODUCT_IMPLEMENTATION.value
+    assert delta[PHASE_DECISION_STATE_KEY]["next_phase"] == "product_implementation"
 
 
 def test_cross_surface_style_failure_can_propose_one_new_theme_sidecar() -> None:

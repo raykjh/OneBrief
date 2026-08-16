@@ -1004,6 +1004,17 @@ def maker_schema_phase(state: dict[str, object]) -> ExecutionPhase:
     return decision.next_phase or phase
 
 
+def phase_decision_state_delta(decision: PhaseDecision) -> dict[str, object]:
+    """Persist a deterministic phase decision through an ADK state event."""
+
+    delta: dict[str, object] = {
+        PHASE_DECISION_STATE_KEY: decision.model_dump(mode="json"),
+    }
+    if decision.next_phase is not None:
+        delta[PHASE_STATE_KEY] = decision.next_phase.value
+    return delta
+
+
 def is_unity_evidence_contract_feedback(feedback: str) -> bool:
     normalized = " ".join(feedback.split()).casefold()
     executable_evidence_failure = (
@@ -4074,13 +4085,8 @@ class ExecutionPipeline:
                     output_dir / f"phase_decision_deterministic_r{round_number}.json",
                     failure_phase_decision.model_dump_json(indent=2),
                 )
-                _ctx.session.state[PHASE_DECISION_STATE_KEY] = (
-                    failure_phase_decision.model_dump(mode="json")
-                )
-                if failure_phase_decision.next_phase is not None:
-                    _ctx.session.state[PHASE_STATE_KEY] = (
-                        failure_phase_decision.next_phase.value
-                    )
+                phase_state_delta = phase_decision_state_delta(failure_phase_decision)
+                _ctx.session.state.update(phase_state_delta)
                 if not reverify_existing:
                     rejected_change_fingerprints.add(delta_fingerprint)
                     rejected_strategy_fingerprints.add(delta_strategy_fingerprint)
@@ -4244,6 +4250,7 @@ class ExecutionPipeline:
                     } if repair_plan is not None else {}),
                     REPAIR_CONTRACT_STATE_KEY: convergence_contract.model_dump(mode="json"),
                     EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
+                    **phase_state_delta,
                     SKIP_VERIFIER_STATE_KEY: True,
                 }
             evidence = self._development_evidence(output_dir)
