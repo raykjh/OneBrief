@@ -989,7 +989,11 @@ def development_maker_schema_for(
     normalized_feedback = " ".join(feedback.split()).casefold()
     if (
         active_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
-        and is_trusted_unity_client_change_set(current_payload)
+        and (
+            is_trusted_unity_client_change_set(current_payload)
+            or "unity client plan preflight" in normalized_feedback
+            or "declarative client plan" in normalized_feedback
+        )
     ):
         return UnityClientConstructionPlan
     if (
@@ -4922,7 +4926,13 @@ class ExecutionPipeline:
             maker_instruction=maker_instruction,
             verifier_instruction=verifier_instruction,
             maker_output_tokens=(
-                min(
+                3_500
+                if (
+                    unity_runtime
+                    and new_product_construction_required
+                    and initial_maker_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+                )
+                else min(
                     DEVELOPER_OUTPUT_CAP,
                     4_000 if product_target_repair and exact_edit_anchors else (
                         8_000 if anchored_range_repair else (

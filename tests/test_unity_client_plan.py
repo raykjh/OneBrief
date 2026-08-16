@@ -125,3 +125,29 @@ def test_trusted_client_product_failure_replans_in_dsl_not_freeform_csharp() -> 
     )
 
     assert selected is UnityClientConstructionPlan
+
+
+def test_client_plan_preflight_failure_stays_in_dsl_without_a_candidate() -> None:
+    report = VerificationReport(
+        verdict=Verdict.REVISE,
+        criterion_checks=[{
+            "criterion": "The declarative client plan uses committed scenes",
+            "passed": False,
+            "evidence": "Unity client plan preflight rejected an invented scene path.",
+        }],
+        blocking_issues=[
+            "Unity client plan preflight rejected unbound scene or authentication controls."
+        ],
+        revision_instructions=[
+            "Reissue only the UnityClientConstructionPlan with exact scene names."
+        ],
+        missing_information=[],
+    )
+
+    selected = development_maker_schema_for(
+        report,
+        None,
+        active_phase=ExecutionPhase.PRODUCT_IMPLEMENTATION,
+    )
+
+    assert selected is UnityClientConstructionPlan
