@@ -42,6 +42,45 @@ from onebrief.temperament import (
 T = TypeVar("T", bound=BaseModel)
 
 
+def _csharp_method_line_spans(lines: list[str]) -> list[tuple[int, int]]:
+    """Return complete, bounded method spans for generated C# repair anchors."""
+
+    signature = re.compile(
+        r"^\s*(?:(?:public|private|protected|internal|static|virtual|override|async|new)\s+)*"
+        r"[A-Za-z_][A-Za-z0-9_.<>\[\],?]*\s+[A-Za-z_][A-Za-z0-9_]*\s*\([^;{}]*\)"
+    )
+    spans: list[tuple[int, int]] = []
+    for index, line in enumerate(lines):
+        if not signature.search(line):
+            continue
+        open_line = next(
+            (cursor for cursor in range(index, min(len(lines), index + 4)) if "{" in lines[cursor]),
+            None,
+        )
+        if open_line is None:
+            continue
+        depth = 0
+        seen_open = False
+        end = None
+        for cursor in range(open_line, len(lines)):
+            depth += lines[cursor].count("{")
+            if "{" in lines[cursor]:
+                seen_open = True
+            depth -= lines[cursor].count("}")
+            if seen_open and depth == 0:
+                end = cursor + 1
+                break
+        if end is None:
+            continue
+        start = index
+        while start > 0 and lines[start - 1].lstrip().startswith("["):
+            start -= 1
+        text = "\n".join(lines[start:end])
+        if len(text) <= 12_000:
+            spans.append((start, end))
+    return spans
+
+
 class StructuredGateway(Protocol):
     def generate_json(
         self,
@@ -583,6 +622,11 @@ class DeveloperAgent:
         for change in getattr(previous_change_set, "changes", []):
             content = str(getattr(change, "content", ""))
             lines = content.splitlines()
+            method_spans = (
+                _csharp_method_line_spans(lines)
+                if str(getattr(change, "path", "")).casefold().endswith(".cs")
+                else []
+            )
             selected: list[int] = []
             for index, line in enumerate(lines):
                 folded = line.casefold()
@@ -593,8 +637,16 @@ class DeveloperAgent:
             anchors = []
             used: set[tuple[int, int]] = set()
             for index in selected:
-                start = max(0, index - 1)
-                end = min(len(lines), index + 2)
+                containing_methods = [
+                    span for span in method_spans if span[0] <= index < span[1]
+                ]
+                if containing_methods:
+                    start, end = min(
+                        containing_methods, key=lambda span: span[1] - span[0]
+                    )
+                else:
+                    start = max(0, index - 1)
+                    end = min(len(lines), index + 2)
                 span = (start, end)
                 if span in used:
                     continue

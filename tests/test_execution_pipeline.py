@@ -2870,6 +2870,41 @@ def test_synthetic_unity_feedback_targets_generated_fallback_block() -> None:
     assert "Delete the generated fallback" in report.revision_instructions[0]
 
 
+def test_csharp_repair_anchor_covers_complete_failing_method() -> None:
+    previous = ProjectCodeChangeSet(
+        summary="Candidate with an authentication shortcut.",
+        changes=[{
+            "path": "Assets/UI/NewLoginSurface.cs",
+            "base_sha256": None,
+            "content": (
+                "public sealed class NewLoginSurface : MonoBehaviour {\n"
+                "  private void HandleStart()\n"
+                "  {\n"
+                "    status.text = \"Authenticating\";\n"
+                "    SceneManager.LoadScene(\"Lobby\");\n"
+                "  }\n"
+                "  private void Unrelated() { Keep(); }\n"
+                "}\n"
+            ),
+            "reason": "Prior candidate.",
+        }],
+    )
+
+    anchors = DeveloperAgent.exact_edit_anchors(
+        previous,
+        "A product UI onClick listener directly calls SceneManager.LoadScene.",
+    )
+    matching = [
+        anchor for anchor in anchors[0]["anchors"]
+        if "SceneManager.LoadScene" in str(anchor["text"])
+    ]
+
+    assert len(matching) == 1
+    assert "private void HandleStart()" in matching[0]["text"]
+    assert "status.text" in matching[0]["text"]
+    assert "private void Unrelated" not in matching[0]["text"]
+
+
 def test_unity_evidence_mutation_feedback_demands_removal_not_replacement() -> None:
     report = ExecutionPipeline._development_failure_report(
         "development verification failed: "
