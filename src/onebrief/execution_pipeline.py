@@ -743,6 +743,18 @@ def missing_unity_evidence_bundle_paths(
     return missing
 
 
+def missing_unity_evidence_bundle_paths_for_phase(
+    phase: ExecutionPhase,
+    feedback: str,
+    *change_sets: object | None,
+) -> list[str]:
+    """Enforce the evidence topology only while evidence owns the turn."""
+
+    if phase != ExecutionPhase.EVIDENCE_CONSTRUCTION:
+        return []
+    return missing_unity_evidence_bundle_paths(feedback, *change_sets)
+
+
 def _existing_unity_evidence_paths(
     current_payload: object | None,
 ) -> tuple[str | None, str | None]:
@@ -3488,8 +3500,8 @@ class ExecutionPipeline:
                 is_unity_evidence_contract_feedback(active_feedback)
                 or is_missing_unity_evidence_harness(active_feedback)
             ) and not product_target_repair
-            missing_atomic_members = missing_unity_evidence_bundle_paths(
-                active_feedback, previous_change_set, raw
+            missing_atomic_members = missing_unity_evidence_bundle_paths_for_phase(
+                active_phase, active_feedback, previous_change_set, raw
             )
             if missing_atomic_members and not reverify_existing:
                 feedback = (

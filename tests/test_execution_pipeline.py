@@ -48,6 +48,7 @@ from onebrief.execution_pipeline import (
     is_unity_evidence_contract_feedback,
     is_development_product_target_failure,
     missing_unity_evidence_bundle_paths,
+    missing_unity_evidence_bundle_paths_for_phase,
     normalize_atomic_unity_evidence_bundle,
     approved_unity_evidence_bundle_bindings,
     rollback_detached_development_changes,
@@ -252,6 +253,30 @@ def test_dict_development_proposal_counts_atomic_evidence_members() -> None:
     }
 
     assert missing_unity_evidence_bundle_paths(feedback, proposal) == []
+
+
+def test_atomic_evidence_bundle_is_not_required_during_product_repair() -> None:
+    feedback = (
+        "Unity visual test contract: an inert source file does not implement the UI | "
+        "Unity visual test contract: add a discoverable Unity PlayMode test | "
+        "Unity visual test contract: add a Unity test .asmdef"
+    )
+    product_repair = {
+        "changes": [{
+            "path": "Assets/JULPAE/Scripts/Presentation/NewClientPresentationLayer.cs",
+        }]
+    }
+
+    assert missing_unity_evidence_bundle_paths_for_phase(
+        ExecutionPhase.PRODUCT_IMPLEMENTATION,
+        feedback,
+        product_repair,
+    ) == []
+    assert missing_unity_evidence_bundle_paths_for_phase(
+        ExecutionPhase.EVIDENCE_CONSTRUCTION,
+        feedback,
+        product_repair,
+    ) == ["PlayMode test source", "test assembly definition"]
 
 
 def test_verification_report_discards_provider_artifact_digest_placeholder() -> None:
