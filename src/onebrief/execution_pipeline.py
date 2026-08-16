@@ -2553,6 +2553,15 @@ class ExecutionPipeline:
             isinstance(development_pack, ApprovedProjectDevelopmentToolPack)
             and development_pack._uses_unity_runtime(development_pack._profile())
         )
+        unity_authentication_authority: tuple[str, str] | None = None
+        if isinstance(development_pack, ApprovedProjectDevelopmentToolPack):
+            authority_bindings = [
+                (str(item.authentication_selector), str(item.authentication_submit))
+                for item in development_pack._profile().runtime_arguments
+                if item.authentication_selector and item.authentication_submit
+            ]
+            if len(authority_bindings) == 1:
+                unity_authentication_authority = authority_bindings[0]
         approved_existing_evidence = (
             approved_unity_evidence_bundle_bindings(development_pack)
             if unity_runtime else {}
@@ -3372,6 +3381,7 @@ class ExecutionPipeline:
                 provider_client_plan, target_issues = bind_unity_client_plan_targets(
                     provider_client_plan,
                     unity_scene_catalog,
+                    unity_authentication_authority,
                 )
                 if target_issues:
                     client_plan_preflight_failures += 1

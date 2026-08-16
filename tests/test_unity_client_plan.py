@@ -110,6 +110,37 @@ def test_client_plan_derives_complete_proxy_evidence_journey() -> None:
 def test_client_plan_preflight_binds_exact_committed_controls() -> None:
     assert validate_unity_client_plan_targets(_plan(), _catalog()) == []
 
+
+def test_client_plan_binds_matching_leaves_to_approved_authentication_authority() -> None:
+    plan = _plan(
+        authentication_account_selector="TestAccountDropdown",
+        authentication_submit_selector="DirectEnterButton",
+    )
+
+    bound, issues = bind_unity_client_plan_targets(
+        plan,
+        _catalog(),
+        ("DevPanel/TestAccountDropdown", "DevPanel/DirectEnterButton"),
+    )
+
+    assert issues == []
+    assert bound.authentication_account_selector == "DevPanel/TestAccountDropdown"
+    assert bound.authentication_submit_selector == "DevPanel/DirectEnterButton"
+
+
+def test_client_plan_rejects_existing_but_unapproved_authentication_control() -> None:
+    plan = _plan(authentication_account_selector="ProfileDropdown")
+    catalog = _catalog()
+    catalog["scenes"][0]["object_names"].append("ProfileDropdown")
+
+    _bound, issues = bind_unity_client_plan_targets(
+        plan,
+        catalog,
+        ("DevPanel/TestAccountDropdown", "DevPanel/DirectEnterButton"),
+    )
+
+    assert any("does not match the approved authentication authority" in issue for issue in issues)
+
     issues = validate_unity_client_plan_targets(
         _plan(authentication_submit_selector="DevPanel/LoginButton"),
         _catalog(),

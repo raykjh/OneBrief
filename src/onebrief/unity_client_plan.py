@@ -123,16 +123,20 @@ def _hex_rgb(value: str) -> tuple[float, float, float]:
 def validate_unity_client_plan_targets(
     plan: UnityClientConstructionPlan,
     scene_catalog: Mapping[str, object] | None,
+    authentication_authority: tuple[str, str] | None = None,
 ) -> list[str]:
     """Bind scene and preserved-control selections to the committed catalog."""
 
-    _bound, issues = bind_unity_client_plan_targets(plan, scene_catalog)
+    _bound, issues = bind_unity_client_plan_targets(
+        plan, scene_catalog, authentication_authority
+    )
     return issues
 
 
 def bind_unity_client_plan_targets(
     plan: UnityClientConstructionPlan,
     scene_catalog: Mapping[str, object] | None,
+    authentication_authority: tuple[str, str] | None = None,
 ) -> tuple[UnityClientConstructionPlan, list[str]]:
     """Canonicalize harmless scene-path wrappers and reject invented identities.
 
@@ -142,10 +146,13 @@ def bind_unity_client_plan_targets(
     catalog entry; an invented path remains a hard failure.
     """
 
-    if not scene_catalog or not isinstance(scene_catalog.get("scenes"), list):
-        return plan, []
     by_scene: dict[str, set[str]] = {}
-    for raw in scene_catalog["scenes"]:
+    raw_scenes = (
+        scene_catalog.get("scenes", [])
+        if scene_catalog and isinstance(scene_catalog.get("scenes"), list)
+        else []
+    )
+    for raw in raw_scenes:
         if not isinstance(raw, Mapping) or not isinstance(raw.get("scene_name"), str):
             continue
         names: set[str] = set()
@@ -165,12 +172,31 @@ def bind_unity_client_plan_targets(
     if updates:
         plan = plan.model_copy(update=updates)
     issues: list[str] = []
-    if plan.initial_scene not in by_scene:
+    if authentication_authority is not None:
+        authority_updates: dict[str, str] = {}
+        for field_name, expected in zip(
+            ("authentication_account_selector", "authentication_submit_selector"),
+            authentication_authority,
+            strict=True,
+        ):
+            supplied = str(getattr(plan, field_name)).replace("\\", "/")
+            supplied_leaf = supplied.split("/")[-1]
+            expected_leaf = expected.replace("\\", "/").split("/")[-1]
+            if supplied_leaf == expected_leaf:
+                authority_updates[field_name] = expected
+            else:
+                issues.append(
+                    f"{field_name} {supplied!r} does not match the approved authentication "
+                    f"authority {expected!r}."
+                )
+        if authority_updates:
+            plan = plan.model_copy(update=authority_updates)
+    if by_scene and plan.initial_scene not in by_scene:
         issues.append(
             f"Initial scene {plan.initial_scene!r} is not committed; exact scenes: "
             + ", ".join(sorted(by_scene))
         )
-    if plan.destination_scene not in by_scene:
+    if by_scene and plan.destination_scene not in by_scene:
         issues.append(
             f"Destination scene {plan.destination_scene!r} is not committed; exact scenes: "
             + ", ".join(sorted(by_scene))
