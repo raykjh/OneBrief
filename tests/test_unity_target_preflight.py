@@ -1,5 +1,6 @@
 from onebrief.unity_evidence_plan import (
     UnityEvidenceJourneyPlan,
+    candidate_unity_object_names,
     candidate_unity_scene_names,
     render_unity_evidence_journey,
     validate_unity_journey_targets,
@@ -75,6 +76,35 @@ def test_preflight_rejects_new_scene_name_without_product_backing() -> None:
 
     assert issues
     assert "no committed scene or new product change creates it" in issues[0]
+
+
+def test_preflight_accepts_literal_runtime_object_created_by_product_change() -> None:
+    candidate = {
+        "changes": [{
+            "path": "Assets/KhalinosClient/NewLoginPresentation.cs",
+            "base_sha256": None,
+            "content": 'var panel = new GameObject("LoginPanel");',
+        }]
+    }
+
+    assert not validate_unity_journey_targets(
+        _plan("LobbyScene_All", "LoginPanel"),
+        _catalog(),
+        set(),
+        candidate_unity_object_names(candidate),
+    )
+
+
+def test_candidate_runtime_objects_ignore_test_harness_literals() -> None:
+    candidate = {
+        "changes": [{
+            "path": "Assets/Tests/PlayMode/FakeUi.cs",
+            "base_sha256": None,
+            "content": 'var panel = new GameObject("InventedPanel");',
+        }]
+    }
+
+    assert candidate_unity_object_names(candidate) == set()
 
 
 def test_trusted_journey_compacts_long_hierarchy_paths_in_receipt_trace() -> None:

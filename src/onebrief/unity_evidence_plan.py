@@ -376,10 +376,44 @@ def candidate_unity_scene_names(change_set: object | None) -> set[str]:
     return names
 
 
+def candidate_unity_object_names(change_set: object | None) -> set[str]:
+    """Return literal runtime GameObjects created by changed production code.
+
+    These names are product-backed targets, unlike provider-invented aliases.
+    Runtime verification must still prove that the bootstrap executes and the
+    object is active before any receipt can pass.
+    """
+
+    if isinstance(change_set, BaseModel):
+        payload = change_set.model_dump(mode="json")
+    elif isinstance(change_set, Mapping):
+        payload = change_set
+    else:
+        return set()
+    changes = payload.get("changes")
+    if not isinstance(changes, list):
+        return set()
+    names: set[str] = set()
+    for change in changes:
+        if not isinstance(change, Mapping):
+            continue
+        path = str(change.get("path", "")).replace("\\", "/")
+        lowered = f"/{path.casefold()}"
+        if "/tests/" in lowered or "/test/" in lowered or not path.casefold().endswith(".cs"):
+            continue
+        content = str(change.get("content") or change.get("replace") or "")
+        names.update(re.findall(
+            r"new\s+GameObject\s*\(\s*\"([^\"\r\n]{1,160})\"",
+            content,
+        ))
+    return names
+
+
 def validate_unity_journey_targets(
     plan: UnityEvidenceJourneyPlan,
     scene_catalog: Mapping[str, object] | None,
     candidate_scene_names: set[str] | None = None,
+    candidate_object_names: set[str] | None = None,
 ) -> list[str]:
     """Reject guessed committed-scene controls before paying for a Unity run.
 
@@ -428,7 +462,9 @@ def validate_unity_journey_targets(
             continue
         object_names = by_scene[current_scene]
         leaf = step.target.replace("\\", "/").split("/")[-1]
-        if leaf in object_names:
+        if leaf in object_names or (
+            candidate_object_names is not None and leaf in candidate_object_names
+        ):
             continue
         candidates = _control_candidates(step.action, object_names, leaf)
         candidate_text = ", ".join(candidates) if candidates else "none"

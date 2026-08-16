@@ -2434,6 +2434,11 @@ class ApprovedProjectDevelopmentToolPack:
                     r"SceneManager\s*\.\s*LoadScene(?:Async)?\s*\(",
                     re.IGNORECASE | re.DOTALL,
                 )
+                local_protected_activation = re.compile(
+                    r"[A-Za-z0-9_]*(?:lobby|destination)[A-Za-z0-9_]*\s*\.\s*"
+                    r"SetActive\s*\(\s*true\s*\)",
+                    re.IGNORECASE,
+                )
                 if preserved_flow_requested:
                     for relative in production_paths:
                         if Path(relative).suffix.casefold() != ".cs":
@@ -2456,6 +2461,21 @@ class ApprovedProjectDevelopmentToolPack:
                                 "a preserved authentication/server journey must not be satisfied by newly "
                                 f"wiring a product UI onClick listener directly to SceneManager.LoadScene in {relative}; "
                                 "invoke the existing controller/router path and prove that path instead"
+                            )
+                        candidate_adds_click = (
+                            ".onclick.addlistener" in candidate_source.casefold()
+                            and ".onclick.addlistener" not in base_source.casefold()
+                        )
+                        if (
+                            candidate_adds_click
+                            and local_protected_activation.search(candidate_source)
+                            and not local_protected_activation.search(base_source)
+                        ):
+                            issues.append(
+                                "a preserved authentication/server journey must not be satisfied by newly "
+                                f"wiring a product UI onClick listener to activate protected destination state "
+                                f"locally in {relative}; invoke the existing authentication controller path and "
+                                "prove that path instead"
                             )
                 changed_scene_assets = any(
                     Path(path).suffix.casefold() in {".unity", ".prefab"}

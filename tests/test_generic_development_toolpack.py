@@ -2174,6 +2174,37 @@ def test_unity_visual_preflight_rejects_new_product_authentication_bypass(
     assert any("preserved authentication/server journey" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_rejects_local_lobby_activation_bypass(
+    tmp_path: Path,
+) -> None:
+    root, registry = _approved_node_project(tmp_path)
+    clone = tmp_path / "unity-local-lobby-bypass"
+    shutil.copytree(root, clone)
+    product = clone / "Assets" / "Scripts" / "NewLoginPresentation.cs"
+    product.parent.mkdir(parents=True, exist_ok=True)
+    product.write_text(
+        "public sealed class NewLoginPresentation : MonoBehaviour { "
+        "[RuntimeInitializeOnLoadMethod] static void Install() {} "
+        "void Start() { button.onClick.AddListener(ShowLobby); } "
+        "void ShowLobby() { lobbyPanel.SetActive(true); } }",
+        encoding="utf-8",
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = ApprovedProjectDevelopmentToolPack(
+        "generic-node", registry
+    )._unity_visual_contract_issues(
+        profile,
+        clone,
+        "The new Login surface preserves the authentication/server journey to Lobby.",
+        ["Assets/Scripts/NewLoginPresentation.cs"],
+    )
+
+    assert any("activate protected destination state locally" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_rejects_direct_destination_load_after_click(
     tmp_path: Path,
 ) -> None:

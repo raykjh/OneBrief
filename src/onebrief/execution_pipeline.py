@@ -181,6 +181,7 @@ from onebrief.unity_semantic_observation import (
 from onebrief.unity_layout_diagnostics import compact_unity_layout_diagnostic_context
 from onebrief.unity_evidence_plan import (
     UnityEvidenceJourneyPlan,
+    candidate_unity_object_names,
     candidate_unity_scene_names,
     render_unity_evidence_journey,
     unity_scene_catalog_from_sources,
@@ -1869,7 +1870,11 @@ class ExecutionPipeline:
                 )
             if (
                 "preserved authentication/server journey" in lowered
-                and "product ui onclick listener directly to scenemanager.loadscene" in lowered
+                and "product ui onclick listener" in lowered
+                and (
+                    "scenemanager.loadscene" in lowered
+                    or "protected destination" in lowered
+                )
             ):
                 return (
                     "Remove the new product controller's direct destination SceneManager.LoadScene path. "
@@ -3225,6 +3230,7 @@ class ExecutionPipeline:
                     provider_journey,
                     unity_scene_catalog,
                     candidate_unity_scene_names(previous_change_set),
+                    candidate_unity_object_names(previous_change_set),
                 )
                 if target_issues:
                     journey_target_preflight_failures += 1
