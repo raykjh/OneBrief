@@ -3404,6 +3404,23 @@ def test_new_client_preflight_repair_requires_new_product_files() -> None:
     ) is NewProductConstructionChangeSet
 
 
+def test_inert_new_unity_source_is_a_product_target_even_with_missing_evidence() -> None:
+    feedback = (
+        "Unity visual test contract: new Unity UI MonoBehaviour NewClientPresentationController "
+        "is not attached to a changed scene/prefab and has no runtime initialization entrypoint; "
+        "an inert source file does not implement the UI | Unity visual test contract: add a "
+        "discoverable Unity PlayMode test and a Unity test .asmdef"
+    )
+
+    assert is_development_product_target_failure(feedback) is True
+    report = ExecutionPipeline._development_failure_report(feedback)
+    assert development_maker_schema_for(
+        report,
+        None,
+        active_phase=ExecutionPhase.PRODUCT_IMPLEMENTATION,
+    ) is ExactRepairProjectCodeChangeSet
+
+
 def test_cross_surface_style_failure_can_propose_one_new_theme_sidecar() -> None:
     report = ExecutionPipeline._development_failure_report(
         "independent Unity semantic visual observation failed: "

@@ -316,6 +316,23 @@ def test_missing_new_construction_preflight_returns_to_product_phase() -> None:
     assert decision.next_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
 
 
+def test_inert_new_product_outranks_simultaneous_missing_evidence() -> None:
+    decision = decide_repair_phase(
+        context="development_verification",
+        failure_text=(
+            "Unity visual test contract: new Unity UI MonoBehaviour NewClientPresentationController "
+            "is not attached to a changed scene/prefab and has no runtime initialization entrypoint; "
+            "an inert source file does not implement the UI | Unity visual test contract: add a "
+            "discoverable Unity PlayMode test and a Unity test .asmdef"
+        ),
+        round_number=0,
+        affected_paths=["Assets/JULPAE/Scripts/Login/NewClientPresentationController.cs"],
+    )
+
+    assert decision.failure_owner == FailureOwner.PRODUCT
+    assert decision.next_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+
+
 def test_visual_preflight_authentication_bypass_stays_product_owned() -> None:
     decision = decide_repair_phase(
         context="development_verification",

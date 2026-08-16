@@ -1028,10 +1028,18 @@ def is_development_product_target_failure(feedback: str) -> bool:
     """
 
     normalized = " ".join(feedback.split()).casefold()
-    explicit_product_failure = is_unity_localization_product_failure(feedback) or (
-        "changed unity ui monobehaviour" in normalized
-        and "is not reachable" in normalized
-        and "active component" in normalized
+    explicit_product_failure = (
+        is_unity_localization_product_failure(feedback)
+        or (
+            "changed unity ui monobehaviour" in normalized
+            and "is not reachable" in normalized
+            and "active component" in normalized
+        )
+        or "inert source file does not implement the ui" in normalized
+        or (
+            "new unity ui monobehaviour" in normalized
+            and "is not attached to a changed scene/prefab" in normalized
+        )
     )
     if explicit_product_failure:
         return True
@@ -4370,8 +4378,11 @@ class ExecutionPipeline:
             "UI source changes; test-only output is never a complete implementation. When execution_phase is "
             "product_implementation and the approved outcome explicitly requires a new client or surface, the first "
             "product turn must create at least one new production scene, prefab, UI, or client source file. Renaming "
-            "a router to a scene that does not exist is forbidden and does not count as construction. When execution_phase is "
-            "evidence_construction, preserve shipped product source and construct only the requested executable proof. "
+            "a router to a scene that does not exist is forbidden and does not count as construction. "
+            "For Unity, a new MonoBehaviour must be reachable in the same product result through a new scene/prefab, "
+            "an approved running production reference, or a safe RuntimeInitializeOnLoadMethod entrypoint; inert C# "
+            "does not implement a surface. When execution_phase is evidence_construction, preserve shipped product "
+            "source and construct only the requested executable proof. "
             "A verification test may interact with and capture the product, "
             "but it must never rewrite visible labels, dropdown option text, fonts, CanvasScaler, anchors, colors, "
             "or other product UI state merely to make evidence pass; repair production source instead. On revision, "

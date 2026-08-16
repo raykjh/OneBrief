@@ -370,7 +370,13 @@ def classify_failure_owner(
         "new production surface is missing",
         "uses legacy scenes",
         "instead of creating new production scenes or prefabs",
+        "inert source file does not implement the ui",
     )):
+        return FailureOwner.PRODUCT
+    if (
+        "new unity ui monobehaviour" in normalized
+        and "is not attached to a changed scene/prefab" in normalized
+    ):
         return FailureOwner.PRODUCT
     if any(marker in normalized for marker in (
         "generated playmode test does not interact",
