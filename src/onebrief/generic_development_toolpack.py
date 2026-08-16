@@ -151,6 +151,68 @@ def _duplicate_csharp_declarations_by_scope(source: str) -> set[str]:
     return duplicates
 
 
+def _csharp_method_bodies(source: str) -> dict[str, str]:
+    """Extract bounded C# method bodies for conservative one-file reachability."""
+
+    structural = _csharp_code_only(source)
+    signature = re.compile(
+        r"\b(?:(?:public|private|protected|internal|static|virtual|override|async|new)\s+)*"
+        r"[A-Za-z_][A-Za-z0-9_.<>\[\],?]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*"
+        r"\([^;{}]*\)\s*\{"
+    )
+    bodies: dict[str, str] = {}
+    for match in signature.finditer(structural):
+        depth = 1
+        cursor = match.end()
+        while cursor < len(structural) and depth:
+            if structural[cursor] == "{":
+                depth += 1
+            elif structural[cursor] == "}":
+                depth -= 1
+            cursor += 1
+        if depth == 0:
+            bodies[match.group(1)] = structural[match.end():cursor - 1]
+    return bodies
+
+
+def _click_reaches_local_protected_activation(source: str) -> bool:
+    """Detect a new UI click path that locally reveals Lobby/destination state."""
+
+    structural = _csharp_code_only(source)
+    activation = re.compile(
+        r"[A-Za-z0-9_]*(?:lobby|destination)[A-Za-z0-9_]*\s*\.\s*"
+        r"SetActive\s*\(\s*true\s*\)",
+        re.IGNORECASE,
+    )
+    direct_lambda = re.compile(
+        r"\.\s*onClick\s*\.\s*AddListener\s*\([^;]{0,1200}?"
+        + activation.pattern,
+        re.IGNORECASE,
+    )
+    if direct_lambda.search(structural):
+        return True
+    bodies = _csharp_method_bodies(source)
+    pending = list(dict.fromkeys(re.findall(
+        r"\.\s*onClick\s*\.\s*AddListener\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)",
+        structural,
+        re.IGNORECASE,
+    )))
+    visited: set[str] = set()
+    while pending:
+        method = pending.pop(0)
+        if method in visited:
+            continue
+        visited.add(method)
+        body = bodies.get(method, "")
+        if activation.search(body):
+            return True
+        pending.extend(
+            called for called in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", body)
+            if called in bodies and called not in visited
+        )
+    return False
+
+
 def _declared_unity_viewports(source: str) -> list[tuple[int, int]]:
     """Extract literal or paired-array viewport declarations from a PlayMode test."""
 
@@ -2434,11 +2496,6 @@ class ApprovedProjectDevelopmentToolPack:
                     r"SceneManager\s*\.\s*LoadScene(?:Async)?\s*\(",
                     re.IGNORECASE | re.DOTALL,
                 )
-                local_protected_activation = re.compile(
-                    r"[A-Za-z0-9_]*(?:lobby|destination)[A-Za-z0-9_]*\s*\.\s*"
-                    r"SetActive\s*\(\s*true\s*\)",
-                    re.IGNORECASE,
-                )
                 if preserved_flow_requested:
                     for relative in production_paths:
                         if Path(relative).suffix.casefold() != ".cs":
@@ -2462,14 +2519,9 @@ class ApprovedProjectDevelopmentToolPack:
                                 f"wiring a product UI onClick listener directly to SceneManager.LoadScene in {relative}; "
                                 "invoke the existing controller/router path and prove that path instead"
                             )
-                        candidate_adds_click = (
-                            ".onclick.addlistener" in candidate_source.casefold()
-                            and ".onclick.addlistener" not in base_source.casefold()
-                        )
                         if (
-                            candidate_adds_click
-                            and local_protected_activation.search(candidate_source)
-                            and not local_protected_activation.search(base_source)
+                            _click_reaches_local_protected_activation(candidate_source)
+                            and not _click_reaches_local_protected_activation(base_source)
                         ):
                             issues.append(
                                 "a preserved authentication/server journey must not be satisfied by newly "

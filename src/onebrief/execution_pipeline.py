@@ -1882,7 +1882,10 @@ class ExecutionPipeline:
                     "controller's real success/direct-entry action and bind the new control to that mechanism. "
                     "A scene-name resolver such as JulpaeSceneRouter does not authenticate or authorize a "
                     "direct LoadScene call; let the existing controller decide when navigation is valid. "
-                    "Do not replace authentication with a new scene-loading shortcut or edit the evidence harness."
+                    "Do not call a private controller method. Invoke the existing committed authentication "
+                    "button/listener without replacing its listeners, and fail closed if it is unavailable. "
+                    "Remove every click-reachable fallback that activates Lobby locally. Do not replace "
+                    "authentication with a new scene-loading shortcut or edit the evidence harness."
                 )
             if "must be committed in one atomic manifest" in lowered:
                 return (
