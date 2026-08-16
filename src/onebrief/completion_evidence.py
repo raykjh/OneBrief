@@ -87,16 +87,17 @@ def _has_command(commands: list[str], *markers: str) -> bool:
     return any(any(marker in command for marker in markers) for command in commands)
 
 
-def has_new_product_construction(change_set: object | None) -> bool:
-    """Distinguish a new production surface from tests and legacy-file tweaks."""
+def new_product_construction_paths(change_set: object | None) -> set[str]:
+    """Return normalized production surfaces introduced by a change set."""
 
     if isinstance(change_set, BaseModel):
         change_set = change_set.model_dump(mode="python")
     if not isinstance(change_set, dict):
-        return False
+        return set()
     changes = change_set.get("changes")
     if not isinstance(changes, list):
-        return False
+        return set()
+    paths: set[str] = set()
     direct_surface_suffixes = {".unity", ".prefab", ".uxml", ".uss"}
     client_source_markers = (
         "/client/", "client", "/ui/", "ui", "screen", "surface",
@@ -120,8 +121,33 @@ def has_new_product_construction(change_set: object | None) -> bool:
             marker in lowered for marker in client_source_markers
         )
         if is_new and (is_surface or is_client_source):
-            return True
-    return False
+            paths.add(path.replace("\\", "/").casefold())
+    return paths
+
+
+def has_new_product_construction(change_set: object | None) -> bool:
+    """Distinguish a new production surface from tests and legacy-file tweaks."""
+
+    return bool(new_product_construction_paths(change_set))
+
+
+def repairs_quest_product_construction(
+    change_set: object | None,
+    construction_lineage: set[str],
+) -> bool:
+    """Keep repair authority for surfaces created earlier in the same Quest."""
+
+    proposed = {
+        str(getattr(item, "path", item.get("path", "") if isinstance(item, dict) else ""))
+        .replace("\\", "/")
+        .casefold()
+        for item in (
+            change_set.get("changes", [])
+            if isinstance(change_set, dict)
+            else getattr(change_set, "changes", [])
+        )
+    }
+    return bool(proposed & construction_lineage)
 
 
 def _has_new_product_construction(

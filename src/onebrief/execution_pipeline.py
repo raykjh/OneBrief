@@ -36,6 +36,8 @@ from onebrief.completion_evidence import (
     apply_completion_evidence_override,
     apply_trusted_development_evidence,
     has_new_product_construction,
+    new_product_construction_paths,
+    repairs_quest_product_construction,
     validate_completion_evidence,
 )
 from onebrief.delivery_intent import requires_new_product_construction
@@ -3059,6 +3061,9 @@ class ExecutionPipeline:
         consecutive_identical_candidates = 0
         journey_target_preflight_failures = 0
         product_construction_preflight_failures = 0
+        quest_product_construction_lineage = new_product_construction_paths(
+            previous_change_set
+        )
         rejected_change_fingerprints = discover_rejected_change_fingerprints(output_dir)
         rejected_change_history = discover_rejected_change_history(output_dir)
         rejected_strategy_fingerprints = {
@@ -3368,11 +3373,16 @@ class ExecutionPipeline:
                         development_change_path(item)
                         for item in allowed_changes
                     ]
+            proposed_new_product_paths = new_product_construction_paths(raw)
+            repairs_quest_construction = repairs_quest_product_construction(
+                raw, quest_product_construction_lineage
+            )
             if (
                 active_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
                 and new_product_construction_required
                 and not reverify_existing
-                and not has_new_product_construction(raw)
+                and not proposed_new_product_paths
+                and not repairs_quest_construction
             ):
                 product_construction_preflight_failures += 1
                 feedback = (
@@ -3427,6 +3437,7 @@ class ExecutionPipeline:
                     EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
                     SKIP_VERIFIER_STATE_KEY: True,
                 }
+            quest_product_construction_lineage.update(proposed_new_product_paths)
             active_feedback = " ".join([
                 *(active_report.blocking_issues if active_report else []),
                 *(active_report.revision_instructions if active_report else []),

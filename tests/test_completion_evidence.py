@@ -5,6 +5,8 @@ from onebrief.completion_evidence import (
     apply_completion_evidence_override,
     apply_trusted_development_evidence,
     has_new_product_construction,
+    new_product_construction_paths,
+    repairs_quest_product_construction,
     validate_completion_evidence,
 )
 from onebrief.execution_schemas import CriterionCheck, VerificationReport, Verdict
@@ -129,6 +131,33 @@ def test_product_construction_preflight_rejects_router_edit_and_accepts_new_clie
             reason="Create a new production-owned client surface.",
         )],
     ))
+
+
+def test_same_quest_can_repair_a_surface_it_created() -> None:
+    initial = {
+        "changes": [{
+            "path": "Assets/KhalinosClient/Login/LoginSurface.cs",
+            "base_sha256": None,
+        }]
+    }
+    repair = {
+        "changes": [{
+            "path": "Assets/KhalinosClient/Login/LoginSurface.cs",
+            "base_sha256": "a" * 64,
+        }]
+    }
+
+    lineage = new_product_construction_paths(initial)
+
+    assert lineage == {"assets/khalinosclient/login/loginsurface.cs"}
+    assert not has_new_product_construction(repair)
+    assert repairs_quest_product_construction(repair, lineage)
+    assert not repairs_quest_product_construction({
+        "changes": [{
+            "path": "Assets/JULPAE/Scripts/Common/JulpaeSceneRouter.cs",
+            "base_sha256": "b" * 64,
+        }]
+    }, lineage)
 
 
 def test_new_unrelated_production_source_does_not_count_as_client_surface() -> None:
