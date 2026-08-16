@@ -114,6 +114,33 @@ def _plan() -> MilestonePlan:
     )
 
 
+def test_new_client_goal_keeps_construction_in_first_vertical_slices() -> None:
+    current = build_milestone_plan(
+        project_id="julpae",
+        goal=(
+            "Build a new Unity client presentation layer for Login, Lobby, and Settings while "
+            "reusing approved server contracts, scripts, and image assets."
+        ),
+        requirements=_requirements().model_copy(update={
+            "normalized_goal": (
+                "Build a new Unity client presentation layer for Login, Lobby, and Settings."
+            ),
+            "completion_contract": _requirements().completion_contract.model_copy(update={
+                "target_state": "A new Unity client with Login, Lobby, and Settings."
+            }),
+        }),
+        source_revision="a" * 40,
+        minimum_cost_usd=1.0,
+        maximum_cost_usd=10.0,
+    )
+
+    login, lobby, settings = current.milestones[1:4]
+    assert "newly constructed Login" in login.contract.target_state
+    assert "New Login production surface" in login.contract.slice_quality_criteria[0].description
+    assert "newly constructed Lobby" in lobby.contract.target_state
+    assert "newly constructed Settings" in settings.contract.target_state
+
+
 def _evidence(root: Path, name: str) -> Path:
     path = root / name
     path.parent.mkdir(parents=True, exist_ok=True)

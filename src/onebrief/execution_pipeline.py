@@ -175,6 +175,8 @@ from onebrief.unity_layout_diagnostics import compact_unity_layout_diagnostic_co
 from onebrief.unity_evidence_plan import (
     UnityEvidenceJourneyPlan,
     render_unity_evidence_journey,
+    unity_scene_catalog_from_sources,
+    validate_unity_journey_targets,
 )
 from onebrief.workbook_export import export_workbook
 from onebrief.temperament import (
@@ -2367,6 +2369,7 @@ class ExecutionPipeline:
             else:
                 prepared["source_role"] = "read_only_context"
             prepared_sources.append(prepared)
+        unity_scene_catalog = unity_scene_catalog_from_sources(prepared_sources)
 
         completion_contract_payload = (
             requirements.completion_contract.model_dump(mode="json")
@@ -2975,6 +2978,7 @@ class ExecutionPipeline:
         exact_repair_required = raw_exact_repair_required or bool(exact_edit_anchors)
         current_exact_edit_anchors = exact_edit_anchors
         consecutive_identical_candidates = 0
+        journey_target_preflight_failures = 0
         rejected_change_fingerprints = discover_rejected_change_fingerprints(output_dir)
         rejected_change_history = discover_rejected_change_history(output_dir)
         rejected_strategy_fingerprints = {
@@ -3069,6 +3073,7 @@ class ExecutionPipeline:
             nonlocal best_failed_candidate, best_failure_message, best_failure_quality
             nonlocal current_exact_edit_anchors
             nonlocal consecutive_identical_candidates
+            nonlocal journey_target_preflight_failures
             # The deterministic verifier can issue a new digest-bound source
             # catalog after the previous executable check. ADK session state is
             # authoritative for that turn; a closure captured before the check
@@ -3094,6 +3099,76 @@ class ExecutionPipeline:
                 if active_contract_payload else None
             )
             raw_provider_payload = raw
+            provider_journey = None
+            if isinstance(raw_provider_payload, UnityEvidenceJourneyPlan):
+                provider_journey = raw_provider_payload
+            elif (
+                isinstance(raw_provider_payload, dict)
+                and isinstance(raw_provider_payload.get("steps"), list)
+                and isinstance(raw_provider_payload.get("test_directory"), str)
+                and not raw_provider_payload.get("changes")
+            ):
+                provider_journey = UnityEvidenceJourneyPlan.model_validate({
+                    **raw_provider_payload,
+                    "schema_version": "onebrief-unity-evidence-journey-plan-v1",
+                })
+            if provider_journey is not None:
+                target_issues = validate_unity_journey_targets(
+                    provider_journey, unity_scene_catalog
+                )
+                if target_issues:
+                    journey_target_preflight_failures += 1
+                    self._write(
+                        output_dir / f"unity_journey_target_preflight_r{round_number}.json",
+                        json.dumps({
+                            "schema_version": "onebrief-unity-journey-target-preflight-v1",
+                            "round_number": round_number,
+                            "status": "revise",
+                            "issues": target_issues,
+                            "source_revision": (
+                                unity_scene_catalog.get("source_revision")
+                                if unity_scene_catalog else None
+                            ),
+                        }, ensure_ascii=False, indent=2),
+                    )
+                    if journey_target_preflight_failures >= 2:
+                        raise RuntimeError(
+                            "Unity journey target preflight stopped repeated guessed-control plans: "
+                            + " | ".join(target_issues)
+                        )
+                    feedback = (
+                        "Unity journey target preflight rejected guessed control names before running Unity. "
+                        + " | ".join(target_issues)
+                    )
+                    report = VerificationReport(
+                        verdict=Verdict.REVISE,
+                        criterion_checks=[{
+                            "criterion": "Every committed-scene journey target uses an exact catalog object name",
+                            "passed": False,
+                            "evidence": feedback,
+                        }],
+                        blocking_issues=[feedback],
+                        revision_instructions=[
+                            "Reissue the declarative journey using only the exact candidate names in the "
+                            "trusted preflight. Do not invent aliases or author C# directly."
+                        ],
+                        missing_information=[],
+                    )
+                    repair_plan = prepare_repair(report, round_number)
+                    retained = (
+                        previous_change_set.model_dump(mode="json")
+                        if previous_change_set is not None
+                        else _ctx.session.state.get(MAKER_STATE_KEY)
+                    )
+                    return {
+                        MAKER_STATE_KEY: retained,
+                        VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
+                        **({
+                            REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
+                        } if repair_plan is not None else {}),
+                        EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
+                        SKIP_VERIFIER_STATE_KEY: True,
+                    }
             raw = normalize_atomic_unity_evidence_bundle(
                 raw,
                 previous_change_set,

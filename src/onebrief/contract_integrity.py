@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from onebrief.delivery_intent import requires_new_product_construction
 from onebrief.schemas import EvaluationMode, IntakeRequest, QualityCriterion, RequirementsAnalysis
 
 
@@ -120,7 +121,12 @@ def enforce_contract_integrity(
         *(item.description for item in contract.quality_criteria),
     ])
     missing = [item for item in explicit if not _covered(item, contract_text)]
-    if not missing:
+    construction_required = requires_new_product_construction(source_text)
+    construction_covered = any(
+        requires_new_product_construction(item.description, item.evidence_required)
+        for item in contract.quality_criteria
+    )
+    if not missing and (not construction_required or construction_covered):
         return requirements
     korean = bool(re.search(r"[가-힣]", intake.goal))
     evidence = (
@@ -140,6 +146,25 @@ def enforce_contract_integrity(
             description=description,
             evaluation_mode=EvaluationMode.INDEPENDENT_REVIEW,
             evidence_required=evidence,
+        )
+        if len(criteria) < 12:
+            criteria.append(item)
+        else:
+            criteria[-1] = item
+        acceptance.append(description)
+    if construction_required and not construction_covered:
+        description = (
+            "Construct the explicitly requested new client/UI production surface; test-only changes or "
+            "minor edits to the legacy surface do not satisfy this criterion."
+        )
+        item = QualityCriterion(
+            criterion_id="Q01",
+            description=description,
+            evaluation_mode=EvaluationMode.DETERMINISTIC,
+            evidence_required=(
+                "A changed-file manifest identifies newly created production scene, prefab, UI, or client "
+                "source, and executable runtime evidence shows that new surface in use."
+            ),
         )
         if len(criteria) < 12:
             criteria.append(item)

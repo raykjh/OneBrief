@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import json
 import re
+from difflib import SequenceMatcher
 from pathlib import PurePosixPath
-from typing import Literal
+from typing import Literal, Mapping, Sequence
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -288,6 +289,111 @@ class UnityEvidenceJourneyPlan(BaseModel):
         # generator emits the authentication marker only for a complete typed
         # path, and preflight still blocks every marker-free protected journey.
         return self
+
+
+_TARGET_ACTIONS = {
+    "assert_active", "select_dropdown_index", "set_slider_value",
+    "set_toggle_on", "set_input_text", "click_button",
+}
+
+
+def unity_scene_catalog_from_sources(
+    sources: Sequence[Mapping[str, object]],
+) -> dict[str, object] | None:
+    """Read the bounded committed-scene catalog already supplied by the ToolPack."""
+
+    for source in sources:
+        name = str(source.get("name", "")).replace("\\", "/").casefold()
+        if not name.endswith("/unity-scene-catalog.json"):
+            continue
+        content = source.get("content")
+        if not isinstance(content, str):
+            continue
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(payload, dict)
+            and payload.get("schema_version") == "onebrief-unity-scene-catalog-v1"
+            and isinstance(payload.get("scenes"), list)
+        ):
+            return payload
+    return None
+
+
+def _control_candidates(action: str, object_names: list[str], requested: str) -> list[str]:
+    markers = {
+        "select_dropdown_index": ("dropdown", "select"),
+        "set_slider_value": ("slider", "volume", "audio", "bgm", "sfx"),
+        "set_toggle_on": ("toggle", "agree", "consent", "check"),
+        "set_input_text": ("input", "field", "name", "email", "password"),
+        "click_button": ("button", "back", "close", "start", "login", "settings"),
+    }.get(action, ())
+    typed = [
+        name for name in object_names
+        if any(marker in name.casefold() for marker in markers)
+    ]
+    pool = typed or object_names
+    requested_key = requested.casefold()
+    return sorted(
+        pool,
+        key=lambda name: (
+            -SequenceMatcher(None, requested_key, name.casefold()).ratio(),
+            name.casefold(),
+        ),
+    )[:12]
+
+
+def validate_unity_journey_targets(
+    plan: UnityEvidenceJourneyPlan,
+    scene_catalog: Mapping[str, object] | None,
+) -> list[str]:
+    """Reject guessed committed-scene controls before paying for a Unity run.
+
+    A genuinely new candidate scene is intentionally left to runtime verification because it
+    cannot exist in the committed catalog yet.
+    """
+
+    if not scene_catalog:
+        return []
+    scenes = scene_catalog.get("scenes")
+    if not isinstance(scenes, list):
+        return []
+    by_scene: dict[str, list[str]] = {}
+    for scene in scenes:
+        if not isinstance(scene, dict):
+            continue
+        scene_name = scene.get("scene_name")
+        raw_names = scene.get("object_names")
+        raw_control_names = scene.get("control_object_names")
+        if isinstance(scene_name, str) and isinstance(raw_names, list):
+            combined = list(raw_names)
+            if isinstance(raw_control_names, list):
+                combined.extend(raw_control_names)
+            by_scene[scene_name] = list(dict.fromkeys(
+                str(name) for name in combined if isinstance(name, str)
+            ))
+
+    current_scene: str | None = None
+    issues: list[str] = []
+    for step in plan.steps:
+        if step.action in {"load_scene", "wait_for_scene"}:
+            current_scene = step.scene_name
+            continue
+        if step.action not in _TARGET_ACTIONS or not step.target or current_scene not in by_scene:
+            continue
+        object_names = by_scene[current_scene]
+        leaf = step.target.replace("\\", "/").split("/")[-1]
+        if leaf in object_names:
+            continue
+        candidates = _control_candidates(step.action, object_names, leaf)
+        candidate_text = ", ".join(candidates) if candidates else "none"
+        issues.append(
+            f"Committed scene {current_scene!r} has no active-object anchor named {leaf!r} "
+            f"for {step.action}. Choose an exact catalog name; relevant exact candidates: {candidate_text}."
+        )
+    return list(dict.fromkeys(issues))
 
 
 class RenderedUnityEvidenceJourney(BaseModel):

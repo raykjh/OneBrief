@@ -8,6 +8,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, ValidationError
 
+from onebrief.delivery_intent import requires_new_product_construction
 from onebrief.execution_schemas import CriterionCheck, VerificationReport, Verdict
 from onebrief.handoff_protocol import (
     EvidenceBinding,
@@ -22,6 +23,7 @@ class CompletionEvidenceKind(StrEnum):
     AUTOMATED_TEST = "automated_test"
     RUNTIME_INTERACTION = "runtime_interaction"
     VISUAL_INTEGRITY = "visual_integrity"
+    PRODUCT_CONSTRUCTION = "product_construction"
 
 
 class CompletionEvidenceIssue(BaseModel):
@@ -85,6 +87,44 @@ def _has_command(commands: list[str], *markers: str) -> bool:
     return any(any(marker in command for marker in markers) for command in commands)
 
 
+def _has_new_product_construction(
+    development_evidence: dict[str, object] | None,
+) -> bool:
+    """Distinguish a new production surface from tests and legacy-file tweaks."""
+
+    if not development_evidence:
+        return False
+    change_set = development_evidence.get("change_set")
+    changes = change_set.get("changes") if isinstance(change_set, dict) else None
+    if not isinstance(changes, list):
+        return False
+    direct_surface_suffixes = {".unity", ".prefab", ".uxml", ".uss"}
+    client_source_markers = (
+        "/client/", "client", "/ui/", "ui", "screen", "surface",
+        "presentation", "view", "login", "lobby", "settings",
+    )
+    for change in changes:
+        if not isinstance(change, dict):
+            continue
+        path = str(change.get("path", "")).replace("\\", "/")
+        lowered = f"/{path.casefold()}"
+        if not path or "/tests/" in lowered or "/test/" in lowered:
+            continue
+        if any(marker in lowered for marker in (
+            "/evidence/", "/screenshots/", "/observations/", "/_patch_notes/",
+        )):
+            continue
+        suffix = "." + path.rsplit(".", 1)[-1].casefold() if "." in path else ""
+        is_new = change.get("base_sha256") is None
+        is_surface = suffix in direct_surface_suffixes
+        is_client_source = suffix == ".cs" and any(
+            marker in lowered for marker in client_source_markers
+        )
+        if is_new and (is_surface or is_client_source):
+            return True
+    return False
+
+
 def validate_completion_evidence(
     intake: IntakeRequest,
     requirements: RequirementsAnalysis,
@@ -112,6 +152,7 @@ def validate_completion_evidence(
     }
     is_ui = intake.output_target in software_targets and bool(_USER_INTERFACE.search(text))
     is_localization = bool(_LOCALIZATION.search(text))
+    requires_construction = requires_new_product_construction(text)
 
     required: list[CompletionEvidenceKind] = []
     if development_evidence is not None:
@@ -120,6 +161,8 @@ def validate_completion_evidence(
         required.append(CompletionEvidenceKind.RUNTIME_INTERACTION)
     if is_ui and (is_unity or is_localization):
         required.append(CompletionEvidenceKind.VISUAL_INTEGRITY)
+    if requires_construction:
+        required.append(CompletionEvidenceKind.PRODUCT_CONSTRUCTION)
 
     observed = {
         CompletionEvidenceKind.AUTOMATED_TEST: _has_command(
@@ -130,6 +173,9 @@ def validate_completion_evidence(
         ),
         CompletionEvidenceKind.VISUAL_INTEGRITY: _has_command(
             commands, "visual", "screenshot", "glyph", "render"
+        ),
+        CompletionEvidenceKind.PRODUCT_CONSTRUCTION: _has_new_product_construction(
+            development_evidence
         ),
     }
     labels = {
@@ -144,6 +190,11 @@ def validate_completion_evidence(
         CompletionEvidenceKind.VISUAL_INTEGRITY: (
             "The result promises visual or localized UI behavior, but no rendered-state evidence "
             "checked visible text, missing glyphs, and the requested state changes."
+        ),
+        CompletionEvidenceKind.PRODUCT_CONSTRUCTION: (
+            "The approved outcome requires a newly constructed product surface, but the changed-file "
+            "manifest contains no new production scene, prefab, UI source, or client source. Test-only "
+            "changes and minor edits to legacy files are baseline or maintenance evidence, not construction."
         ),
     }
     issues = [

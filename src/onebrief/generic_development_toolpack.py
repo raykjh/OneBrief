@@ -1489,6 +1489,15 @@ class ApprovedProjectDevelopmentToolPack:
                 -sum(term in name.casefold() for term in surface_terms),
                 name.casefold(),
             ))
+            control_terms = (
+                "button", "slider", "dropdown", "toggle", "input", "field",
+                "back", "close", "start", "login", "setting", "audio",
+                "volume", "bgm", "sfx", "language", "consent", "agree",
+            )
+            control_names = [
+                name for name in names
+                if any(term in name.casefold() for term in control_terms)
+            ]
             attached_scripts = sorted({
                 guid_to_script[guid]
                 for guid in re.findall(
@@ -1504,6 +1513,7 @@ class ApprovedProjectDevelopmentToolPack:
                 "scene_path": relative,
                 "scene_name": PurePosixPath(relative).stem,
                 "object_names": names[:30],
+                "control_object_names": control_names[:80],
                 "attached_script_paths": attached_scripts[:48],
             })
         payload = {

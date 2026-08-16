@@ -49,6 +49,74 @@ def evidence(*command_ids: str) -> dict[str, object]:
     }
 
 
+def construction_evidence(*, path: str, base_sha256: str | None) -> dict[str, object]:
+    payload = evidence(
+        "unity_editmode_tests", "unity_playmode_visual_tests", "unity_visual_glyph_check"
+    )
+    payload["change_set"] = {
+        "changes": [{"path": path, "base_sha256": base_sha256}],
+    }
+    return payload
+
+
+def test_new_client_contract_rejects_test_only_or_legacy_tweak() -> None:
+    goal = "Build a new Unity client presentation layer while reusing approved server and image assets."
+    intake = IntakeRequest(goal=goal, output_target=OutputTarget.UNITY_APP)
+
+    test_only = validate_completion_evidence(
+        intake,
+        requirements(goal),
+        construction_evidence(
+            path="Assets/Tests/PlayMode/GeneratedJourney.cs", base_sha256=None
+        ),
+    )
+    legacy_tweak = validate_completion_evidence(
+        intake,
+        requirements(goal),
+        construction_evidence(
+            path="Assets/JULPAE/Scripts/Lobby/LegacyLayout.cs", base_sha256="a" * 64
+        ),
+    )
+
+    assert CompletionEvidenceKind.PRODUCT_CONSTRUCTION in {
+        item.kind for item in test_only.issues
+    }
+    assert CompletionEvidenceKind.PRODUCT_CONSTRUCTION in {
+        item.kind for item in legacy_tweak.issues
+    }
+
+
+def test_new_client_contract_accepts_new_production_surface_manifest() -> None:
+    goal = "Build a new Unity client presentation layer while reusing approved server and image assets."
+    result = validate_completion_evidence(
+        IntakeRequest(goal=goal, output_target=OutputTarget.UNITY_APP),
+        requirements(goal),
+        construction_evidence(
+            path="Assets/KhalinosClient/Scenes/LoginClient.unity", base_sha256=None
+        ),
+    )
+
+    assert CompletionEvidenceKind.PRODUCT_CONSTRUCTION in result.required
+    assert CompletionEvidenceKind.PRODUCT_CONSTRUCTION not in {
+        item.kind for item in result.issues
+    }
+
+
+def test_new_unrelated_production_source_does_not_count_as_client_surface() -> None:
+    goal = "Build a new Unity client presentation layer while reusing approved server and image assets."
+    result = validate_completion_evidence(
+        IntakeRequest(goal=goal, output_target=OutputTarget.UNITY_APP),
+        requirements(goal),
+        construction_evidence(
+            path="Assets/JULPAE/Scripts/TelemetryReporter.cs", base_sha256=None
+        ),
+    )
+
+    assert CompletionEvidenceKind.PRODUCT_CONSTRUCTION in {
+        item.kind for item in result.issues
+    }
+
+
 def passing_report() -> VerificationReport:
     return VerificationReport(
         verdict=Verdict.PASS,

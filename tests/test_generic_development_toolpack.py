@@ -164,6 +164,7 @@ def test_unity_scene_catalog_exposes_real_scene_and_object_anchors_without_edit_
     scenes = {item["scene_name"]: item for item in payload["scenes"]}
     assert "LoginScene_All" in scenes
     assert "LoginButton" in scenes["LoginScene_All"]["object_names"]
+    assert "LoginButton" in scenes["LoginScene_All"]["control_object_names"]
     assert scenes["LobbyScene_All"]["attached_script_paths"] == [
         "Assets/Scripts/LobbyController.cs"
     ]

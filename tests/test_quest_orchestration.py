@@ -78,6 +78,53 @@ def requirements() -> RequirementsAnalysis:
     )
 
 
+def new_client_requirements() -> RequirementsAnalysis:
+    current = requirements()
+    return current.model_copy(update={
+        "normalized_goal": (
+            "Build a new Unity client presentation layer while reusing approved server contracts and assets."
+        ),
+        "deliverables": ["New Unity client Login and Lobby production surfaces"],
+        "completion_contract": current.completion_contract.model_copy(update={
+            "target_state": "A new Unity client presentation layer is runnable.",
+        }),
+    })
+
+
+def test_outcome_and_quest_preserve_new_construction_authority(tmp_path: Path) -> None:
+    req = new_client_requirements()
+    current_plan = build_milestone_plan(
+        project_id="julpae",
+        goal=req.normalized_goal,
+        requirements=req,
+        source_revision="a" * 40,
+        minimum_cost_usd=1,
+        maximum_cost_usd=10,
+    )
+    milestone_store = MilestoneStore(tmp_path / "milestones", current_plan)
+    baseline = current_plan.milestones[0]
+    milestone_store.record_pass(
+        milestone=baseline,
+        source_before="a" * 40,
+        source_after="a" * 40,
+        candidate_sha256=canonical_sha256({"baseline": True}),
+        evidence_paths=[evidence(tmp_path / "baseline-new-client.json")],
+    )
+    store = QuestStore(
+        tmp_path / "quests", plan=current_plan, requirements=req,
+        approved_budget_usd=10,
+    )
+
+    quest = store.issue(
+        milestone=current_plan.milestones[1],
+        milestone_store=milestone_store,
+        source_revision="a" * 40,
+    )
+
+    assert store.outcome.construction_directives
+    assert any("Test-only changes" in item for item in quest.required_process)
+
+
 def plan():
     return build_milestone_plan(
         project_id="julpae",

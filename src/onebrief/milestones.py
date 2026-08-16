@@ -23,6 +23,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, model_validator
 
 from onebrief.assurance import resolve_assurance_policy
+from onebrief.delivery_intent import requires_new_product_construction
 from onebrief.execution_schemas import ExecutionCheckpoint, PipelineStatus, Verdict
 from onebrief.generic_development_toolpack import ProjectCodeChangeSet, ProjectFileChange
 from onebrief.project_import import ExternalProjectImporter, MANIFEST_NAME, ProjectManifest
@@ -424,33 +425,70 @@ def build_milestone_plan(
         "unity" in target_text
         and all(token in target_text for token in ("login", "lobby", "settings"))
     )
+    new_client_construction = requires_new_product_construction(target_text)
     if unity_surface_flow:
+        login_outcome = (
+            "A newly constructed Login surface in a separate client presentation layer reuses the approved "
+            "authentication system and reaches a newly constructed Lobby shell in PlayMode."
+            if new_client_construction else
+            "The Login surface uses the preserved authentication path and reaches Lobby in PlayMode."
+        )
+        lobby_outcome = (
+            "A newly constructed Lobby surface renders approved server-backed data and exposes working "
+            "navigation targets without reusing the legacy UI as the delivered surface."
+            if new_client_construction else
+            "The modernized Lobby renders preserved server-backed data and exposes working navigation targets."
+        )
+        settings_outcome = (
+            "A newly constructed Settings surface binds to approved client systems and the new Login to Lobby "
+            "to Settings to Lobby flow works."
+            if new_client_construction else
+            "Settings controls bind to preserved client systems and the full Login to Lobby to Settings to Lobby flow works."
+        )
         groups.extend([
             (
                 "Login vertical slice",
-                "The Login surface uses the preserved authentication path and reaches Lobby in PlayMode.",
+                login_outcome,
                 compile_items,
                 [QualityCriterion(
                     criterion_id="Q91",
-                    description="Login surface and preserved authentication transition work",
+                    description=(
+                        "New Login production surface and preserved authentication transition work"
+                        if new_client_construction else
+                        "Login surface and preserved authentication transition work"
+                    ),
                     evaluation_mode=EvaluationMode.DETERMINISTIC,
-                    evidence_required="Unity compile output and PlayMode evidence for Login to Lobby.",
+                    evidence_required=(
+                        "New production scene, prefab, or UI/client source plus Unity compile output and "
+                        "PlayMode evidence for the new Login to new Lobby shell."
+                        if new_client_construction else
+                        "Unity compile output and PlayMode evidence for Login to Lobby."
+                    ),
                 )],
             ),
             (
                 "Lobby vertical slice",
-                "The modernized Lobby renders preserved server-backed data and exposes working navigation targets.",
+                lobby_outcome,
                 [],
                 [QualityCriterion(
                     criterion_id="Q92",
-                    description="Lobby renders preserved data and navigation without regressions",
+                    description=(
+                        "New Lobby production surface renders preserved data and navigation"
+                        if new_client_construction else
+                        "Lobby renders preserved data and navigation without regressions"
+                    ),
                     evaluation_mode=EvaluationMode.DETERMINISTIC,
-                    evidence_required="PlayMode evidence for Lobby data, buttons, and navigation targets.",
+                    evidence_required=(
+                        "New production scene, prefab, or UI/client source plus PlayMode evidence for Lobby "
+                        "data, buttons, and navigation targets."
+                        if new_client_construction else
+                        "PlayMode evidence for Lobby data, buttons, and navigation targets."
+                    ),
                 )],
             ),
             (
                 "Settings vertical slice and complete flow",
-                "Settings controls bind to preserved client systems and the full Login to Lobby to Settings to Lobby flow works.",
+                settings_outcome,
                 [*flow_items, *settings_items],
                 [],
             ),

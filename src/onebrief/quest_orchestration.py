@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
+from onebrief.delivery_intent import construction_directives
 from onebrief.assurance import AssurancePolicy, resolve_assurance_policy
 from onebrief.completion_ledger import CompletionLedger, CompletionStatus
 from onebrief.execution_schemas import ExecutionCheckpoint, PipelineStatus, VerificationReport, Verdict
@@ -94,6 +95,7 @@ class OutcomeSketch(BaseModel):
     final_outcome: str = Field(min_length=3, max_length=1200)
     must_work: list[str] = Field(min_length=1, max_length=24)
     preserve: list[str] = Field(default_factory=list, max_length=24)
+    construction_directives: list[str] = Field(default_factory=list, max_length=12)
     prohibitions: list[str] = Field(default_factory=list, max_length=24)
     objective_completion_conditions: list[str] = Field(min_length=1, max_length=24)
     preference_profile: str = Field(default="Use approved professional defaults.", max_length=1000)
@@ -242,12 +244,19 @@ def build_outcome_sketch(project_id: str, requirements: RequirementsAnalysis) ->
     preserve = [item for item in requirements.assumptions if any(
         token in item.casefold() for token in ("preserv", "keep", "unchanged", "보존")
     )]
+    construction = construction_directives(
+        requirements.normalized_goal,
+        *requirements.deliverables,
+        contract.target_state,
+        *(item.description for item in contract.quality_criteria),
+    )
     assurance = resolve_assurance_policy(requirements)
     return OutcomeSketch(
         project_id=project_id,
         final_outcome=contract.target_state,
         must_work=[item.description for item in contract.quality_criteria],
         preserve=preserve,
+        construction_directives=construction,
         prohibitions=[
             "Do not modify the approved original repository directly.",
             "Do not weaken completion criteria or treat missing evidence as PASS.",
@@ -427,6 +436,10 @@ class QuestStore:
                 "Preserve previously passed receipts and criteria.",
                 "Separate accountable making from independent verification.",
                 "Stop on a no-progress or authority-required receipt.",
+                *([
+                    "The approved outcome requires new product construction. Test-only changes and minor "
+                    "legacy-surface edits are baseline or maintenance evidence, never completion evidence."
+                ] if self.outcome.construction_directives else []),
             ],
             "acceptance_criteria": acceptance or ["Milestone contract passes"],
             "required_evidence": list(milestone.contract.evidence_requirements),
