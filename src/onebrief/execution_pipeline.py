@@ -986,6 +986,24 @@ def development_maker_schema_for(
     return CompactProposedProjectCodeChangeSet
 
 
+def maker_schema_phase(state: dict[str, object]) -> ExecutionPhase:
+    """Resolve schema authority from the newest phase decision.
+
+    ADK asks the schema hook before the model-binding hook.  A repair decision
+    can therefore be newer than the cached phase string for one turn.  The
+    signed decision is authoritative so a product call cannot retain an
+    evidence-only response schema (or the reverse).
+    """
+
+    phase = active_execution_phase(state)
+    payload = state.get(PHASE_DECISION_STATE_KEY)
+    try:
+        decision = PhaseDecision.model_validate(payload)
+    except (ValidationError, TypeError):
+        return phase
+    return decision.next_phase or phase
+
+
 def is_unity_evidence_contract_feedback(feedback: str) -> bool:
     normalized = " ".join(feedback.split()).casefold()
     executable_evidence_failure = (
@@ -4586,11 +4604,13 @@ class ExecutionPipeline:
         def select_maker_schema(
             report: VerificationReport | None, _ctx, _round_number: int
         ) -> type | None:
+            schema_phase = maker_schema_phase(_ctx.session.state)
+            _ctx.session.state[PHASE_STATE_KEY] = schema_phase.value
             selected = development_maker_schema_for(
                 report,
                 _ctx.session.state.get(MAKER_STATE_KEY),
                 _ctx.session.state.get(EXACT_EDIT_ANCHORS_STATE_KEY),
-                active_execution_phase(_ctx.session.state),
+                schema_phase,
             )
             return selected
         agent = build_text_convergence_agent(

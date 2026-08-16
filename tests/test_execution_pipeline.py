@@ -34,6 +34,7 @@ from onebrief.execution_pipeline import (
     evidence_repair_has_bounded_uncommitted_candidate,
     development_repair_difficulty,
     development_maker_schema_for,
+    maker_schema_phase,
     visual_repair_production_candidate,
     visual_repair_has_uncommitted_product_candidate,
     visual_repair_production_target_allowed,
@@ -58,7 +59,11 @@ from onebrief.execution_pipeline import (
 from onebrief.execution_agents import DeveloperAgent
 from onebrief.execution_limits import DEVELOPER_OUTPUT_CAP
 from onebrief.guarded_gemini import BudgetedGeminiClient
-from onebrief.phase_execution import decide_repair_phase
+from onebrief.phase_execution import (
+    PHASE_DECISION_STATE_KEY,
+    PHASE_STATE_KEY,
+    decide_repair_phase,
+)
 from onebrief.unity_evidence_plan import (
     UnityEvidenceJourneyPlan,
     render_unity_evidence_journey,
@@ -3419,6 +3424,23 @@ def test_inert_new_unity_source_is_a_product_target_even_with_missing_evidence()
         None,
         active_phase=ExecutionPhase.PRODUCT_IMPLEMENTATION,
     ) is ExactRepairProjectCodeChangeSet
+
+
+def test_maker_schema_phase_uses_newer_decision_over_stale_phase_state() -> None:
+    decision = decide_repair_phase(
+        context="development_verification",
+        failure_text=(
+            "Unity visual test contract: new Unity UI MonoBehaviour NewLoginSurface "
+            "is not attached to a changed scene/prefab; an inert source file does not implement the UI"
+        ),
+        round_number=0,
+    )
+    state = {
+        PHASE_STATE_KEY: ExecutionPhase.EVIDENCE_CONSTRUCTION.value,
+        PHASE_DECISION_STATE_KEY: decision.model_dump(mode="json"),
+    }
+
+    assert maker_schema_phase(state) == ExecutionPhase.PRODUCT_IMPLEMENTATION
 
 
 def test_cross_surface_style_failure_can_propose_one_new_theme_sidecar() -> None:
