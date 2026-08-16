@@ -403,6 +403,8 @@ def test_declarative_unity_journey_compiles_trusted_harness() -> None:
     )
     assert 'RequireActive("TestAccountDropdown")' in rendered.playmode_test_source
     assert 'RequireActive("DirectEnterButton")' in rendered.playmode_test_source
+    assert 'WaitForDropdownOption(RequireActive("TestAccountDropdown"), 1, 10f)' in rendered.playmode_test_source
+    assert "Dropdown option index did not become available." in rendered.playmode_test_source
     assert "ScenarioReceipt" in rendered.playmode_test_source
     assert "WriteManifestAtomically(receipts.ToArray())" in rendered.playmode_test_source
     assert "TestAssemblies" in rendered.test_assembly_source

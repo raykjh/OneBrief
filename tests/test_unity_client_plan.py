@@ -73,6 +73,11 @@ def test_trusted_client_renderer_preserves_authentication_authority() -> None:
     assert "SceneManager.LoadScene" not in rendered.runtime_source
     assert "new TMP_Dropdown.OptionData(item.text, item.image)" not in rendered.runtime_source
     assert rendered.runtime_source.count("new TMP_Dropdown.OptionData(item.text)") == 2
+    assert "private void Update()" in rendered.runtime_source
+    assert "BindPreservedAuthenticationControls();" in rendered.runtime_source
+    assert "!AccountOptionsAreCurrent()" in rendered.runtime_source
+    assert "CopyOptions(proxyAccountDropdown);" in rendered.runtime_source
+    assert "RefreshProxySubmitAvailability();" in rendered.runtime_source
 
 
 def test_client_plan_derives_complete_proxy_evidence_journey() -> None:

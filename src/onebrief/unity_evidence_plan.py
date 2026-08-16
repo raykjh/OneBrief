@@ -561,6 +561,7 @@ def _step_source(step: UnityEvidenceJourneyStep) -> list[str]:
     if step.action == "select_dropdown_index":
         leaf = (step.target or "").replace("\\", "/").split("/")[-1]
         lines = [
+            f"yield return WaitForDropdownOption(RequireActive({_cs(step.target or '')}), {step.value_index}, {step.timeout_seconds:g}f);",
             f"SelectDropdown(RequireActive({_cs(step.target or '')}), {step.value_index});",
             f"assertions++; trace.Add({_cs('select_dropdown:' + leaf + ':' + str(step.value_index))});",
             f"yield return WaitFrames({step.frames});",
@@ -706,6 +707,20 @@ def render_unity_evidence_journey(
         "            Assert.IsNotNull(button, \"Target is not a Button: \" + target.name);",
         "            Assert.IsTrue(button.interactable, \"Button is not interactable: \" + target.name);",
         "            button.onClick.Invoke();", "        }", "",
+        "        private static IEnumerator WaitForDropdownOption(GameObject target, int index, float seconds)", "        {",
+        "            float until = Time.realtimeSinceStartup + seconds;",
+        "            while (DropdownOptionCount(target) <= index && Time.realtimeSinceStartup < until)",
+        "                yield return null;",
+        "            Assert.Greater(DropdownOptionCount(target), index, \"Dropdown option index did not become available.\");",
+        "        }", "",
+        "        private static int DropdownOptionCount(GameObject target)", "        {",
+        "            TMP_Dropdown dropdown = target.GetComponent<TMP_Dropdown>();",
+        "            if (dropdown != null) return dropdown.options.Count;",
+        "            Component control = ValueComponent(target, \"value\");",
+        "            PropertyInfo options = control.GetType().GetProperty(\"options\");",
+        "            var list = options == null ? null : options.GetValue(control) as System.Collections.IList;",
+        "            return list == null ? 0 : list.Count;",
+        "        }", "",
         "        private static Component ValueComponent(GameObject target, string property)", "        {",
         "            Component component = target.GetComponents<Component>().FirstOrDefault(item =>",
         "                item != null && item.GetType().GetProperty(property, BindingFlags.Instance | BindingFlags.Public) != null);",

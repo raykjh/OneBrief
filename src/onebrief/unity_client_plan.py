@@ -236,6 +236,9 @@ namespace Khalinos.GeneratedClient
         private GameObject surfaceRoot;
         private TMP_Dropdown preservedTmpDropdown;
         private Dropdown preservedDropdown;
+        private Button preservedSubmit;
+        private TMP_Dropdown proxyAccountDropdown;
+        private Button proxySubmitButton;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Install()
@@ -262,6 +265,14 @@ namespace Khalinos.GeneratedClient
             BuildFor(scene);
         }}
 
+        private void Update()
+        {{
+            if (proxyAccountDropdown == null) return;
+            BindPreservedAuthenticationControls();
+            if (!AccountOptionsAreCurrent())
+                CopyOptions(proxyAccountDropdown);
+        }}
+
         private void BuildFor(Scene scene)
         {{
             if (surfaceRoot != null) Destroy(surfaceRoot);
@@ -272,10 +283,7 @@ namespace Khalinos.GeneratedClient
 
         private void BuildLogin()
         {{
-            preservedTmpDropdown = FindActive(AccountSelector)?.GetComponent<TMP_Dropdown>();
-            preservedDropdown = preservedTmpDropdown == null
-                ? FindActive(AccountSelector)?.GetComponent<Dropdown>() : null;
-            Button preservedSubmit = FindActive(SubmitSelector)?.GetComponent<Button>();
+            BindPreservedAuthenticationControls();
 
             Canvas canvas = CreateCanvas();
             GameObject panel = CreatePanel("OneBriefLoginPanel", canvas.transform, new Color(0.035f, 0.047f, 0.075f, 0.96f));
@@ -283,16 +291,32 @@ namespace Khalinos.GeneratedClient
             CreateText("OneBriefBrandTitle", panel.transform, {values["brand"]}, 26f, Accent, 0f, 190f, 620f, 52f);
             CreateText("OneBriefLoginTitle", panel.transform, {values["login_title"]}, 46f, Color.white, 0f, 105f, 620f, 76f);
             CreateText("OneBriefLoginSubtitle", panel.transform, {values["login_subtitle"]}, 22f, new Color(0.78f, 0.84f, 0.92f), 0f, 35f, 620f, 70f);
-            TMP_Dropdown proxy = CreateDropdown("NewClientTestAccountDropdown", panel.transform, 0f, -65f, 500f, 64f);
-            CopyOptions(proxy);
-            proxy.onValueChanged.AddListener(SyncAccountSelection);
-            Button enter = CreateButton("NewClientDirectEnterButton", panel.transform, {values["login_button"]}, 0f, -165f, 500f, 72f, () =>
+            proxyAccountDropdown = CreateDropdown("NewClientTestAccountDropdown", panel.transform, 0f, -65f, 500f, 64f);
+            CopyOptions(proxyAccountDropdown);
+            proxyAccountDropdown.onValueChanged.AddListener(SyncAccountSelection);
+            proxySubmitButton = CreateButton("NewClientDirectEnterButton", panel.transform, {values["login_button"]}, 0f, -165f, 500f, 72f, () =>
             {{
-                SyncAccountSelection(proxy.value);
+                SyncAccountSelection(proxyAccountDropdown.value);
                 if (preservedSubmit == null) throw new InvalidOperationException("Approved authentication submit control is unavailable: " + SubmitSelector);
                 preservedSubmit.onClick.Invoke();
             }});
-            enter.interactable = preservedSubmit != null && (preservedTmpDropdown != null || preservedDropdown != null);
+            RefreshProxySubmitAvailability();
+        }}
+
+        private void BindPreservedAuthenticationControls()
+        {{
+            GameObject account = FindActive(AccountSelector);
+            preservedTmpDropdown = account?.GetComponent<TMP_Dropdown>();
+            preservedDropdown = preservedTmpDropdown == null ? account?.GetComponent<Dropdown>() : null;
+            preservedSubmit = FindActive(SubmitSelector)?.GetComponent<Button>();
+            RefreshProxySubmitAvailability();
+        }}
+
+        private void RefreshProxySubmitAvailability()
+        {{
+            if (proxySubmitButton != null)
+                proxySubmitButton.interactable = preservedSubmit != null
+                    && (preservedTmpDropdown != null || preservedDropdown != null);
         }}
 
         private void BuildLobby()
@@ -387,6 +411,26 @@ namespace Khalinos.GeneratedClient
             if (proxy.options.Count == 0) proxy.options.Add(new TMP_Dropdown.OptionData("Approved profile"));
             proxy.SetValueWithoutNotify(preservedTmpDropdown != null ? preservedTmpDropdown.value : preservedDropdown != null ? preservedDropdown.value : 0);
             proxy.RefreshShownValue();
+        }}
+
+        private bool AccountOptionsAreCurrent()
+        {{
+            if (proxyAccountDropdown == null) return true;
+            if (preservedTmpDropdown != null)
+            {{
+                if (proxyAccountDropdown.options.Count != preservedTmpDropdown.options.Count) return false;
+                for (int index = 0; index < preservedTmpDropdown.options.Count; index++)
+                    if (proxyAccountDropdown.options[index].text != preservedTmpDropdown.options[index].text) return false;
+                return true;
+            }}
+            if (preservedDropdown != null)
+            {{
+                if (proxyAccountDropdown.options.Count != preservedDropdown.options.Count) return false;
+                for (int index = 0; index < preservedDropdown.options.Count; index++)
+                    if (proxyAccountDropdown.options[index].text != preservedDropdown.options[index].text) return false;
+                return true;
+            }}
+            return proxyAccountDropdown.options.Count == 0;
         }}
 
         private void SyncAccountSelection(int index)
