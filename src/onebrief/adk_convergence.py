@@ -144,9 +144,12 @@ class BudgetedAdkLlm(BaseLlm):
                 ))],
             )]
             retry_config = llm_request.config.model_copy(deep=True)
+            # This retry exists because the first response was malformed or
+            # too large. Doubling its cap rewards runaway prose and can consume
+            # the final repair turn without ever emitting an edit.
             retry_config.max_output_tokens = min(
-                20_000,
-                max(6_000, int(retry_config.max_output_tokens or 0) * 2),
+                8_000,
+                max(2_000, int(retry_config.max_output_tokens or 0)),
             )
             response = await asyncio.to_thread(
                 self.gateway.generate_adk_response,

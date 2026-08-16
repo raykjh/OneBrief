@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from filelock import FileLock
 from pydantic import BaseModel, Field, create_model, field_validator, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from onebrief.development_toolpack import (
     BLOCKED_PARTS,
@@ -601,7 +602,14 @@ class CompactProposedProjectFileChange(BaseModel):
     anchor_id: str | None = Field(default=None, pattern=r"^A[0-9a-f]{12}$")
     start_anchor: str | None = Field(default=None, min_length=1, max_length=1000)
     end_anchor: str | None = Field(default=None, min_length=1, max_length=1000)
-    reason: str = Field(min_length=3, max_length=500)
+    # Repair rationale is trusted audit metadata, not executable authority.
+    # Keep it out of the provider schema so a weak model cannot spend its
+    # entire response repeating prose before it emits the required edit.
+    reason: SkipJsonSchema[str] = Field(
+        default="Bounded repair selected by trusted verification.",
+        min_length=3,
+        max_length=500,
+    )
 
     @field_validator("path")
     @classmethod
@@ -827,7 +835,11 @@ class ExactRepairProjectFileChange(BaseModel):
     anchor_id: str | None = Field(default=None, pattern=r"^A[0-9a-f]{12}$")
     start_anchor: str | None = Field(default=None, min_length=1, max_length=1000)
     end_anchor: str | None = Field(default=None, min_length=1, max_length=1000)
-    reason: str = Field(min_length=3, max_length=500)
+    reason: SkipJsonSchema[str] = Field(
+        default="Exact repair selected by trusted verification.",
+        min_length=3,
+        max_length=500,
+    )
 
     @field_validator("path")
     @classmethod
@@ -909,7 +921,11 @@ class CatalogAnchoredProductFileChange(BaseModel):
     base_sha256: str | None = None
     anchor_id: str = Field(pattern=r"^A[0-9a-f]{12}$")
     replace: str = Field(min_length=1, max_length=6000)
-    reason: str = Field(min_length=3, max_length=500)
+    reason: SkipJsonSchema[str] = Field(
+        default="Catalog-bound repair selected by trusted verification.",
+        min_length=3,
+        max_length=500,
+    )
 
     @field_validator("path")
     @classmethod
@@ -1043,7 +1059,11 @@ class AnchoredRangeRepairProjectFileChange(BaseModel):
     start_anchor: str = Field(min_length=1, max_length=1000)
     end_anchor: str = Field(min_length=1, max_length=1000)
     replace: str = Field(max_length=12_000)
-    reason: str = Field(min_length=3, max_length=500)
+    reason: SkipJsonSchema[str] = Field(
+        default="Range repair selected by trusted verification.",
+        min_length=3,
+        max_length=500,
+    )
 
     @field_validator("path")
     @classmethod

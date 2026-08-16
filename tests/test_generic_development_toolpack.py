@@ -51,6 +51,22 @@ def test_proposed_exact_edit_accepts_bounded_component_replacement() -> None:
     assert len(proposal.changes[0].replace or "") == 12_000
 
 
+def test_compact_repair_schema_omits_non_authoritative_reason_field() -> None:
+    schema = CompactProposedProjectCodeChangeSet.model_json_schema()
+    change_schema = schema["$defs"]["CompactProposedProjectFileChange"]
+
+    assert "reason" not in change_schema["properties"]
+    proposal = CompactProposedProjectCodeChangeSet.model_validate({
+        "summary": "Repair one verified method.",
+        "changes": [{
+            "path": "Assets/UI/Login.cs",
+            "anchor_id": "A123456789abc",
+            "replace": "private void Login() { Authenticate(); }",
+        }],
+    })
+    assert proposal.changes[0].reason == "Bounded repair selected by trusted verification."
+
+
 def test_new_product_construction_schema_removes_legacy_edit_choice() -> None:
     schema = NewProductConstructionChangeSet.model_json_schema()
     file_schema = schema["$defs"]["NewProductConstructionFile"]["properties"]

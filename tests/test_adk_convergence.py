@@ -128,8 +128,8 @@ def test_adk_llm_retries_max_token_response_as_compact_increment() -> None:
         def __init__(self):
             self.calls = []
 
-        def generate_adk_response(self, *, stage, contents, **_kwargs):
-            self.calls.append((stage, contents))
+        def generate_adk_response(self, *, stage, contents, config, **_kwargs):
+            self.calls.append((stage, contents, config.max_output_tokens))
             finish = (
                 types.FinishReason.MAX_TOKENS
                 if len(self.calls) == 1
@@ -162,6 +162,7 @@ def test_adk_llm_retries_max_token_response_as_compact_increment() -> None:
     assert [item[0] for item in gateway.calls] == [
         "long_form_draft", "long_form_draft_compact_retry"
     ]
+    assert gateway.calls[1][2] == 8_000
     retry_text = gateway.calls[1][1][-1].parts[0].text
     assert "exactly one changed path" in retry_text
     assert "obey the selector fields offered by the current schema" in retry_text
@@ -495,7 +496,7 @@ def test_adk_llm_rejects_malformed_compact_retry_before_adk_validation() -> None
     ]
 
 
-def test_adk_llm_compact_retry_receives_a_larger_structured_output_envelope() -> None:
+def test_adk_llm_compact_retry_does_not_expand_structured_output_envelope() -> None:
     class Gateway:
         def __init__(self):
             self.output_caps = []
@@ -528,7 +529,7 @@ def test_adk_llm_compact_retry_receives_a_larger_structured_output_envelope() ->
 
     gateway, responses = asyncio.run(collect())
 
-    assert gateway.output_caps == [3_000, 6_000]
+    assert gateway.output_caps == [3_000, 3_000]
     assert responses[0].content.parts[0].text == '{"value":"complete"}'
 
 
