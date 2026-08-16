@@ -82,6 +82,7 @@ from onebrief.generic_development_toolpack import (
     ApprovedProjectDevelopmentToolPack,
     CompactProposedProjectCodeChangeSet,
     ExactRepairProjectCodeChangeSet,
+    NewProductConstructionChangeSet,
     ProjectCodeChangeSet,
     ProposedProjectCodeChangeSet,
     UnityEvidenceAssemblyRepair,
@@ -908,6 +909,11 @@ def development_maker_schema_for(
         *report.revision_instructions,
     ])
     normalized_feedback = " ".join(feedback.split()).casefold()
+    if (
+        active_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+        and "new-client construction preflight" in normalized_feedback
+    ):
+        return NewProductConstructionChangeSet
     if (
         active_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION
         and (
@@ -4615,7 +4621,14 @@ class ExecutionPipeline:
                         )
                     )
                     if prior_failure.is_file()
-                    else ProposedProjectCodeChangeSet
+                    else (
+                        NewProductConstructionChangeSet
+                        if (
+                            new_product_construction_required
+                            and initial_maker_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+                        )
+                        else ProposedProjectCodeChangeSet
+                    )
                 )
                 if change_schema is ProjectCodeChangeSet
                 else change_schema

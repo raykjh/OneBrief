@@ -15,6 +15,7 @@ from onebrief.generic_development_toolpack import (
     CatalogAnchoredProductRepair,
     CompactProposedProjectCodeChangeSet,
     ExactRepairProjectCodeChangeSet,
+    NewProductConstructionChangeSet,
     ProjectCodeChangeSet,
     ProposedProjectCodeChangeSet,
 )
@@ -190,6 +191,7 @@ class DeveloperAgent:
                     AnchoredRangeRepairProjectCodeChangeSet,
                     CatalogAnchoredProductRepair,
                     CatalogAnchoredEvidenceRepair,
+                    NewProductConstructionChangeSet,
                 )
             )
             proposed = ProposedProjectCodeChangeSet.model_validate(

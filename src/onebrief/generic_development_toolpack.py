@@ -477,6 +477,53 @@ class ProposedProjectCodeChangeSet(BaseModel):
     changes: list[ProposedProjectFileChange] = Field(min_length=1, max_length=MAX_CHANGE_FILES)
 
 
+class NewProductConstructionFile(BaseModel):
+    """A production-owned file for an explicitly approved new surface.
+
+    This contract deliberately has no existing-file edit fields.  It prevents a
+    weak maker from substituting a router rename or legacy tweak for construction.
+    Trusted promotion and the ToolPack still enforce the approved path boundary.
+    """
+
+    path: str
+    content: str = Field(min_length=1, max_length=MAX_CHANGE_BYTES)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("path")
+    @classmethod
+    def validate_new_product_path(cls, value: str) -> str:
+        normalized = generic_safe_relative(value).as_posix()
+        lowered = f"/{normalized.casefold()}"
+        parts = set(PurePosixPath(lowered).parts)
+        if parts.intersection({
+            "test", "tests", "evidence", "screenshots", "observations", "reports",
+        }):
+            raise ValueError("new product construction cannot target proof artifacts")
+        suffix = PurePosixPath(normalized).suffix.casefold()
+        if suffix in {".unity", ".prefab", ".uxml", ".uss"}:
+            return normalized
+        client_markers = (
+            "client", "/ui/", "screen", "surface", "presentation", "view",
+            "login", "lobby", "settings",
+        )
+        if suffix != ".cs" or not any(marker in lowered for marker in client_markers):
+            raise ValueError(
+                "new product construction must create a scene, prefab, UI asset, or client/UI source"
+            )
+        return normalized
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def bound_reason(cls, value: object) -> str:
+        return str(value)[:500]
+
+
+class NewProductConstructionChangeSet(BaseModel):
+    schema_version: str = "onebrief-new-product-construction-v1"
+    summary: str = Field(min_length=3, max_length=1000)
+    changes: list[NewProductConstructionFile] = Field(min_length=1, max_length=2)
+
+
 class CompactProposedProjectFileChange(BaseModel):
     """Bounded repair delta, including a small new file when evidence requires one."""
 

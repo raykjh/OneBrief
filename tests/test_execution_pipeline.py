@@ -13,6 +13,7 @@ from onebrief.generic_development_toolpack import (
     AtomicUnityEvidenceBundle,
     AnchoredRangeRepairProjectCodeChangeSet,
     CompactProposedProjectCodeChangeSet, ExactRepairProjectCodeChangeSet,
+    NewProductConstructionChangeSet,
     CatalogAnchoredProductRepair,
     CatalogAnchoredEvidenceRepair,
     ProjectCodeChangeSet, ProposedProjectCodeChangeSet,
@@ -3387,6 +3388,20 @@ def test_runtime_product_failure_uses_one_bounded_exact_repair() -> None:
     }]
     selected = development_maker_schema_for(report, None, anchors)
     assert issubclass(selected, CatalogAnchoredProductRepair)
+
+
+def test_new_client_preflight_repair_requires_new_product_files() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "New-client construction preflight: the product change set contains no newly "
+        "created production scene, prefab, UI, or client source. Existing-file edits "
+        "and router renames cannot satisfy the approved construction outcome."
+    )
+
+    assert development_maker_schema_for(
+        report,
+        None,
+        active_phase=ExecutionPhase.PRODUCT_IMPLEMENTATION,
+    ) is NewProductConstructionChangeSet
 
 
 def test_cross_surface_style_failure_can_propose_one_new_theme_sidecar() -> None:

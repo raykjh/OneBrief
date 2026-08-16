@@ -14,6 +14,7 @@ from onebrief.generic_development_toolpack import (
     CatalogAnchoredProductRepair,
     catalog_bound_product_repair_schema,
     ExactRepairProjectCodeChangeSet,
+    NewProductConstructionChangeSet,
     ProjectCodeChangeSet,
     ProjectFileChange,
     ProposedProjectCodeChangeSet,
@@ -48,6 +49,41 @@ def test_proposed_exact_edit_accepts_bounded_component_replacement() -> None:
         }],
     })
     assert len(proposal.changes[0].replace or "") == 12_000
+
+
+def test_new_product_construction_schema_removes_legacy_edit_choice() -> None:
+    schema = NewProductConstructionChangeSet.model_json_schema()
+    file_schema = schema["$defs"]["NewProductConstructionFile"]["properties"]
+    assert "base_sha256" not in file_schema
+    assert "search" not in file_schema
+    assert "replace" not in file_schema
+
+    accepted = NewProductConstructionChangeSet.model_validate({
+        "summary": "Create a new login surface.",
+        "changes": [{
+            "path": "Assets/KhalinosClient/Login/LoginSurface.cs",
+            "content": "public sealed class LoginSurface {}",
+            "reason": "Create a new production-owned login surface.",
+        }],
+    })
+    assert accepted.changes[0].path.endswith("LoginSurface.cs")
+    promoted = DeveloperAgent(
+        SimpleNamespace(),
+        change_set_schema=ProjectCodeChangeSet,
+        path_approver=lambda path: path,
+    ).promote_candidate(accepted, [])
+    assert promoted.changes[0].base_sha256 is None
+    assert promoted.changes[0].path == "Assets/KhalinosClient/Login/LoginSurface.cs"
+
+    with pytest.raises(ValidationError, match="must create a scene, prefab, UI asset"):
+        NewProductConstructionChangeSet.model_validate({
+            "summary": "Rename the old route.",
+            "changes": [{
+                "path": "Assets/JULPAE/Scripts/Common/JulpaeSceneRouter.cs",
+                "content": "public static class JulpaeSceneRouter {}",
+                "reason": "Rename an existing route instead of constructing UI.",
+            }],
+        })
 
 
 def test_project_change_rejects_duplicate_csharp_locals_in_one_scope() -> None:
