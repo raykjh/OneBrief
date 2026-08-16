@@ -10,6 +10,7 @@ from onebrief.schemas import ExecutionPhase
 from onebrief.unity_client_plan import (
     TRUSTED_UNITY_CLIENT_MARKER,
     UnityClientConstructionPlan,
+    bind_unity_client_plan_targets,
     render_unity_client_construction,
     validate_unity_client_plan_targets,
 )
@@ -83,6 +84,27 @@ def test_client_plan_preflight_binds_exact_committed_controls() -> None:
     assert len(issues) == 1
     assert "LoginButton" in issues[0]
     assert "DirectEnterButton" in issues[0]
+
+
+def test_client_plan_canonicalizes_only_paths_whose_stems_are_committed() -> None:
+    bound, issues = bind_unity_client_plan_targets(
+        _plan(
+            initial_scene="Assets/Login.unity",
+            destination_scene="Assets/Scenes/Lobby.unity",
+        ),
+        _catalog(),
+    )
+
+    assert issues == []
+    assert bound.initial_scene == "Login"
+    assert bound.destination_scene == "Lobby"
+
+    unbound, invalid = bind_unity_client_plan_targets(
+        _plan(initial_scene="Assets/NewLogin.unity"),
+        _catalog(),
+    )
+    assert unbound.initial_scene == "Assets/NewLogin.unity"
+    assert any("NewLogin" in issue for issue in invalid)
 
 
 def test_client_plan_normalizes_to_one_trusted_new_product_file() -> None:

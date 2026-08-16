@@ -124,8 +124,24 @@ def validate_unity_client_plan_targets(
 ) -> list[str]:
     """Bind scene and preserved-control selections to the committed catalog."""
 
+    _bound, issues = bind_unity_client_plan_targets(plan, scene_catalog)
+    return issues
+
+
+def bind_unity_client_plan_targets(
+    plan: UnityClientConstructionPlan,
+    scene_catalog: Mapping[str, object] | None,
+) -> tuple[UnityClientConstructionPlan, list[str]]:
+    """Canonicalize harmless scene-path wrappers and reject invented identities.
+
+    Some weaker models return ``Assets/Login.unity`` even when the schema asks
+    for the exact scene identity ``Login``.  The wrapper carries no additional
+    authority.  Strip it only when its stem is already an exact committed
+    catalog entry; an invented path remains a hard failure.
+    """
+
     if not scene_catalog or not isinstance(scene_catalog.get("scenes"), list):
-        return []
+        return plan, []
     by_scene: dict[str, set[str]] = {}
     for raw in scene_catalog["scenes"]:
         if not isinstance(raw, Mapping) or not isinstance(raw.get("scene_name"), str):
@@ -136,6 +152,16 @@ def validate_unity_client_plan_targets(
             if isinstance(values, list):
                 names.update(str(item) for item in values if isinstance(item, str))
         by_scene[str(raw["scene_name"])] = names
+    updates: dict[str, str] = {}
+    for field_name in ("initial_scene", "destination_scene"):
+        value = str(getattr(plan, field_name))
+        if value in by_scene:
+            continue
+        stem = PurePosixPath(value.replace("\\", "/")).stem
+        if stem in by_scene:
+            updates[field_name] = stem
+    if updates:
+        plan = plan.model_copy(update=updates)
     issues: list[str] = []
     if plan.initial_scene not in by_scene:
         issues.append(
@@ -162,7 +188,7 @@ def validate_unity_client_plan_targets(
                 f"Committed scene {plan.initial_scene!r} has no {label} named {leaf!r}; "
                 f"relevant exact candidates: {', '.join(relevant) or 'none'}."
             )
-    return issues
+    return plan, issues
 
 
 def render_unity_client_construction(

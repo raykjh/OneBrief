@@ -190,9 +190,9 @@ from onebrief.unity_evidence_plan import (
 )
 from onebrief.unity_client_plan import (
     UnityClientConstructionPlan,
+    bind_unity_client_plan_targets,
     is_trusted_unity_client_change_set,
     render_unity_client_construction,
-    validate_unity_client_plan_targets,
 )
 from onebrief.workbook_export import export_workbook
 from onebrief.temperament import (
@@ -3348,7 +3348,7 @@ class ExecutionPipeline:
                     "schema_version": "khalinos-unity-client-construction-plan-v1",
                 })
             if provider_client_plan is not None:
-                target_issues = validate_unity_client_plan_targets(
+                provider_client_plan, target_issues = bind_unity_client_plan_targets(
                     provider_client_plan,
                     unity_scene_catalog,
                 )
