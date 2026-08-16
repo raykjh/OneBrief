@@ -1951,7 +1951,7 @@ def test_adk_software_failure_keeps_most_progressed_candidate(
     output_dir = tmp_path / "regression-output"
     output_dir.mkdir()
 
-    with pytest.raises(RuntimeError, match="no new evidence"):
+    with pytest.raises(RuntimeError, match="stalled after two identical candidates"):
         ExecutionPipeline(tmp_path / "run", gateway=gateway)._run_adk_development_convergence(
             intake=intake, requirements=_requirements(), sources=[_source()],
             source_payload=[{
@@ -1976,8 +1976,8 @@ def test_adk_software_failure_keeps_most_progressed_candidate(
     assert preserved_feedback.startswith(
         "web observation failed: cjk leaked | labels identical"
     )
-    assert "Regression guard from the rejected attempt" in preserved_feedback
-    assert "no control | text same | lang same | one state" in preserved_feedback
+    assert "Regression guard from the rejected attempt" not in preserved_feedback
+    assert "Repair control:" in preserved_feedback
 
 
 def test_compact_repair_schema_allows_small_test_and_assembly_pair() -> None:
@@ -3452,6 +3452,18 @@ def test_inert_new_unity_source_is_a_product_target_even_with_missing_evidence()
         None,
         active_phase=ExecutionPhase.PRODUCT_IMPLEMENTATION,
     ) is ExactRepairProjectCodeChangeSet
+
+
+def test_authentication_scene_shortcut_gets_product_router_repair_instruction() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "Unity visual test contract: a preserved authentication/server journey must not be "
+        "satisfied by newly wiring a product UI onClick listener directly to "
+        "SceneManager.LoadScene; invoke the existing controller/router path instead"
+    )
+
+    instruction = " ".join(report.revision_instructions)
+    assert "committed authentication/controller/router mechanism" in instruction
+    assert "Do not replace authentication" in instruction
 
 
 def test_maker_schema_phase_uses_newer_decision_over_stale_phase_state() -> None:

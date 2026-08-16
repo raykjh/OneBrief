@@ -444,6 +444,46 @@ def classify_failure_owner(
     return FailureOwner.PRODUCT
 
 
+def scope_failure_text_to_owner(
+    *,
+    context: str,
+    failure_text: str,
+    owner: FailureOwner,
+) -> str:
+    """Keep only causal blockers owned by one repair recipient.
+
+    Deterministic adapters can report product and evidence defects in one
+    delimiter-separated failure. The complete text remains an audit record,
+    but sending that mixed receipt to one phase creates an impossible repair
+    contract. Defer the other owner's blockers until the next unchanged
+    verification pass.
+    """
+
+    audit_only_markers = (
+        "rejected repair delta changed path(s):",
+        "regression guard from the rejected attempt:",
+        "preserve the last runtime-valid checkpoint after this compiler repair:",
+    )
+    fragments = [
+        fragment.strip()
+        for fragment in failure_text.split(" | ")
+        if fragment.strip()
+    ]
+    causal = [
+        fragment for fragment in fragments
+        if not any(marker in fragment.casefold() for marker in audit_only_markers)
+    ]
+    owned = [
+        fragment for fragment in causal
+        if classify_failure_owner(
+            context=context,
+            failure_text=fragment,
+            affected_paths=[],
+        ) == owner
+    ]
+    return " | ".join(owned or causal or fragments).strip()
+
+
 def decide_repair_phase(
     *,
     context: str,

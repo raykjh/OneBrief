@@ -169,6 +169,7 @@ from onebrief.phase_execution import (
     is_evidence_path,
     path_allowed_for_phase,
     phase_stage,
+    scope_failure_text_to_owner,
 )
 from onebrief.toolpacks import execute_toolpacks
 from onebrief.unity_semantic_observation import (
@@ -1848,6 +1849,16 @@ class ExecutionPipeline:
                     "Button or ExecuteEvents action, wait for the product-owned transition, then assert and "
                     "capture the actual active destination. If it does not transition, return the failure to "
                     "product implementation instead of making the evidence harness perform the navigation."
+                )
+            if (
+                "preserved authentication/server journey" in lowered
+                and "product ui onclick listener directly to scenemanager.loadscene" in lowered
+            ):
+                return (
+                    "Remove the new product controller's direct destination SceneManager.LoadScene path. "
+                    "Bind its control to the committed authentication/controller/router mechanism that already "
+                    "owns the protected transition, and let that existing path decide when navigation is valid. "
+                    "Do not replace authentication with a new scene-loading shortcut or edit the evidence harness."
                 )
             if "must be committed in one atomic manifest" in lowered:
                 return (
@@ -4094,20 +4105,11 @@ class ExecutionPipeline:
                 )
                 self._append_recovery(decision)
                 self._persist_recoveries(output_dir)
-                feedback = " ".join(str(exc).split())[:12_000]
-                if not reverify_existing:
-                    failed_paths = ", ".join(
-                        str(item.path) for item in getattr(delta, "changes", [])
-                    )
-                    feedback += (
-                        " | Rejected repair delta changed path(s): " + failed_paths
-                        + ". This exact content did not improve the trusted evidence; do not repeat it."
-                    )
+                raw_feedback = " ".join(str(exc).split())[:12_000]
                 self._write(
-                    output_dir / f"development_verification_failure_r{round_number}.txt",
-                    feedback,
+                    output_dir / f"development_verification_failure_raw_r{round_number}.txt",
+                    raw_feedback,
                 )
-                self._write(output_dir / "development_verification_failure.txt", feedback)
                 # Deterministic verification may turn a valid evidence-harness
                 # repair into a newly observed product defect (for example, a
                 # real PlayMode test proving that a requested scene control is
@@ -4116,7 +4118,7 @@ class ExecutionPipeline:
                 # instead of the shipped product indefinitely.
                 failure_phase_decision = decide_repair_phase(
                     context="development_verification",
-                    failure_text=str(exc),
+                    failure_text=raw_feedback,
                     round_number=round_number,
                     affected_paths=[
                         str(item.path) for item in getattr(delta, "changes", [])
@@ -4128,6 +4130,16 @@ class ExecutionPipeline:
                 )
                 phase_state_delta = phase_decision_state_delta(failure_phase_decision)
                 _ctx.session.state.update(phase_state_delta)
+                feedback = scope_failure_text_to_owner(
+                    context="development_verification",
+                    failure_text=raw_feedback,
+                    owner=failure_phase_decision.failure_owner,
+                )
+                self._write(
+                    output_dir / f"development_verification_failure_r{round_number}.txt",
+                    feedback,
+                )
+                self._write(output_dir / "development_verification_failure.txt", feedback)
                 if not reverify_existing:
                     rejected_change_fingerprints.add(delta_fingerprint)
                     rejected_strategy_fingerprints.add(delta_strategy_fingerprint)
@@ -4211,6 +4223,18 @@ class ExecutionPipeline:
                     self._write(
                         output_dir / "development_verification_failure.txt", feedback
                     )
+                # Candidate ranking can add checkpoint/audit suffixes after the
+                # verifier receipt was first scoped. Keep those details in the
+                # raw and checkpoint artifacts, but never turn them back into
+                # causal maker instructions or convergence symptoms.
+                feedback = scope_failure_text_to_owner(
+                    context="development_verification",
+                    failure_text=feedback,
+                    owner=failure_phase_decision.failure_owner,
+                )
+                self._write(
+                    output_dir / "development_verification_failure.txt", feedback
+                )
                 # Reverification is an idempotent probe of a preserved
                 # candidate, not another maker strategy. Counting it as a new
                 # experiment blocks the maker before the first post-resume
@@ -4241,7 +4265,7 @@ class ExecutionPipeline:
                     if reverify_existing and latest_repair_contract is not None
                     else record_convergence_failure(
                         context="development_verification",
-                        failure_text=str(exc),
+                        failure_text=feedback,
                         attempt_number=same_failure_count + 1,
                         execution_round=round_number,
                         # A cross-phase observation has not yet identified the

@@ -12,6 +12,7 @@ from onebrief.phase_execution import (
     is_evidence_path,
     path_allowed_for_phase,
     phase_for_stage,
+    scope_failure_text_to_owner,
 )
 from onebrief.handoff_protocol import FailureCode
 from onebrief.schemas import (
@@ -331,6 +332,49 @@ def test_inert_new_product_outranks_simultaneous_missing_evidence() -> None:
 
     assert decision.failure_owner == FailureOwner.PRODUCT
     assert decision.next_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+
+
+def test_mixed_unity_failure_exposes_only_product_blockers_to_product_repair() -> None:
+    failure = (
+        "development verification failed: Unity visual test contract: a preserved "
+        "authentication/server journey must not be satisfied by newly wiring a product UI "
+        "onClick listener directly to SceneManager.LoadScene; invoke the existing router | "
+        "Unity visual test contract: new Unity UI MonoBehaviour NewLobbyShellController is not "
+        "attached to a changed scene/prefab; an inert source file does not implement the UI | "
+        "Unity visual test contract: add a discoverable Unity PlayMode test | "
+        "Unity visual test contract: add a Unity test .asmdef with TestAssemblies | "
+        "Rejected repair delta changed path(s): Assets/Login.cs. This exact content did not improve"
+    )
+
+    product = scope_failure_text_to_owner(
+        context="development_verification",
+        failure_text=failure,
+        owner=FailureOwner.PRODUCT,
+    )
+
+    assert "authentication/server journey" in product
+    assert "NewLobbyShellController" in product
+    assert "PlayMode test" not in product
+    assert "TestAssemblies" not in product
+    assert "Rejected repair delta" not in product
+
+
+def test_mixed_unity_failure_defers_product_blockers_from_evidence_repair() -> None:
+    failure = (
+        "Unity visual test contract: an inert source file does not implement the UI | "
+        "Unity visual test contract: add a discoverable Unity PlayMode test | "
+        "Unity visual test contract: add a Unity test .asmdef with TestAssemblies"
+    )
+
+    evidence = scope_failure_text_to_owner(
+        context="development_verification",
+        failure_text=failure,
+        owner=FailureOwner.EVIDENCE,
+    )
+
+    assert "inert source file" not in evidence
+    assert "PlayMode test" in evidence
+    assert "TestAssemblies" in evidence
 
 
 def test_visual_preflight_authentication_bypass_stays_product_owned() -> None:
