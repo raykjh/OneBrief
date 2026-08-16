@@ -58,6 +58,7 @@ from onebrief.governance import (
 )
 from onebrief.jobs import JobStore, create_job, run_job
 from onebrief.milestones import MilestonePlan
+from onebrief.quest_kernel.models import canonical_sha256
 from onebrief.producer import estimate_budget
 from onebrief.project_catalog import ProjectCatalog, RegisteredProject
 from onebrief.project_import import (
@@ -1884,6 +1885,7 @@ async def session_quests(
                 "active_quest": None,
                 "contracts": [],
                 "receipts": [],
+                "current_transition": None,
                 "message": "Quest orchestration is not required or is still being prepared.",
             }
         quest_ids = list(dict.fromkeys([
@@ -1911,6 +1913,25 @@ async def session_quests(
         active = next(
             (item for item in contracts if item.get("quest_id") == active_id), None
         )
+        current_transition = None
+        try:
+            pointer = await asyncio.to_thread(
+                repository.read_json, "work/quest_state/current_transition.json"
+            )
+            decision_id = str(pointer.get("decision_id", ""))
+            relative = str(pointer.get("path", ""))
+            expected = f"transition_decisions/{decision_id}.json"
+            if not decision_id.startswith("QD-") or relative != expected:
+                raise RuntimeError("current Quest transition pointer is invalid")
+            current_transition = await asyncio.to_thread(
+                repository.read_json, f"work/quest_state/{relative}"
+            )
+            if current_transition.get("decision_id") != decision_id:
+                raise RuntimeError("current Quest transition pointer identifies another decision")
+            if canonical_sha256(current_transition) != pointer.get("decision_sha256"):
+                raise RuntimeError("current Quest transition digest changed")
+        except FileNotFoundError:
+            pass
         return {
             "session_id": session_id,
             "job_status": record.status.value,
@@ -1919,6 +1940,7 @@ async def session_quests(
             "active_quest": active,
             "contracts": contracts,
             "receipts": receipts,
+            "current_transition": current_transition,
             "message": record.message,
         }
     except FileNotFoundError as exc:

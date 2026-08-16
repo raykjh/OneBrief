@@ -8,6 +8,7 @@ from onebrief.producer import estimate_budget
 from onebrief.preparation import build_preparation_plan
 from onebrief.jobs import JobRecord, JobStatus
 from onebrief.milestones import build_milestone_plan
+from onebrief.quest_kernel.models import canonical_sha256
 from onebrief.cloud_jobs import CloudExecutionReceipt
 from onebrief.project_catalog import RegisteredProject
 from onebrief.schemas import (
@@ -1000,6 +1001,13 @@ def test_quest_endpoint_returns_canvas_contracts_and_receipts(monkeypatch) -> No
         "blocked_quest_ids": [],
         "receipt_ids": ["QR-0000000000000000"],
     }
+    transition = {
+        "schema_version": "khalinos-recorded-quest-transition-v1",
+        "decision_id": "QD-2222222222222222",
+        "raw_receipt": {"quest_id": "QC-0000000000000000"},
+        "decision": {"transition": "pass", "rationale": "Verified result."},
+    }
+    transition_digest = canonical_sha256(transition)
 
     class FakeRepository:
         def read_job(self):
@@ -1022,6 +1030,12 @@ def test_quest_endpoint_returns_canvas_contracts_and_receipts(monkeypatch) -> No
                 "work/quest_state/receipts/QR-0000000000000000.json": {
                     "receipt_id": "QR-0000000000000000", "state": "passed"
                 },
+                "work/quest_state/current_transition.json": {
+                    "decision_id": "QD-2222222222222222",
+                    "decision_sha256": transition_digest,
+                    "path": "transition_decisions/QD-2222222222222222.json",
+                },
+                "work/quest_state/transition_decisions/QD-2222222222222222.json": transition,
             }
             if relative not in values:
                 raise FileNotFoundError(relative)
@@ -1031,13 +1045,17 @@ def test_quest_endpoint_returns_canvas_contracts_and_receipts(monkeypatch) -> No
     app.dependency_overrides[get_session_store] = lambda: store
     try:
         response = TestClient(app).get("/api/sessions/quests-1/quests")
+        transition["decision"]["rationale"] = "Tampered after recording."
+        tampered_response = TestClient(app).get("/api/sessions/quests-1/quests")
     finally:
         app.dependency_overrides.clear()
 
     assert response.status_code == 200
     assert response.json()["active_quest"]["milestone_id"] == "M02"
     assert response.json()["receipts"][0]["state"] == "passed"
+    assert response.json()["current_transition"]["decision"]["transition"] == "pass"
     assert len(response.json()["contracts"]) == 2
+    assert tampered_response.status_code == 502
 
 
 def test_graph_endpoint_reports_team_planning_before_artifacts_exist(monkeypatch) -> None:
