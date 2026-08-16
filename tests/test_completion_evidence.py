@@ -4,6 +4,7 @@ from onebrief.completion_evidence import (
     CompletionEvidenceKind,
     apply_completion_evidence_override,
     apply_trusted_development_evidence,
+    has_new_product_construction,
     validate_completion_evidence,
 )
 from onebrief.execution_schemas import CriterionCheck, VerificationReport, Verdict
@@ -12,6 +13,10 @@ from onebrief.handoff_protocol import (
     EvidenceKind,
     EvidenceStatus,
     create_evidence_binding,
+)
+from onebrief.generic_development_toolpack import (
+    ProposedProjectCodeChangeSet,
+    ProposedProjectFileChange,
 )
 from onebrief.schemas import (
     CompletionContract,
@@ -100,6 +105,30 @@ def test_new_client_contract_accepts_new_production_surface_manifest() -> None:
     assert CompletionEvidenceKind.PRODUCT_CONSTRUCTION not in {
         item.kind for item in result.issues
     }
+
+
+def test_product_construction_preflight_rejects_router_edit_and_accepts_new_client_source() -> None:
+    assert not has_new_product_construction({
+        "changes": [{
+            "path": "Assets/JULPAE/Scripts/Common/JulpaeSceneRouter.cs",
+            "base_sha256": "a" * 64,
+        }]
+    })
+    assert has_new_product_construction({
+        "changes": [{
+            "path": "Assets/KhalinosClient/Login/LoginSurface.cs",
+            "base_sha256": None,
+        }]
+    })
+    assert has_new_product_construction(ProposedProjectCodeChangeSet(
+        summary="Create the initial KHALINOS login surface.",
+        changes=[ProposedProjectFileChange(
+            path="Assets/KhalinosClient/Login/LoginSurface.cs",
+            base_sha256=None,
+            content="public sealed class LoginSurface {}",
+            reason="Create a new production-owned client surface.",
+        )],
+    ))
 
 
 def test_new_unrelated_production_source_does_not_count_as_client_surface() -> None:

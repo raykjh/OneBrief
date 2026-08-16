@@ -87,15 +87,14 @@ def _has_command(commands: list[str], *markers: str) -> bool:
     return any(any(marker in command for marker in markers) for command in commands)
 
 
-def _has_new_product_construction(
-    development_evidence: dict[str, object] | None,
-) -> bool:
+def has_new_product_construction(change_set: object | None) -> bool:
     """Distinguish a new production surface from tests and legacy-file tweaks."""
 
-    if not development_evidence:
+    if isinstance(change_set, BaseModel):
+        change_set = change_set.model_dump(mode="python")
+    if not isinstance(change_set, dict):
         return False
-    change_set = development_evidence.get("change_set")
-    changes = change_set.get("changes") if isinstance(change_set, dict) else None
+    changes = change_set.get("changes")
     if not isinstance(changes, list):
         return False
     direct_surface_suffixes = {".unity", ".prefab", ".uxml", ".uss"}
@@ -123,6 +122,14 @@ def _has_new_product_construction(
         if is_new and (is_surface or is_client_source):
             return True
     return False
+
+
+def _has_new_product_construction(
+    development_evidence: dict[str, object] | None,
+) -> bool:
+    if not development_evidence:
+        return False
+    return has_new_product_construction(development_evidence.get("change_set"))
 
 
 def validate_completion_evidence(

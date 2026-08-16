@@ -302,6 +302,20 @@ def test_missing_new_product_surface_overrides_test_only_runtime_path() -> None:
     assert decision.next_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
 
 
+def test_missing_new_construction_preflight_returns_to_product_phase() -> None:
+    decision = decide_repair_phase(
+        context="development_verification",
+        failure_text=(
+            "New-client construction preflight: the product change set contains no newly "
+            "created production scene, prefab, UI, or client source."
+        ),
+        round_number=0,
+    )
+
+    assert decision.failure_owner == FailureOwner.PRODUCT
+    assert decision.next_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+
+
 def test_visual_preflight_authentication_bypass_stays_product_owned() -> None:
     decision = decide_repair_phase(
         context="development_verification",

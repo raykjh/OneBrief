@@ -366,6 +366,7 @@ def classify_failure_owner(
         "add an actual production ui implementation",
         "no new production scene",
         "no new production prefab",
+        "contains no newly created production",
         "new production surface is missing",
         "uses legacy scenes",
         "instead of creating new production scenes or prefabs",

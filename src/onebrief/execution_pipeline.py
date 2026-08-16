@@ -35,8 +35,10 @@ from onebrief.adk_convergence import (
 from onebrief.completion_evidence import (
     apply_completion_evidence_override,
     apply_trusted_development_evidence,
+    has_new_product_construction,
     validate_completion_evidence,
 )
+from onebrief.delivery_intent import requires_new_product_construction
 from onebrief.deterministic_verification import (
     append_authoritative_csv_tables,
     DeterministicVerification,
@@ -2324,6 +2326,9 @@ class ExecutionPipeline:
         """Run code creation, isolated verification, review, and same-maker repair in ADK."""
 
         quest_initial_phase = quest_initial_execution_phase(sources)
+        new_product_construction_required = requires_new_product_construction(
+            development_toolpack_focus_text(intake, requirements)
+        )
         contract = {
             **contract,
             "execution_phase": quest_initial_phase.value,
@@ -2980,6 +2985,7 @@ class ExecutionPipeline:
         current_exact_edit_anchors = exact_edit_anchors
         consecutive_identical_candidates = 0
         journey_target_preflight_failures = 0
+        product_construction_preflight_failures = 0
         rejected_change_fingerprints = discover_rejected_change_fingerprints(output_dir)
         rejected_change_history = discover_rejected_change_history(output_dir)
         rejected_strategy_fingerprints = {
@@ -3075,6 +3081,7 @@ class ExecutionPipeline:
             nonlocal current_exact_edit_anchors
             nonlocal consecutive_identical_candidates
             nonlocal journey_target_preflight_failures
+            nonlocal product_construction_preflight_failures
             # The deterministic verifier can issue a new digest-bound source
             # catalog after the previous executable check. ADK session state is
             # authoritative for that turn; a closure captured before the check
@@ -3288,6 +3295,65 @@ class ExecutionPipeline:
                         development_change_path(item)
                         for item in allowed_changes
                     ]
+            if (
+                active_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+                and new_product_construction_required
+                and not reverify_existing
+                and not has_new_product_construction(raw)
+            ):
+                product_construction_preflight_failures += 1
+                feedback = (
+                    "New-client construction preflight: the product change set contains no newly "
+                    "created production scene, prefab, UI, or client source. Existing-file edits, "
+                    "router renames, and test files cannot satisfy the approved construction outcome."
+                )
+                self._write(
+                    output_dir / f"product_construction_preflight_r{round_number}.json",
+                    json.dumps({
+                        "schema_version": "onebrief-product-construction-preflight-v1",
+                        "round_number": round_number,
+                        "status": "revise",
+                        "required": True,
+                        "proposed_paths": proposed_paths,
+                        "failure_count": product_construction_preflight_failures,
+                        "message": feedback,
+                    }, ensure_ascii=False, indent=2),
+                )
+                if product_construction_preflight_failures >= 2:
+                    raise RuntimeError(
+                        "product construction preflight stopped repeated non-construction plans: "
+                        + ", ".join(proposed_paths)
+                    )
+                report = VerificationReport(
+                    verdict=Verdict.REVISE,
+                    criterion_checks=[{
+                        "criterion": "Create a new production-owned client surface before evidence",
+                        "passed": False,
+                        "evidence": feedback,
+                    }],
+                    blocking_issues=[feedback],
+                    revision_instructions=[
+                        "Create the smallest new production scene, prefab, UI, or client source in a separate "
+                        "client area. Preserve approved existing systems and assets. Do not create tests or "
+                        "runtime evidence until the production surface exists."
+                    ],
+                    missing_information=[],
+                )
+                repair_plan = prepare_repair(report, round_number)
+                retained = (
+                    previous_change_set.model_dump(mode="json")
+                    if previous_change_set is not None
+                    else _ctx.session.state.get(MAKER_STATE_KEY)
+                )
+                return {
+                    MAKER_STATE_KEY: retained,
+                    VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
+                    **({
+                        REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
+                    } if repair_plan is not None else {}),
+                    EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
+                    SKIP_VERIFIER_STATE_KEY: True,
+                }
             active_feedback = " ".join([
                 *(active_report.blocking_issues if active_report else []),
                 *(active_report.revision_instructions if active_report else []),
@@ -4296,6 +4362,9 @@ class ExecutionPipeline:
             "only from those verbatim windows and keep each edit to the smallest unique anchor. "
             "When execution_phase is product_implementation, a UI goal's initial result must include actual production "
             "UI source changes; test-only output is never a complete implementation. When execution_phase is "
+            "product_implementation and the approved outcome explicitly requires a new client or surface, the first "
+            "product turn must create at least one new production scene, prefab, UI, or client source file. Renaming "
+            "a router to a scene that does not exist is forbidden and does not count as construction. When execution_phase is "
             "evidence_construction, preserve shipped product source and construct only the requested executable proof. "
             "A verification test may interact with and capture the product, "
             "but it must never rewrite visible labels, dropdown option text, fonts, CanvasScaler, anchors, colors, "
