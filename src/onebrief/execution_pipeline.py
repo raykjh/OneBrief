@@ -936,11 +936,6 @@ def development_maker_schema_for(
         except (ValidationError, ValueError):
             current_candidate = None
     if (
-        requires_atomic_unity_evidence_pair(feedback)
-        and missing_unity_evidence_bundle_paths(feedback, current_candidate)
-    ):
-        return UnityEvidenceJourneyPlan
-    if (
         active_phase != ExecutionPhase.EVIDENCE_CONSTRUCTION
         and is_development_product_target_failure(feedback)
     ):
@@ -952,6 +947,11 @@ def development_maker_schema_for(
         if exact_edit_anchors:
             return catalog_bound_product_repair_schema(exact_edit_anchors)
         return ExactRepairProjectCodeChangeSet
+    if (
+        requires_atomic_unity_evidence_pair(feedback)
+        and missing_unity_evidence_bundle_paths(feedback, current_candidate)
+    ):
+        return UnityEvidenceJourneyPlan
     if (
         exact_edit_anchors
         and any(marker in normalized_feedback for marker in (

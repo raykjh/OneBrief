@@ -3415,7 +3415,9 @@ def test_inert_new_unity_source_is_a_product_target_even_with_missing_evidence()
         "Unity visual test contract: new Unity UI MonoBehaviour NewClientPresentationController "
         "is not attached to a changed scene/prefab and has no runtime initialization entrypoint; "
         "an inert source file does not implement the UI | Unity visual test contract: add a "
-        "discoverable Unity PlayMode test and a Unity test .asmdef"
+        "discoverable Unity PlayMode test whose namespace/full name begins with OneBrief.Visual | "
+        "Unity visual test contract: add a Unity test .asmdef with optionalUnityReferences "
+        "containing TestAssemblies"
     )
 
     assert is_development_product_target_failure(feedback) is True
