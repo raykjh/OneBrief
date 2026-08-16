@@ -1,0 +1,127 @@
+from onebrief.execution_pipeline import (
+    development_maker_schema_for,
+    normalize_unity_client_construction_plan,
+)
+from onebrief.execution_schemas import VerificationReport, Verdict
+from onebrief.generic_development_toolpack import ProjectCodeChangeSet
+from onebrief.schemas import ExecutionPhase
+from onebrief.unity_client_plan import (
+    TRUSTED_UNITY_CLIENT_MARKER,
+    UnityClientConstructionPlan,
+    render_unity_client_construction,
+    validate_unity_client_plan_targets,
+)
+from onebrief.unity_evidence_plan import candidate_unity_object_names
+
+
+def _plan(**updates: object) -> UnityClientConstructionPlan:
+    payload = {
+        "summary": "Build a bounded new client shell.",
+        "product_directory": "Assets/JULPAE/NewClient/Runtime",
+        "initial_scene": "Login",
+        "destination_scene": "Lobby",
+        "authentication_account_selector": "DevPanel/TestAccountDropdown",
+        "authentication_submit_selector": "DevPanel/DirectEnterButton",
+        "brand_title": "JULPAE",
+        "login_title": "Enter the Table",
+        "login_subtitle": "Choose an approved profile.",
+        "login_button_label": "Enter",
+        "lobby_title": "Lobby",
+        "lobby_subtitle": "Your next match is ready.",
+        "settings_button_label": "Settings",
+        "settings_title": "Settings",
+        "settings_body": "Audio and language controls remain connected to the shipped systems.",
+        "close_button_label": "Close",
+        "accent_hex": "#35D7FF",
+    }
+    payload.update(updates)
+    return UnityClientConstructionPlan.model_validate(payload)
+
+
+def _catalog() -> dict[str, object]:
+    return {
+        "schema_version": "onebrief-unity-scene-catalog-v1",
+        "source_revision": "abc123",
+        "scenes": [
+            {
+                "scene_name": "Login",
+                "object_names": ["DevPanel", "TestAccountDropdown", "DirectEnterButton"],
+                "control_object_names": ["TestAccountDropdown", "DirectEnterButton"],
+            },
+            {"scene_name": "Lobby", "object_names": ["MainCanvas"]},
+        ],
+    }
+
+
+def test_trusted_client_renderer_preserves_authentication_authority() -> None:
+    rendered = render_unity_client_construction(_plan())
+
+    assert rendered.runtime_source_path == (
+        "Assets/JULPAE/NewClient/Runtime/KhalinosGeneratedClientShell.cs"
+    )
+    assert TRUSTED_UNITY_CLIENT_MARKER in rendered.runtime_source
+    assert 'new GameObject("OneBriefNewClientRoot"' in rendered.runtime_source
+    assert 'new GameObject("NewClientLobbyPanel"' not in rendered.runtime_source
+    assert 'CreatePanel("NewClientLobbyPanel"' in rendered.runtime_source
+    assert "preservedSubmit.onClick.Invoke();" in rendered.runtime_source
+    assert "RemoveAllListeners" not in rendered.runtime_source
+    assert "DirectEnterWithSelectedDevAccount" not in rendered.runtime_source
+    assert "SceneManager.LoadScene" not in rendered.runtime_source
+    assert "new TMP_Dropdown.OptionData(item.text, item.image)" not in rendered.runtime_source
+    assert rendered.runtime_source.count("new TMP_Dropdown.OptionData(item.text)") == 2
+
+
+def test_client_plan_preflight_binds_exact_committed_controls() -> None:
+    assert validate_unity_client_plan_targets(_plan(), _catalog()) == []
+
+    issues = validate_unity_client_plan_targets(
+        _plan(authentication_submit_selector="DevPanel/LoginButton"),
+        _catalog(),
+    )
+    assert len(issues) == 1
+    assert "LoginButton" in issues[0]
+    assert "DirectEnterButton" in issues[0]
+
+
+def test_client_plan_normalizes_to_one_trusted_new_product_file() -> None:
+    normalized = normalize_unity_client_construction_plan(
+        _plan().model_dump(mode="json")
+    )
+
+    assert isinstance(normalized, ProjectCodeChangeSet)
+    assert len(normalized.changes) == 1
+    change = normalized.changes[0]
+    assert change.base_sha256 is None
+    assert str(change.path).endswith("KhalinosGeneratedClientShell.cs")
+    assert TRUSTED_UNITY_CLIENT_MARKER in (change.content or "")
+    assert {
+        "OneBriefLoginPanel",
+        "NewClientTestAccountDropdown",
+        "NewClientDirectEnterButton",
+        "NewClientLobbyPanel",
+        "NewClientSettingsButton",
+        "NewClientSettingsPanel",
+    }.issubset(candidate_unity_object_names(normalized))
+
+
+def test_trusted_client_product_failure_replans_in_dsl_not_freeform_csharp() -> None:
+    candidate = normalize_unity_client_construction_plan(_plan())
+    report = VerificationReport(
+        verdict=Verdict.REVISE,
+        criterion_checks=[{
+            "criterion": "The generated Unity client compiles",
+            "passed": False,
+            "evidence": "unity_compile: generated client failed",
+        }],
+        blocking_issues=["unity_compile: generated client failed"],
+        revision_instructions=["Repair the product implementation."],
+        missing_information=[],
+    )
+
+    selected = development_maker_schema_for(
+        report,
+        candidate,
+        active_phase=ExecutionPhase.PRODUCT_IMPLEMENTATION,
+    )
+
+    assert selected is UnityClientConstructionPlan

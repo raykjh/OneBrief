@@ -187,6 +187,12 @@ from onebrief.unity_evidence_plan import (
     unity_scene_catalog_from_sources,
     validate_unity_journey_targets,
 )
+from onebrief.unity_client_plan import (
+    UnityClientConstructionPlan,
+    is_trusted_unity_client_change_set,
+    render_unity_client_construction,
+    validate_unity_client_plan_targets,
+)
 from onebrief.workbook_export import export_workbook
 from onebrief.temperament import (
     VERIFIER_PROFILE,
@@ -935,6 +941,37 @@ def normalize_atomic_unity_evidence_bundle(
     return raw
 
 
+def normalize_unity_client_construction_plan(raw: object) -> object:
+    """Compile a provider-authored product plan into trusted production C#."""
+
+    serialized_plan = bool(
+        isinstance(raw, dict)
+        and isinstance(raw.get("product_directory"), str)
+        and isinstance(raw.get("authentication_account_selector"), str)
+        and isinstance(raw.get("authentication_submit_selector"), str)
+        and not raw.get("changes")
+    )
+    if not isinstance(raw, UnityClientConstructionPlan) and not serialized_plan:
+        return raw
+    plan = (
+        raw if isinstance(raw, UnityClientConstructionPlan)
+        else UnityClientConstructionPlan.model_validate({
+            **raw,
+            "schema_version": "khalinos-unity-client-construction-plan-v1",
+        })
+    )
+    rendered = render_unity_client_construction(plan)
+    return ProjectCodeChangeSet(
+        summary=plan.summary,
+        changes=[{
+            "path": rendered.runtime_source_path,
+            "base_sha256": None,
+            "content": rendered.runtime_source,
+            "reason": "Trusted KHALINOS compilation of the declarative Unity client plan.",
+        }],
+    )
+
+
 def development_maker_schema_for(
     report: VerificationReport | None,
     current_payload: object | None,
@@ -950,6 +987,11 @@ def development_maker_schema_for(
         *report.revision_instructions,
     ])
     normalized_feedback = " ".join(feedback.split()).casefold()
+    if (
+        active_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+        and is_trusted_unity_client_change_set(current_payload)
+    ):
+        return UnityClientConstructionPlan
     if (
         active_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
         and "new-client construction preflight" in normalized_feedback
@@ -3102,6 +3144,7 @@ class ExecutionPipeline:
         current_exact_edit_anchors = exact_edit_anchors
         consecutive_identical_candidates = 0
         journey_target_preflight_failures = 0
+        client_plan_preflight_failures = 0
         product_construction_preflight_failures = 0
         quest_product_construction_lineage = new_product_construction_paths(
             previous_change_set
@@ -3201,6 +3244,7 @@ class ExecutionPipeline:
             nonlocal current_exact_edit_anchors
             nonlocal consecutive_identical_candidates
             nonlocal journey_target_preflight_failures
+            nonlocal client_plan_preflight_failures
             nonlocal product_construction_preflight_failures
             # The deterministic verifier can issue a new digest-bound source
             # catalog after the previous executable check. ADK session state is
@@ -3227,6 +3271,83 @@ class ExecutionPipeline:
                 if active_contract_payload else None
             )
             raw_provider_payload = raw
+            provider_client_plan = None
+            if isinstance(raw_provider_payload, UnityClientConstructionPlan):
+                provider_client_plan = raw_provider_payload
+            elif (
+                isinstance(raw_provider_payload, dict)
+                and isinstance(raw_provider_payload.get("product_directory"), str)
+                and isinstance(raw_provider_payload.get("authentication_account_selector"), str)
+                and isinstance(raw_provider_payload.get("authentication_submit_selector"), str)
+                and not raw_provider_payload.get("changes")
+            ):
+                provider_client_plan = UnityClientConstructionPlan.model_validate({
+                    **raw_provider_payload,
+                    "schema_version": "khalinos-unity-client-construction-plan-v1",
+                })
+            if provider_client_plan is not None:
+                target_issues = validate_unity_client_plan_targets(
+                    provider_client_plan,
+                    unity_scene_catalog,
+                )
+                if target_issues:
+                    client_plan_preflight_failures += 1
+                    self._write(
+                        output_dir / f"unity_client_plan_preflight_r{round_number}.json",
+                        json.dumps({
+                            "schema_version": "khalinos-unity-client-plan-preflight-v1",
+                            "round_number": round_number,
+                            "status": "revise",
+                            "issues": target_issues,
+                            "source_revision": (
+                                unity_scene_catalog.get("source_revision")
+                                if unity_scene_catalog else None
+                            ),
+                        }, ensure_ascii=False, indent=2),
+                    )
+                    if client_plan_preflight_failures >= 2:
+                        raise RuntimeError(
+                            "Unity client plan preflight stopped repeated guessed authority routes: "
+                            + " | ".join(target_issues)
+                        )
+                    feedback = (
+                        "Unity client plan preflight rejected unbound scene or authentication controls. "
+                        + " | ".join(target_issues)
+                    )
+                    report = VerificationReport(
+                        verdict=Verdict.REVISE,
+                        criterion_checks=[{
+                            "criterion": "The declarative client plan binds exact committed authority controls",
+                            "passed": False,
+                            "evidence": feedback,
+                        }],
+                        blocking_issues=[feedback],
+                        revision_instructions=[
+                            "Reissue only the UnityClientConstructionPlan with exact scene and control names "
+                            "from approved source. Do not author C# or widen preserved authentication APIs."
+                        ],
+                        missing_information=[],
+                    )
+                    repair_plan = prepare_repair(report, round_number)
+                    retained = (
+                        previous_change_set.model_dump(mode="json")
+                        if previous_change_set is not None
+                        else _ctx.session.state.get(MAKER_STATE_KEY)
+                    )
+                    return {
+                        MAKER_STATE_KEY: retained,
+                        VERIFICATION_STATE_KEY: report.model_dump(mode="json"),
+                        **({
+                            REPAIR_PLAN_STATE_KEY: repair_plan.model_dump(mode="json")
+                        } if repair_plan is not None else {}),
+                        EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
+                        SKIP_VERIFIER_STATE_KEY: True,
+                    }
+                self._write(
+                    output_dir / f"unity_client_construction_plan_r{round_number}.json",
+                    provider_client_plan.model_dump_json(indent=2),
+                )
+                raw = normalize_unity_client_construction_plan(provider_client_plan)
             provider_journey = None
             if isinstance(raw_provider_payload, UnityEvidenceJourneyPlan):
                 provider_journey = raw_provider_payload
@@ -3300,11 +3421,12 @@ class ExecutionPipeline:
                         EXACT_EDIT_ANCHORS_STATE_KEY: current_exact_edit_anchors,
                         SKIP_VERIFIER_STATE_KEY: True,
                     }
-            raw = normalize_atomic_unity_evidence_bundle(
-                raw,
-                previous_change_set,
-                approved_existing_evidence,
-            )
+            if provider_client_plan is None:
+                raw = normalize_atomic_unity_evidence_bundle(
+                    raw,
+                    previous_change_set,
+                    approved_existing_evidence,
+                )
             if isinstance(raw_provider_payload, UnityEvidenceJourneyPlan) or (
                 isinstance(raw_provider_payload, dict)
                 and isinstance(raw_provider_payload.get("steps"), list)
@@ -4559,6 +4681,16 @@ class ExecutionPipeline:
                 "primary evidence explicitly marks as failing. Do not modify a passing surface just to choose "
                 "a different path."
             )
+        if unity_runtime and new_product_construction_required:
+            maker_instruction += (
+                "\n\nDECLARATIVE UNITY CLIENT CONSTRUCTION: During product_implementation, return only "
+                "UnityClientConstructionPlan. Select exact committed initial/destination scene names and exact "
+                "active account-dropdown and authentication-submit control names from approved source. Describe "
+                "the new Login, Lobby, and Settings copy and accent color, but do not author C#, asmdef, scenes, "
+                "prefabs, listeners, adapters, or private-method calls. KHALINOS compiles the plan into a new "
+                "production-owned client shell which preserves and invokes the shipped public authentication "
+                "controls without replacing their listeners."
+            )
         if prior_failure.is_file():
             maker_instruction += (
                 "\n\nCOMPACT REPAIR CONTRACT: Return exactly one changed path, except that a missing Unity "
@@ -4738,7 +4870,18 @@ class ExecutionPipeline:
                 "independent_verification", "gemini-3.5-flash"
             ),
             maker_schema=(
-                UnityEvidenceJourneyPlan
+                UnityClientConstructionPlan
+                if (
+                    unity_runtime
+                    and new_product_construction_required
+                    and initial_maker_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+                    and (
+                        not prior_failure.is_file()
+                        or previous_change_set is None
+                        or is_trusted_unity_client_change_set(previous_change_set)
+                    )
+                )
+                else UnityEvidenceJourneyPlan
                 if (
                     unity_runtime
                     and initial_maker_phase == ExecutionPhase.EVIDENCE_CONSTRUCTION

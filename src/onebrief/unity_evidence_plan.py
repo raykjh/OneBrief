@@ -406,6 +406,16 @@ def candidate_unity_object_names(change_set: object | None) -> set[str]:
             r"new\s+GameObject\s*\(\s*\"([^\"\r\n]{1,160})\"",
             content,
         ))
+        # KHALINOS-owned declarative client output uses a fixed set of trusted
+        # UI factories so layout stays compact and consistent.  Their literal
+        # first arguments are just as deterministic as direct GameObject
+        # constructors, but only accept them from marker-bound compiler output;
+        # provider-authored helper calls must not mint evidence authority.
+        if "KHALINOS_DECLARATIVE_CLIENT_V1" in content:
+            names.update(re.findall(
+                r"\b(?:CreatePanel|CreateText|CreateButton|CreateDropdown)\s*\(\s*\"([^\"\r\n]{1,160})\"",
+                content,
+            ))
     return names
 
 

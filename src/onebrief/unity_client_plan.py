@@ -1,0 +1,430 @@
+"""Trusted compilation of a bounded Unity client-shell construction plan.
+
+The model chooses product copy, scene identities, and the two existing public
+authentication controls.  KHALINOS owns all C# generation.  The generated
+surface never calls project-private methods or replaces preserved listeners;
+it forwards interaction through the shipped controls that already own those
+authority boundaries.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import PurePosixPath
+from typing import Mapping
+
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+TRUSTED_UNITY_CLIENT_MARKER = "KHALINOS_DECLARATIVE_CLIENT_V1"
+
+
+class UnityClientConstructionPlan(BaseModel):
+    """Provider-visible plan for one new Login-to-Lobby client shell."""
+
+    schema_version: str = "khalinos-unity-client-construction-plan-v1"
+    summary: str = Field(min_length=3, max_length=500)
+    product_directory: str = Field(
+        description=(
+            "New approved Assets/... client/presentation directory. KHALINOS chooses a fixed "
+            "generated runtime filename below it."
+        )
+    )
+    initial_scene: str = Field(min_length=1, max_length=160)
+    destination_scene: str = Field(min_length=1, max_length=160)
+    authentication_account_selector: str = Field(
+        min_length=1,
+        max_length=300,
+        description="Exact active shipped account/profile dropdown name or hierarchy path.",
+    )
+    authentication_submit_selector: str = Field(
+        min_length=1,
+        max_length=300,
+        description="Exact active shipped DirectEnter/SignIn/Login/Authenticate button name or path.",
+    )
+    brand_title: str = Field(min_length=1, max_length=80)
+    login_title: str = Field(min_length=1, max_length=120)
+    login_subtitle: str = Field(min_length=1, max_length=240)
+    login_button_label: str = Field(min_length=1, max_length=80)
+    lobby_title: str = Field(min_length=1, max_length=120)
+    lobby_subtitle: str = Field(min_length=1, max_length=240)
+    settings_button_label: str = Field(min_length=1, max_length=80)
+    settings_title: str = Field(min_length=1, max_length=120)
+    settings_body: str = Field(min_length=1, max_length=300)
+    close_button_label: str = Field(min_length=1, max_length=80)
+    accent_hex: str = Field(
+        default="#35D7FF",
+        pattern=r"^#[0-9A-Fa-f]{6}$",
+        description="Restrained six-digit RGB accent color.",
+    )
+
+    @field_validator(
+        "initial_scene",
+        "destination_scene",
+        "authentication_account_selector",
+        "authentication_submit_selector",
+        "brand_title",
+        "login_title",
+        "login_subtitle",
+        "login_button_label",
+        "lobby_title",
+        "lobby_subtitle",
+        "settings_button_label",
+        "settings_title",
+        "settings_body",
+        "close_button_label",
+        mode="before",
+    )
+    @classmethod
+    def normalize_text(cls, value: object) -> str:
+        return " ".join(str(value).split()).strip()
+
+    @field_validator("product_directory")
+    @classmethod
+    def validate_product_directory(cls, value: str) -> str:
+        normalized = str(PurePosixPath(value.replace("\\", "/"))).strip("/")
+        lowered = f"/{normalized.casefold()}/"
+        if not normalized.startswith("Assets/"):
+            raise ValueError("product_directory must be below Assets")
+        if any(marker in lowered for marker in ("/test/", "/tests/", "/evidence/")):
+            raise ValueError("product_directory must be production-owned")
+        if not any(marker in lowered for marker in ("client", "presentation", "/ui/")):
+            raise ValueError("product_directory must identify a separate client/presentation area")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_authority_route(self) -> "UnityClientConstructionPlan":
+        if self.initial_scene == self.destination_scene:
+            raise ValueError("initial_scene and destination_scene must differ")
+        account = self.authentication_account_selector.casefold().replace("_", "").replace("-", "")
+        submit = self.authentication_submit_selector.casefold().replace("_", "").replace("-", "")
+        if not any(marker in account for marker in ("account", "profile", "auth", "user")):
+            raise ValueError("authentication_account_selector must identify an account/profile control")
+        if not any(marker in submit for marker in ("directenter", "signin", "login", "authenticate")):
+            raise ValueError("authentication_submit_selector must identify an authentication submit control")
+        return self
+
+
+class RenderedUnityClientConstruction(BaseModel):
+    runtime_source_path: str
+    runtime_source: str
+
+
+def _cs(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _hex_rgb(value: str) -> tuple[float, float, float]:
+    return tuple(int(value[index:index + 2], 16) / 255.0 for index in (1, 3, 5))  # type: ignore[return-value]
+
+
+def validate_unity_client_plan_targets(
+    plan: UnityClientConstructionPlan,
+    scene_catalog: Mapping[str, object] | None,
+) -> list[str]:
+    """Bind scene and preserved-control selections to the committed catalog."""
+
+    if not scene_catalog or not isinstance(scene_catalog.get("scenes"), list):
+        return []
+    by_scene: dict[str, set[str]] = {}
+    for raw in scene_catalog["scenes"]:
+        if not isinstance(raw, Mapping) or not isinstance(raw.get("scene_name"), str):
+            continue
+        names: set[str] = set()
+        for key in ("object_names", "control_object_names"):
+            values = raw.get(key)
+            if isinstance(values, list):
+                names.update(str(item) for item in values if isinstance(item, str))
+        by_scene[str(raw["scene_name"])] = names
+    issues: list[str] = []
+    if plan.initial_scene not in by_scene:
+        issues.append(
+            f"Initial scene {plan.initial_scene!r} is not committed; exact scenes: "
+            + ", ".join(sorted(by_scene))
+        )
+    if plan.destination_scene not in by_scene:
+        issues.append(
+            f"Destination scene {plan.destination_scene!r} is not committed; exact scenes: "
+            + ", ".join(sorted(by_scene))
+        )
+    initial_names = by_scene.get(plan.initial_scene, set())
+    for label, selector in (
+        ("account selector", plan.authentication_account_selector),
+        ("submit selector", plan.authentication_submit_selector),
+    ):
+        leaf = selector.replace("\\", "/").split("/")[-1]
+        if initial_names and leaf not in initial_names:
+            relevant = sorted(
+                name for name in initial_names
+                if any(token in name.casefold() for token in ("account", "profile", "login", "enter", "dropdown", "button"))
+            )[:16]
+            issues.append(
+                f"Committed scene {plan.initial_scene!r} has no {label} named {leaf!r}; "
+                f"relevant exact candidates: {', '.join(relevant) or 'none'}."
+            )
+    return issues
+
+
+def render_unity_client_construction(
+    plan: UnityClientConstructionPlan,
+) -> RenderedUnityClientConstruction:
+    """Compile the bounded plan into a fixed production runtime component."""
+
+    red, green, blue = _hex_rgb(plan.accent_hex)
+    path = str(PurePosixPath(plan.product_directory) / "KhalinosGeneratedClientShell.cs")
+    values = {
+        "initial": _cs(plan.initial_scene),
+        "destination": _cs(plan.destination_scene),
+        "account": _cs(plan.authentication_account_selector),
+        "submit": _cs(plan.authentication_submit_selector),
+        "brand": _cs(plan.brand_title),
+        "login_title": _cs(plan.login_title),
+        "login_subtitle": _cs(plan.login_subtitle),
+        "login_button": _cs(plan.login_button_label),
+        "lobby_title": _cs(plan.lobby_title),
+        "lobby_subtitle": _cs(plan.lobby_subtitle),
+        "settings_button": _cs(plan.settings_button_label),
+        "settings_title": _cs(plan.settings_title),
+        "settings_body": _cs(plan.settings_body),
+        "close_button": _cs(plan.close_button_label),
+    }
+    source = f'''// {TRUSTED_UNITY_CLIENT_MARKER} - generated by KHALINOS; do not hand edit.
+using System;
+using System.Linq;
+using TMPro;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
+
+namespace Khalinos.GeneratedClient
+{{
+    public sealed class KhalinosGeneratedClientShell : MonoBehaviour
+    {{
+        private const string InitialScene = {values["initial"]};
+        private const string DestinationScene = {values["destination"]};
+        private const string AccountSelector = {values["account"]};
+        private const string SubmitSelector = {values["submit"]};
+        private static readonly Color Accent = new Color({red:.6f}f, {green:.6f}f, {blue:.6f}f, 1f);
+        private GameObject surfaceRoot;
+        private TMP_Dropdown preservedTmpDropdown;
+        private Dropdown preservedDropdown;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+        private static void Install()
+        {{
+            if (FindFirstObjectByType<KhalinosGeneratedClientShell>() != null) return;
+            GameObject host = new GameObject("__KhalinosGeneratedClientHost");
+            DontDestroyOnLoad(host);
+            host.AddComponent<KhalinosGeneratedClientShell>();
+        }}
+
+        private void OnEnable()
+        {{
+            SceneManager.sceneLoaded += OnSceneLoaded;
+            BuildFor(SceneManager.GetActiveScene());
+        }}
+
+        private void OnDisable()
+        {{
+            SceneManager.sceneLoaded -= OnSceneLoaded;
+        }}
+
+        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        {{
+            BuildFor(scene);
+        }}
+
+        private void BuildFor(Scene scene)
+        {{
+            if (surfaceRoot != null) Destroy(surfaceRoot);
+            surfaceRoot = null;
+            if (scene.name == InitialScene) BuildLogin();
+            else if (scene.name == DestinationScene) BuildLobby();
+        }}
+
+        private void BuildLogin()
+        {{
+            preservedTmpDropdown = FindActive(AccountSelector)?.GetComponent<TMP_Dropdown>();
+            preservedDropdown = preservedTmpDropdown == null
+                ? FindActive(AccountSelector)?.GetComponent<Dropdown>() : null;
+            Button preservedSubmit = FindActive(SubmitSelector)?.GetComponent<Button>();
+
+            Canvas canvas = CreateCanvas();
+            GameObject panel = CreatePanel("OneBriefLoginPanel", canvas.transform, new Color(0.035f, 0.047f, 0.075f, 0.96f));
+            Place(panel.GetComponent<RectTransform>(), 0.5f, 0.5f, 720f, 540f);
+            CreateText("OneBriefBrandTitle", panel.transform, {values["brand"]}, 26f, Accent, 0f, 190f, 620f, 52f);
+            CreateText("OneBriefLoginTitle", panel.transform, {values["login_title"]}, 46f, Color.white, 0f, 105f, 620f, 76f);
+            CreateText("OneBriefLoginSubtitle", panel.transform, {values["login_subtitle"]}, 22f, new Color(0.78f, 0.84f, 0.92f), 0f, 35f, 620f, 70f);
+            TMP_Dropdown proxy = CreateDropdown("NewClientTestAccountDropdown", panel.transform, 0f, -65f, 500f, 64f);
+            CopyOptions(proxy);
+            proxy.onValueChanged.AddListener(SyncAccountSelection);
+            Button enter = CreateButton("NewClientDirectEnterButton", panel.transform, {values["login_button"]}, 0f, -165f, 500f, 72f, () =>
+            {{
+                SyncAccountSelection(proxy.value);
+                if (preservedSubmit == null) throw new InvalidOperationException("Approved authentication submit control is unavailable: " + SubmitSelector);
+                preservedSubmit.onClick.Invoke();
+            }});
+            enter.interactable = preservedSubmit != null && (preservedTmpDropdown != null || preservedDropdown != null);
+        }}
+
+        private void BuildLobby()
+        {{
+            Canvas canvas = CreateCanvas();
+            GameObject panel = CreatePanel("NewClientLobbyPanel", canvas.transform, new Color(0.025f, 0.035f, 0.06f, 0.97f));
+            Stretch(panel.GetComponent<RectTransform>(), 42f);
+            CreateText("OneBriefLobbyBrand", panel.transform, {values["brand"]}, 24f, Accent, 0f, 230f, 780f, 50f);
+            CreateText("OneBriefLobbyTitle", panel.transform, {values["lobby_title"]}, 50f, Color.white, 0f, 125f, 860f, 80f);
+            CreateText("OneBriefLobbySubtitle", panel.transform, {values["lobby_subtitle"]}, 22f, new Color(0.78f, 0.84f, 0.92f), 0f, 50f, 760f, 70f);
+            CreateButton("NewClientSettingsButton", panel.transform, {values["settings_button"]}, 0f, -90f, 360f, 68f, () => BuildSettings(panel.transform));
+        }}
+
+        private void BuildSettings(Transform parent)
+        {{
+            Transform old = parent.Find("NewClientSettingsPanel");
+            if (old != null) Destroy(old.gameObject);
+            GameObject panel = CreatePanel("NewClientSettingsPanel", parent, new Color(0.055f, 0.07f, 0.11f, 0.99f));
+            Place(panel.GetComponent<RectTransform>(), 0.5f, 0.5f, 680f, 470f);
+            CreateText("OneBriefSettingsTitle", panel.transform, {values["settings_title"]}, 42f, Color.white, 0f, 105f, 580f, 70f);
+            CreateText("OneBriefSettingsBody", panel.transform, {values["settings_body"]}, 21f, new Color(0.78f, 0.84f, 0.92f), 0f, 5f, 560f, 130f);
+            CreateButton("NewClientSettingsCloseButton", panel.transform, {values["close_button"]}, 0f, -140f, 300f, 64f, () => Destroy(panel));
+        }}
+
+        private Canvas CreateCanvas()
+        {{
+            surfaceRoot = new GameObject("OneBriefNewClientRoot", typeof(RectTransform));
+            Canvas canvas = surfaceRoot.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 32000;
+            CanvasScaler scaler = surfaceRoot.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1280f, 720f);
+            scaler.matchWidthOrHeight = 0.5f;
+            surfaceRoot.AddComponent<GraphicRaycaster>();
+            return canvas;
+        }}
+
+        private static GameObject CreatePanel(string name, Transform parent, Color color)
+        {{
+            GameObject panel = UiObject(name, parent);
+            panel.AddComponent<Image>().color = color;
+            return panel;
+        }}
+
+        private static TMP_Text CreateText(string name, Transform parent, string value, float size, Color color, float x, float y, float width, float height)
+        {{
+            GameObject item = UiObject(name, parent);
+            TMP_Text text = item.AddComponent<TextMeshProUGUI>();
+            text.text = value;
+            text.fontSize = size;
+            text.color = color;
+            text.alignment = TextAlignmentOptions.Center;
+            text.enableWordWrapping = true;
+            Place(item.GetComponent<RectTransform>(), 0.5f, 0.5f, width, height, x, y);
+            return text;
+        }}
+
+        private static Button CreateButton(string name, Transform parent, string label, float x, float y, float width, float height, Action action)
+        {{
+            GameObject item = UiObject(name, parent);
+            Image image = item.AddComponent<Image>();
+            image.color = Accent;
+            Button button = item.AddComponent<Button>();
+            button.targetGraphic = image;
+            Place(item.GetComponent<RectTransform>(), 0.5f, 0.5f, width, height, x, y);
+            CreateText(name + "Label", item.transform, label, 22f, new Color(0.02f, 0.04f, 0.07f), 0f, 0f, width - 24f, height - 12f);
+            button.onClick.AddListener(() => action());
+            return button;
+        }}
+
+        private static TMP_Dropdown CreateDropdown(string name, Transform parent, float x, float y, float width, float height)
+        {{
+            GameObject item = UiObject(name, parent);
+            Image image = item.AddComponent<Image>();
+            image.color = new Color(0.10f, 0.13f, 0.19f, 1f);
+            TMP_Dropdown dropdown = item.AddComponent<TMP_Dropdown>();
+            dropdown.targetGraphic = image;
+            TMP_Text caption = CreateText(name + "Caption", item.transform, "Account", 21f, Color.white, 0f, 0f, width - 40f, height - 12f);
+            dropdown.captionText = caption;
+            Place(item.GetComponent<RectTransform>(), 0.5f, 0.5f, width, height, x, y);
+            return dropdown;
+        }}
+
+        private void CopyOptions(TMP_Dropdown proxy)
+        {{
+            proxy.options.Clear();
+            if (preservedTmpDropdown != null)
+                proxy.options.AddRange(preservedTmpDropdown.options.Select(item => new TMP_Dropdown.OptionData(item.text)));
+            else if (preservedDropdown != null)
+                proxy.options.AddRange(preservedDropdown.options.Select(item => new TMP_Dropdown.OptionData(item.text)));
+            if (proxy.options.Count == 0) proxy.options.Add(new TMP_Dropdown.OptionData("Approved profile"));
+            proxy.SetValueWithoutNotify(preservedTmpDropdown != null ? preservedTmpDropdown.value : preservedDropdown != null ? preservedDropdown.value : 0);
+            proxy.RefreshShownValue();
+        }}
+
+        private void SyncAccountSelection(int index)
+        {{
+            if (preservedTmpDropdown != null && index < preservedTmpDropdown.options.Count)
+            {{
+                preservedTmpDropdown.SetValueWithoutNotify(index);
+                preservedTmpDropdown.onValueChanged.Invoke(index);
+            }}
+            else if (preservedDropdown != null && index < preservedDropdown.options.Count)
+            {{
+                preservedDropdown.SetValueWithoutNotify(index);
+                preservedDropdown.onValueChanged.Invoke(index);
+            }}
+        }}
+
+        private static GameObject FindActive(string selector)
+        {{
+            GameObject found = GameObject.Find(selector);
+            if (found != null && found.activeInHierarchy) return found;
+            string leaf = selector.Replace('\\\\', '/').Split('/').Last();
+            return Resources.FindObjectsOfTypeAll<GameObject>().FirstOrDefault(item =>
+                item != null && item.gameObject.scene.IsValid() && item.activeInHierarchy && item.name == leaf);
+        }}
+
+        private static GameObject UiObject(string name, Transform parent)
+        {{
+            GameObject item = new GameObject(name, typeof(RectTransform));
+            item.transform.SetParent(parent, false);
+            return item;
+        }}
+
+        private static void Place(RectTransform rect, float anchorX, float anchorY, float width, float height, float x = 0f, float y = 0f)
+        {{
+            rect.anchorMin = rect.anchorMax = new Vector2(anchorX, anchorY);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.sizeDelta = new Vector2(width, height);
+            rect.anchoredPosition = new Vector2(x, y);
+        }}
+
+        private static void Stretch(RectTransform rect, float margin)
+        {{
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = new Vector2(margin, margin);
+            rect.offsetMax = new Vector2(-margin, -margin);
+        }}
+    }}
+}}
+'''
+    return RenderedUnityClientConstruction(
+        runtime_source_path=path,
+        runtime_source=source,
+    )
+
+
+def is_trusted_unity_client_change_set(value: object | None) -> bool:
+    if isinstance(value, BaseModel):
+        payload = value.model_dump(mode="json")
+    elif isinstance(value, Mapping):
+        payload = value
+    else:
+        return False
+    changes = payload.get("changes")
+    return isinstance(changes, list) and any(
+        isinstance(change, Mapping)
+        and TRUSTED_UNITY_CLIENT_MARKER in str(change.get("content") or change.get("replace") or "")
+        for change in changes
+    )
