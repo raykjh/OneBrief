@@ -410,11 +410,27 @@ class DeveloperAgent:
                             ]
                             if (
                                 len(anchored_methods) == 1
-                                and replacement_methods != anchored_methods
+                                and (
+                                    replacement_methods.count(anchored_methods[0]) != 1
+                                    or len(replacement_methods) != len(set(replacement_methods))
+                                    or any(
+                                        name != anchored_methods[0]
+                                        and name in {
+                                            block[0]
+                                            for block in _csharp_method_blocks(
+                                                pending_baseline
+                                                or previous_baseline
+                                                or approved_baseline
+                                            )
+                                        }
+                                        for name in replacement_methods
+                                    )
+                                )
                             ):
                                 raise ValueError(
-                                    "catalog C# method replacement must preserve exactly one "
-                                    f"method boundary: {path}#{anchor_id}"
+                                    "catalog C# method replacement may add new sibling methods but "
+                                    "must not re-emit an existing sibling without its own anchor: "
+                                    f"{path}#{anchor_id}"
                                 )
                     if needle:
                         for candidate in (

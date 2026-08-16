@@ -4613,6 +4613,7 @@ def test_project_developer_rejects_csharp_sibling_without_catalog_anchor() -> No
                 "    private void SetupUI() {\n"
                 "        button.onClick.AddListener(OnClick);\n"
                 "    }\n"
+                "    private void ExistingHelper() { }\n"
                 "}\n"
             ),
             "reason": "Current generated candidate.",
@@ -4627,9 +4628,9 @@ def test_project_developer_rejects_csharp_sibling_without_catalog_anchor() -> No
             "anchor_id": anchor_id,
             "replace": (
                 "    private void SetupUI() { }\n"
-                "    private void UnapprovedSibling() { }"
+                "    private void ExistingHelper() { }"
             ),
-            "reason": "This second method has no verified anchor.",
+            "reason": "This existing sibling has no verified anchor.",
         }],
     })
     developer = DeveloperAgent(
@@ -4637,8 +4638,52 @@ def test_project_developer_rejects_csharp_sibling_without_catalog_anchor() -> No
         source_prefix="project-source/", path_approver=lambda path: path,
     )
 
-    with pytest.raises(ValueError, match="preserve exactly one method boundary"):
+    with pytest.raises(ValueError, match="must not re-emit an existing sibling"):
         developer.promote_candidate(proposal, [], previous, anchors)
+
+
+def test_project_developer_allows_new_csharp_sibling_beside_selected_method() -> None:
+    previous = ProjectCodeChangeSet(
+        summary="Generated Unity controller.",
+        changes=[{
+            "path": "Assets/UI/LoginController.cs", "base_sha256": None,
+            "content": (
+                "class LoginController {\n"
+                "    private void SetupUI() {\n"
+                "        button.onClick.AddListener(OnClick);\n"
+                "    }\n"
+                "}\n"
+            ),
+            "reason": "Current generated candidate.",
+        }],
+    )
+    anchors = DeveloperAgent.exact_edit_anchors(previous, "Fix the button listener.")
+    anchor_id = str(anchors[0]["anchors"][0]["anchor_id"])
+    proposal = CompactProposedProjectCodeChangeSet.model_validate({
+        "summary": "Add a safe runtime entrypoint.",
+        "changes": [{
+            "path": "Assets/UI/LoginController.cs",
+            "anchor_id": anchor_id,
+            "replace": (
+                "    [RuntimeInitializeOnLoadMethod]\n"
+                "    private static void InitializeOnLoad() { }\n\n"
+                "    private void SetupUI() {\n"
+                "        button.onClick.AddListener(OnClick);\n"
+                "    }"
+            ),
+            "reason": "The new sibling does not collide with the candidate.",
+        }],
+    })
+    developer = DeveloperAgent(
+        object(), change_set_schema=ProjectCodeChangeSet,
+        source_prefix="project-source/", path_approver=lambda path: path,
+    )
+
+    result = developer.promote_candidate(proposal, [], previous, anchors)
+
+    content = result.changes[0].content
+    assert content.count("private static void InitializeOnLoad") == 1
+    assert content.count("private void SetupUI") == 1
 
 
 def test_project_developer_normalizes_catalog_id_misplaced_in_range_fields() -> None:
