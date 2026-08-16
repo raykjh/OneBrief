@@ -64,6 +64,7 @@ from onebrief.development_toolpack import (
 )
 from onebrief.development_progress import (
     development_failure_quality,
+    should_preserve_failed_candidate,
     should_repair_regression_candidate,
 )
 from onebrief.development_change_tracking import (
@@ -4140,6 +4141,10 @@ class ExecutionPipeline:
                     feedback,
                 )
                 self._write(output_dir / "development_verification_failure.txt", feedback)
+                phase_changed = bool(
+                    failure_phase_decision.next_phase is not None
+                    and failure_phase_decision.next_phase != active_phase
+                )
                 if not reverify_existing:
                     rejected_change_fingerprints.add(delta_fingerprint)
                     rejected_strategy_fingerprints.add(delta_strategy_fingerprint)
@@ -4163,10 +4168,13 @@ class ExecutionPipeline:
                         output_dir / "code_change_set.json",
                         rolled_back_candidate.model_dump_json(indent=2),
                     )
-                if (
-                    best_failure_quality is None
-                    or quality >= best_failure_quality
-                    or should_preserve_unity_evidence_checkpoint(candidate, str(exc))
+                if should_preserve_failed_candidate(
+                    quality=quality,
+                    best_quality=best_failure_quality,
+                    phase_changed=phase_changed,
+                    unity_evidence_checkpoint=should_preserve_unity_evidence_checkpoint(
+                        candidate, str(exc)
+                    ),
                 ):
                     # At the same verifier-owned stage and blocker count, the
                     # latest trusted result supersedes the older checkpoint.
@@ -4242,10 +4250,6 @@ class ExecutionPipeline:
                 # already-issued repair contract and expose the fresh trusted
                 # failure as feedback. A real maker delta below is still
                 # fingerprinted and counted normally.
-                phase_changed = bool(
-                    failure_phase_decision.next_phase is not None
-                    and failure_phase_decision.next_phase != active_phase
-                )
                 diagnostic_paths: list[str] = []
                 if is_development_product_target_failure(feedback):
                     diagnostic_context = refresh_diagnostic_repository_context(

@@ -91,6 +91,29 @@ def development_failure_quality(message: str) -> tuple[int, int]:
     return stage, -blockers
 
 
+def should_preserve_failed_candidate(
+    *,
+    quality: tuple[int, int],
+    best_quality: tuple[int, int] | None,
+    phase_changed: bool,
+    unity_evidence_checkpoint: bool,
+) -> bool:
+    """Prefer a verified phase handoff over a coarse blocker-count rank.
+
+    When product verification exposes only evidence work (or evidence exposes
+    a product defect), the candidate just crossed a real causal boundary. A
+    larger number of newly visible blockers cannot justify rolling back the
+    completed owner phase.
+    """
+
+    return bool(
+        best_quality is None
+        or phase_changed
+        or quality >= best_quality
+        or unity_evidence_checkpoint
+    )
+
+
 def should_repair_regression_candidate(
     *, checkpoint_failure: str, attempted_failure: str,
 ) -> bool:

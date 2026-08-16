@@ -1,5 +1,6 @@
 from onebrief.development_progress import (
     development_failure_quality,
+    should_preserve_failed_candidate,
     should_repair_regression_candidate,
 )
 
@@ -118,6 +119,21 @@ def test_rejection_audit_suffixes_do_not_make_newer_runtime_evidence_worse() -> 
     )
 
     assert development_failure_quality(with_audit) == development_failure_quality(primary)
+
+
+def test_phase_transition_preserves_candidate_despite_more_new_blockers() -> None:
+    assert should_preserve_failed_candidate(
+        quality=(2, -2),
+        best_quality=(2, -1),
+        phase_changed=True,
+        unity_evidence_checkpoint=False,
+    ) is True
+    assert should_preserve_failed_candidate(
+        quality=(2, -2),
+        best_quality=(2, -1),
+        phase_changed=False,
+        unity_evidence_checkpoint=False,
+    ) is False
 
 
 def test_compile_regression_is_repaired_on_attempted_candidate_before_rollback() -> None:
