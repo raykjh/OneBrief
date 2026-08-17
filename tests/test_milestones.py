@@ -20,6 +20,7 @@ from onebrief.milestones import (
     canonical_sha256,
     execute_milestone_plan,
     milestone_scope_source,
+    _materialize_approved_empty_roots,
     prepare_milestone_workspace,
     requirements_for_milestone,
 )
@@ -534,6 +535,21 @@ def test_workspace_clone_enables_windows_long_paths_before_checkout(
 
     assert config("core.longpaths") == "true"
     assert config("core.autocrlf") == "false"
+
+
+def test_workspace_restores_approved_empty_engine_roots(tmp_path: Path) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+
+    _materialize_approved_empty_roots(
+        root,
+        ["Assets/", "Packages/", "nested/not-a-root/", "../escape/"],
+    )
+
+    assert (root / "Assets").is_dir()
+    assert (root / "Packages").is_dir()
+    assert not (root / "nested").exists()
+    assert not (tmp_path / "escape").exists()
 
 
 def test_checkpoints_are_idempotent_and_dependency_bound(tmp_path: Path) -> None:

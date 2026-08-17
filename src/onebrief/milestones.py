@@ -739,6 +739,16 @@ class MilestoneWorkspace(BaseModel):
     integration_base_revision: str
 
 
+def _materialize_approved_empty_roots(root: Path, prefixes: list[str]) -> None:
+    """Preserve approved top-level capabilities that Git cannot track empty."""
+
+    for prefix in prefixes:
+        pure = PurePosixPath(prefix.replace("\\", "/").strip("/"))
+        if len(pure.parts) != 1 or pure.parts[0] in {"", ".", ".."}:
+            continue
+        (root / pure.parts[0]).mkdir(exist_ok=True)
+
+
 def prepare_milestone_workspace(
     *, work_dir: Path, project_id: str, baseline_registry_root: Path,
 ) -> MilestoneWorkspace:
@@ -767,6 +777,10 @@ def prepare_milestone_workspace(
             "-c", "core.autocrlf=false",
             "clone", "--local", "--no-hardlinks",
             str(baseline_root), str(integration_root),
+        )
+        _materialize_approved_empty_roots(
+            integration_root,
+            list(getattr(baseline_state.generated, "allowed_write_prefixes", [])),
         )
         resident = baseline_root / MANIFEST_NAME
         manifest = ProjectManifest.model_validate_json(resident.read_text(encoding="utf-8"))
