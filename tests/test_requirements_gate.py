@@ -1,4 +1,5 @@
 import asyncio
+import re
 from pathlib import Path
 
 import pytest
@@ -8,7 +9,14 @@ from onebrief.jobs import create_job
 from onebrief.producer import estimate_budget
 from onebrief.requirements_gate import apply_requirements_gate, find_scoring_gap
 from onebrief.runner import reinspect_requirements
-from onebrief.schemas import InformationRequirement, IntakeRequest, InternalSource, RequirementsAnalysis, SourcePriority
+from onebrief.schemas import (
+    InformationRequirement,
+    IntakeRequest,
+    InternalSource,
+    OutputTarget,
+    RequirementsAnalysis,
+    SourcePriority,
+)
 
 
 def _intake() -> IntakeRequest:
@@ -75,6 +83,22 @@ def _complete_rules() -> InternalSource:
             "Add the three field scores. Include tied candidates together."
         ),
     )
+
+
+def test_deterministic_output_target_contract_is_canonical_english() -> None:
+    intake = IntakeRequest(
+        goal="Improve the existing project.",
+        output_target=OutputTarget.EXISTING_PROJECT,
+    )
+
+    result = apply_requirements_gate(intake, _ready())
+    emitted = "\n".join(
+        [*result.deliverables, *result.acceptance_criteria, *result.assumptions]
+    )
+
+    assert "an improved runnable form of the existing project" in result.deliverables
+    assert "may not be replaced by a report or summary file" in emitted
+    assert not re.search(r"[가-힣]", emitted)
 
 
 def test_missing_conversion_table_overrides_ready_model_result() -> None:
@@ -171,7 +195,7 @@ def test_public_research_time_window_is_optional_and_disclosed() -> None:
     assert result.mandatory_information == []
     assert [item.key for item in result.optional_information] == ["analysis_period"]
     assert result.consolidated_questions == []
-    assert any("실제 사용 기간" in item for item in result.assumptions)
+    assert any("actual window used" in item for item in result.assumptions)
 
 
 def test_confirmed_api_indicator_and_framework_choices_cannot_loop() -> None:

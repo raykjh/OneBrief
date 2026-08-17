@@ -39,12 +39,12 @@ _EXPLICIT_NON_SCORING = re.compile(
 )
 
 _OUTPUT_TARGET_CONTRACTS = {
-    OutputTarget.EXISTING_PROJECT: "기존 프로젝트의 원래 실행 형태를 유지한 개선본",
-    OutputTarget.WEB_APP: "웹에서 직접 실행할 수 있는 프로그램",
-    OutputTarget.UNITY_APP: "Unity 프로젝트로 실행할 수 있는 게임 또는 앱",
-    OutputTarget.SPREADSHEET: "스프레드시트 파일(XLSX 또는 요청된 표 형식)",
-    OutputTarget.DOCUMENT: "문서 파일(DOCX, PDF 또는 요청된 문서 형식)",
-    OutputTarget.TEXT_FILE: "텍스트 파일(TXT 또는 Markdown)",
+    OutputTarget.EXISTING_PROJECT: "an improved runnable form of the existing project",
+    OutputTarget.WEB_APP: "a program that runs directly on the web",
+    OutputTarget.UNITY_APP: "a runnable Unity game or application",
+    OutputTarget.SPREADSHEET: "a spreadsheet file (XLSX or the requested tabular format)",
+    OutputTarget.DOCUMENT: "a document file (DOCX, PDF, or the requested document format)",
+    OutputTarget.TEXT_FILE: "a text file (TXT or Markdown)",
 }
 
 
@@ -111,7 +111,10 @@ def _apply_output_target(
     deliverables = list(analysis.deliverables)
     if not any(contract in item for item in deliverables):
         deliverables.append(contract)
-    criterion = f"최종 산출물은 {contract} 자체여야 하며 보고서나 요약 파일로 대체하지 않는다."
+    criterion = (
+        f"The final deliverable must be {contract} itself and may not be replaced "
+        "by a report or summary file."
+    )
     criteria = list(analysis.acceptance_criteria)
     if criterion not in criteria:
         criteria.append(criterion)
@@ -246,8 +249,9 @@ def _apply_creative_defaults(
     optional_by_key = {item.key: item for item in analysis.optional_information}
     optional_by_key.update({item.key: item for item in defaultable})
     assumption = (
-        "줄거리, 주요 인물, 장르, 톤, 결말 방향 및 목표 분량은 제공된 정본 안에서 "
-        "일관된 창작 기본값으로 선택하고 결과물에 명시한다."
+        "When the source does not specify the plot, principal characters, genre, "
+        "ending direction, or target length, apply coherent creative defaults and "
+        "state those choices in the deliverable."
     )
     assumptions = list(dict.fromkeys([*analysis.assumptions, assumption]))
     return analysis.model_copy(
@@ -283,8 +287,8 @@ def _apply_public_research_defaults(
         if not _PUBLIC_RESEARCH_TIME_WINDOW.search(question)
     ]
     assumption = (
-        "공개자료 검색 기간은 최신성과 목표 적합성을 기준으로 합리적으로 선택하고 "
-        "결과물에 실제 사용 기간을 명시한다."
+        "Select a reasonable public-research time window based on recency and fit "
+        "to the objective, and state the actual window used in the deliverable."
     )
     return analysis.model_copy(
         update={
@@ -329,8 +333,9 @@ def _apply_confirmed_implementation_defaults(
         question for question in analysis.consolidated_questions if not resolved(question)
     ]
     assumption = (
-        "사용자가 확정한 무료 공개 API, 표준 기술 지표 및 프레임워크 무선호 결정을 "
-        "구현 기본값으로 적용하고 최종 결과물에 실제 선택을 명시한다."
+        "Apply the user's confirmed free public API, standard technical indicator, "
+        "and framework-neutral decisions as implementation defaults, and state the "
+        "actual selections in the final deliverable."
     )
     return analysis.model_copy(
         update={
