@@ -429,6 +429,22 @@ def test_declarative_unity_journey_canonicalizes_exact_assets_root_shorthand() -
     assert plan.test_directory == "Assets/Tests/PlayMode"
 
 
+def test_declarative_unity_journey_normalizes_two_step_scene_observation() -> None:
+    plan = UnityEvidenceJourneyPlan.model_validate({
+        "summary": "Observe the initial title topology.",
+        "test_directory": "Assets/Tests/PlayMode",
+        "steps": [
+            {"action": "load_scene", "scene_name": "Title"},
+            {"action": "capture", "scenario_id": "title"},
+        ],
+    })
+
+    assert [step.action for step in plan.steps] == [
+        "load_scene", "wait_for_scene", "capture",
+    ]
+    assert plan.steps[1].scene_name == "Title"
+
+
 def test_declarative_unity_journey_compiles_complete_onboarding_auth_contract() -> None:
     plan = UnityEvidenceJourneyPlan.model_validate({
         "summary": "Prove the complete first-run authentication journey.",

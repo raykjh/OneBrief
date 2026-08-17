@@ -207,6 +207,6 @@ class ExecutionCheckpoint(BaseModel):
     status: PipelineStatus
     current_stage: str
     completed_stages: list[str]
-    revision_round: int = Field(ge=0, le=6)
+    revision_round: int = Field(ge=0, le=8)
     final_verdict: Verdict | None = None
     message: str = ""

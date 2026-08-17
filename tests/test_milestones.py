@@ -333,6 +333,12 @@ def test_greenfield_product_uses_progressive_whole_product_maturity_passes() -> 
         item.contract.max_revision_rounds
         for item in (topology, connected, functional, refinement)
     ] == [8, 8, 8, 8]
+    assert ExecutionCheckpoint(
+        status=PipelineStatus.PARTIAL,
+        current_stage="maturity-repair",
+        completed_stages=[],
+        revision_round=8,
+    ).revision_round == 8
     assert topology.contract.primary_criterion_ids == []
     assert [item.criterion_id for item in topology.contract.slice_quality_criteria] == ["Q89"]
     assert [item.criterion_id for item in connected.contract.slice_quality_criteria] == [

@@ -244,6 +244,39 @@ class UnityEvidenceJourneyPlan(BaseModel):
         ),
     )
 
+    @field_validator("steps", mode="before")
+    @classmethod
+    def normalize_minimal_observation_plan(cls, value: object) -> object:
+        """Insert the one assertion implied by an unambiguous two-step observation.
+
+        A weak provider may return only ``load_scene`` followed by ``capture``.
+        Waiting for that exact same loaded scene is deterministic, adds no product
+        behavior, and turns the capture into an executable state observation.
+        Broader or ambiguous plans still fail closed in ``validate_journey``.
+        """
+
+        if not isinstance(value, list) or len(value) != 2:
+            return value
+        first, second = value
+        if not isinstance(first, dict) or not isinstance(second, dict):
+            return value
+        scene_name = str(first.get("scene_name") or "").strip()
+        if (
+            first.get("action") != "load_scene"
+            or second.get("action") != "capture"
+            or not scene_name
+        ):
+            return value
+        assertion = {
+            "action": "wait_for_scene",
+            "scene_name": scene_name,
+            "frames": 2,
+            "timeout_seconds": max(1.0, float(first.get("timeout_seconds") or 10.0)),
+            "viewport_width": int(first.get("viewport_width") or 1280),
+            "viewport_height": int(first.get("viewport_height") or 720),
+        }
+        return [first, assertion, second]
+
     @field_validator("test_directory")
     @classmethod
     def validate_test_directory(cls, value: str) -> str:
