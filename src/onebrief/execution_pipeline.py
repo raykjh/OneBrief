@@ -3837,7 +3837,13 @@ class ExecutionPipeline:
                         and base_sha256 is None
                         and isinstance(content, str)
                         and content.strip()
-                        and PurePosixPath(normalized_path).suffix == ".cs"
+                        and (
+                            PurePosixPath(normalized_path).suffix == ".cs"
+                            or (
+                                isinstance(raw, NewProductConstructionChangeSet)
+                                and PurePosixPath(normalized_path).suffix in {".unity", ".prefab"}
+                            )
+                        )
                         and visual_repair_production_target_allowed(path)
                         and developer.path_approver(path) is not None
                     ):

@@ -2427,7 +2427,7 @@ class ApprovedProjectDevelopmentToolPack:
     def _requires_unity_visual_runtime(goal_text: str) -> bool:
         return bool(re.search(
             r"(?:\bui\b|screen|visual|render|dropdown|locali[sz]ation|language|"
-            r"multilingual|surface|scene|transition|navigation|login|lobby|settings|"
+            r"multilingual|surface|scene|topology|transition|navigation|login|lobby|settings|"
             r"화면|시각|드롭다운|다국어|언어|번역|장면|전환|로그인|로비|설정)",
             goal_text,
             re.IGNORECASE,
@@ -2529,11 +2529,14 @@ class ApprovedProjectDevelopmentToolPack:
                 re.IGNORECASE | re.DOTALL,
             )
         )
-        if changed_paths and not authorized_evidence_only and re.search(
-            r"(?:\bui\b|screen|visual|layout|responsive|surface|scene|transition|"
-            r"navigation|login|lobby|settings|로그인|로비|설정|화면|장면|전환)",
-            intent_text,
-            re.IGNORECASE,
+        if changed_paths and not authorized_evidence_only and (
+            re.search(
+                r"(?:\bui\b|screen|visual|layout|responsive|surface|scene|transition|"
+                r"navigation|login|lobby|settings|로그인|로비|설정|화면|장면|전환)",
+                intent_text,
+                re.IGNORECASE,
+            )
+            or "whole-product executable topology" in intent_text.casefold()
         ):
             production_paths = [
                 path for path in changed_paths
@@ -2589,12 +2592,27 @@ class ApprovedProjectDevelopmentToolPack:
                     Path(path).suffix.casefold() in {".unity", ".prefab"}
                     for path in production_paths
                 )
+                project_scene_assets = any(
+                    asset.is_file() and not asset.is_symlink()
+                    for suffix in ("*.unity", "*.prefab")
+                    for asset in (clone / "Assets").rglob(suffix)
+                )
                 changed_production_source = "\n".join(
                     path.read_text(encoding="utf-8", errors="replace")
                     for relative in production_paths
                     if Path(relative).suffix.casefold() == ".cs"
                     and (path := clone / Path(*PurePosixPath(relative).parts)).is_file()
                 )
+                if (
+                    "whole-product executable topology" in intent_text.casefold()
+                    and not project_scene_assets
+                ):
+                    issues.append(
+                        "New-client construction preflight: the whole-product topology contains no actual "
+                        "production scene or prefab. A region enum, manager, route table, or log-only mapping "
+                        "does not establish a runtime product region; create one bounded production scene or "
+                        "prefab inside the approved Unity project."
+                    )
                 declared_assets = set(re.findall(
                     r'''["'](Assets/[^"'\r\n]+\.(?:unity|prefab))["']''',
                     changed_production_source,

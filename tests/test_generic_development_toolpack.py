@@ -3027,6 +3027,38 @@ def test_unity_visual_preflight_rejects_self_declared_missing_topology_paths(
     assert any("maker-authored topology mapping is not evidence" in issue for issue in issues)
 
 
+def test_unity_maturity_topology_rejects_region_manager_without_product_asset(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-enum-topology-clone"
+    production = clone / "Assets" / "Scripts"
+    production.mkdir(parents=True)
+    (production / "ProductTopology.cs").write_text(
+        "using UnityEngine; enum Region { Title, Gameplay, Result } "
+        "public class ProductTopology : MonoBehaviour { "
+        "[RuntimeInitializeOnLoadMethod] static void Install() { "
+        "new GameObject(\"ProductTopology\").AddComponent<ProductTopology>(); } }\n",
+        encoding="utf-8",
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile,
+        clone,
+        "Establish the whole-product executable topology before functional completion.",
+        ["Assets/Scripts/ProductTopology.cs"],
+    )
+
+    assert any(
+        "whole-product topology contains no actual production scene or prefab" in issue
+        for issue in issues
+    )
+
+
 def test_unity_visual_preflight_rejects_changed_detached_existing_monobehaviour(
     tmp_path: Path,
 ) -> None:
