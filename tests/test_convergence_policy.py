@@ -248,6 +248,21 @@ def test_inert_unity_component_routes_to_product_owner() -> None:
     assert observation.owner == FailureOwner.PRODUCT
 
 
+def test_missing_self_declared_unity_topology_path_routes_to_product_owner() -> None:
+    observation = ConvergencePolicy().observe(
+        context="development_verification",
+        failure_text=(
+            "Unity visual test contract: new Unity production source declares missing "
+            "scene/prefab path Assets/Scenes/TitleScreen.unity; a maker-authored topology "
+            "mapping is not evidence that the product region exists"
+        ),
+        attempt_number=1,
+    )
+
+    assert observation.layer == FailureLayer.SEMANTIC_PRODUCT
+    assert observation.owner == FailureOwner.PRODUCT
+
+
 def test_locale_observer_measurement_order_is_evidence_topology() -> None:
     observation = ConvergencePolicy().observe(
         context="development_verification",

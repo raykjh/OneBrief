@@ -520,8 +520,8 @@ def build_milestone_plan(
                 "every major requested surface and system has a cohesive scene, prefab, bootstrap, or interface."
             ),
             (
-                "Compile output plus a topology receipt mapping every major approved product region to a "
-                "runtime-reachable production path; detached scripts do not count."
+                "Trusted repository and runtime scans mapping every major approved product region to an "
+                "existing, runtime-reachable production path; detached scripts or maker-authored path lists do not count."
             ),
         )
         connected = maturity_criterion(

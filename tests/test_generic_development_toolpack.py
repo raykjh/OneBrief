@@ -2985,6 +2985,48 @@ def test_unity_visual_preflight_rejects_inert_new_ui_monobehaviour(tmp_path: Pat
     assert any("inert source file" in issue for issue in issues)
 
 
+def test_unity_visual_preflight_rejects_self_declared_missing_topology_paths(
+    tmp_path: Path,
+) -> None:
+    _root, registry = _approved_node_project(tmp_path)
+    pack = ApprovedProjectDevelopmentToolPack("generic-node", registry)
+    clone = tmp_path / "unity-false-topology-clone"
+    tests = clone / "Assets" / "Tests" / "PlayMode"
+    production = clone / "Assets" / "Scripts"
+    tests.mkdir(parents=True)
+    production.mkdir(parents=True)
+    (production / "TopologyReceipt.cs").write_text(
+        "using UnityEngine; public class TopologyReceipt : MonoBehaviour { "
+        "[RuntimeInitializeOnLoadMethod] static void Install() {} "
+        'string title = "Assets/Scenes/TitleScreen.unity"; }\n',
+        encoding="utf-8",
+    )
+    (tests / "OneBriefVisualTests.cs").write_text(
+        "namespace OneBrief.Visual { [UnityTest] public void Flow() { "
+        'var schema="onebrief-unity-visual-evidence-v1"; '
+        'var evidence="runtime-evidence.json"; var png="topology.png"; } }',
+        encoding="utf-8",
+    )
+    (tests / "OneBrief.Visual.Tests.asmdef").write_text(
+        '{"optionalUnityReferences":["TestAssemblies"]}\n', encoding="utf-8"
+    )
+    profile = SimpleNamespace(adapters=[SimpleNamespace(
+        enabled=True, adapter_id=AdapterId.UNITY_PLAYMODE_VISUAL_TESTS,
+    )])
+
+    issues = pack._unity_visual_contract_issues(
+        profile,
+        clone,
+        "Create the whole-product executable scene and screen topology.",
+        [
+            "Assets/Scripts/TopologyReceipt.cs",
+            "Assets/Tests/PlayMode/OneBriefVisualTests.cs",
+        ],
+    )
+
+    assert any("maker-authored topology mapping is not evidence" in issue for issue in issues)
+
+
 def test_unity_visual_preflight_rejects_changed_detached_existing_monobehaviour(
     tmp_path: Path,
 ) -> None:

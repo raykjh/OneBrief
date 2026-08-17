@@ -2595,6 +2595,18 @@ class ApprovedProjectDevelopmentToolPack:
                     if Path(relative).suffix.casefold() == ".cs"
                     and (path := clone / Path(*PurePosixPath(relative).parts)).is_file()
                 )
+                declared_assets = set(re.findall(
+                    r'''["'](Assets/[^"'\r\n]+\.(?:unity|prefab))["']''',
+                    changed_production_source,
+                    flags=re.IGNORECASE,
+                ))
+                for declared in sorted(declared_assets, key=str.casefold):
+                    declared_path = clone / Path(*PurePosixPath(declared).parts)
+                    if not declared_path.is_file():
+                        issues.append(
+                            "new Unity production source declares missing scene/prefab path "
+                            f"{declared}; a maker-authored topology mapping is not evidence that the product region exists"
+                        )
                 project_sources = {
                     path.resolve(): path.read_text(encoding="utf-8", errors="replace")
                     for path in (clone / "Assets").rglob("*.cs")
