@@ -116,11 +116,16 @@ def new_product_construction_paths(change_set: object | None) -> set[str]:
             continue
         suffix = "." + path.rsplit(".", 1)[-1].casefold() if "." in path else ""
         is_new = change.get("base_sha256") is None
+        content = str(change.get("content") or "")
+        is_trusted_incremental_client = (
+            change.get("base_sha256") is not None
+            and "KHALINOS_DECLARATIVE_CLIENT_V1" in content
+        )
         is_surface = suffix in direct_surface_suffixes
         is_client_source = suffix == ".cs" and any(
             marker in lowered for marker in client_source_markers
         )
-        if is_new and (is_surface or is_client_source):
+        if (is_new or is_trusted_incremental_client) and (is_surface or is_client_source):
             paths.add(path.replace("\\", "/").casefold())
     return paths
 
@@ -375,6 +380,24 @@ def apply_trusted_development_evidence(
                 gaps.append(
                     "the executed journey must operate each required volume slider and assert the corresponding persisted client state"
                 )
+        asks_lobby_data = "lobby" in normalized and "data" in normalized
+        if asks_lobby_data and not any(
+            "assert_text_not_equals:newclientlobbydata" in interaction
+            for interaction in interactions
+        ):
+            gaps.append(
+                "the executed journey must reject placeholder Lobby text and prove non-empty runtime data"
+            )
+        asks_lobby_navigation = "lobby" in normalized and any(
+            marker in normalized for marker in ("navigation", "transition", "destination")
+        )
+        if asks_lobby_navigation and not (
+            any("click:newclientlobbynavigationbutton" in interaction for interaction in interactions)
+            and any("wait_for_scene:" in interaction for interaction in interactions)
+        ):
+            gaps.append(
+                "the executed journey must click the new Lobby navigation control and reach its approved destination scene"
+            )
         asks_settings_return = (
             "settings" in normalized
             and any(marker in normalized for marker in (

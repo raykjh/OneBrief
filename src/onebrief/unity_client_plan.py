@@ -838,6 +838,11 @@ def derive_unity_client_evidence_journey(
     if plan.verified_base is not None:
         steps.extend([
             {"action": "assert_active", "target": "NewClientLobbyData"},
+            {
+                "action": "assert_text_not_equals",
+                "target": "NewClientLobbyData",
+                "text_value": "Waiting for approved data",
+            },
             {"action": "assert_active", "target": "NewClientLobbyNavigationButton"},
             {"action": "capture", "scenario_id": "lobby_data_navigation_active"},
             {"action": "click_button", "target": "NewClientLobbyNavigationButton"},

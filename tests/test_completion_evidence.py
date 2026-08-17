@@ -131,6 +131,13 @@ def test_product_construction_preflight_rejects_router_edit_and_accepts_new_clie
             reason="Create a new production-owned client surface.",
         )],
     ))
+    assert has_new_product_construction({
+        "changes": [{
+            "path": "Assets/JULPAE/NewClient/KhalinosGeneratedClientShell.cs",
+            "base_sha256": "a" * 64,
+            "content": "// KHALINOS_DECLARATIVE_CLIENT_V1\npublic sealed class KhalinosGeneratedClientShell {}",
+        }]
+    })
 
 
 def test_same_quest_can_repair_a_surface_it_created() -> None:
@@ -502,3 +509,49 @@ def test_named_settings_control_contract_passes_with_effect_assertions_and_retur
     assert checks["Q02"].passed is True
     assert checks["Q04"].passed is True
     assert corrected.verdict == Verdict.PASS
+
+
+def test_lobby_data_and_navigation_require_quest_specific_runtime_proof() -> None:
+    base = requirements("Verify the new Lobby data and navigation in the running Unity client.")
+    contract = CompletionContract(
+        target_state="The new Lobby renders preserved data and reaches the approved destination.",
+        quality_criteria=[QualityCriterion(
+            criterion_id="Q92",
+            description="New Lobby production surface renders preserved data and navigation",
+            evaluation_mode=EvaluationMode.DETERMINISTIC,
+            evidence_required="PlayMode evidence rejects placeholder data and reaches the destination scene.",
+        )],
+    )
+    payload = evidence("unity_playmode_visual_tests")
+    payload["runtime_evidence"] = [{
+        "path": "development/unity_visual_evidence/runtime-evidence.json",
+        "content": json.dumps({"scenarios": [
+            {"scenario_id": "lobby_surface_initial", "interaction": "assert_active:NewClientLobbyPanel"},
+        ]}),
+    }]
+
+    rejected = apply_trusted_development_evidence(
+        passing_report(),
+        base.model_copy(update={"completion_contract": contract}),
+        payload,
+    )
+    assert rejected.verdict == Verdict.REVISE
+    assert any("placeholder Lobby text" in issue for issue in rejected.blocking_issues)
+    assert any("navigation control" in issue for issue in rejected.blocking_issues)
+
+    payload["runtime_evidence"][0]["content"] = json.dumps({"scenarios": [
+        {
+            "scenario_id": "lobby_data_navigation_active",
+            "interaction": "assert_text_not_equals:NewClientLobbyData",
+        },
+        {
+            "scenario_id": "lobby_navigation_destination",
+            "interaction": "click:NewClientLobbyNavigationButton -> wait_for_scene:PlayScene_All",
+        },
+    ]})
+    accepted = apply_trusted_development_evidence(
+        passing_report(),
+        base.model_copy(update={"completion_contract": contract}),
+        payload,
+    )
+    assert accepted.verdict == Verdict.PASS

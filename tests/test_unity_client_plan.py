@@ -324,6 +324,12 @@ def test_incremental_client_plan_derives_navigation_evidence() -> None:
         for step in journey.steps
     )
     assert any(
+        step.action == "assert_text_not_equals"
+        and step.target == "NewClientLobbyData"
+        and step.text_value == "Waiting for approved data"
+        for step in journey.steps
+    )
+    assert any(
         step.action == "click_button"
         and step.target == "NewClientLobbyNavigationButton"
         for step in journey.steps

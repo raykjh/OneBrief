@@ -21,6 +21,7 @@ UnityJourneyAction = Literal[
     "load_scene",
     "wait_frames",
     "assert_active",
+    "assert_text_not_equals",
     "select_dropdown_index",
     "set_slider_value",
     "set_toggle_on",
@@ -42,7 +43,7 @@ class UnityEvidenceJourneyStep(BaseModel):
         max_length=300,
         description=(
             "Exact active GameObject name or hierarchy path. Required for "
-            "assert_active, select_dropdown_index, set_slider_value, set_toggle_on, set_input_text, and "
+            "assert_active, assert_text_not_equals, select_dropdown_index, set_slider_value, set_toggle_on, set_input_text, and "
             "click_button. Use set_toggle_on for a Unity Toggle; never treat a Toggle as a Button."
         ),
     )
@@ -83,7 +84,10 @@ class UnityEvidenceJourneyStep(BaseModel):
     text_value: str | None = Field(
         default=None,
         max_length=300,
-        description="Deterministic non-secret text entered through the shipped input control.",
+        description=(
+            "Deterministic non-secret text entered through the shipped input control or rejected "
+            "as a placeholder by assert_text_not_equals."
+        ),
     )
     frames: int = Field(default=2, ge=1, le=120)
     timeout_seconds: float = Field(default=10.0, ge=1.0, le=60.0)
@@ -112,7 +116,7 @@ class UnityEvidenceJourneyStep(BaseModel):
         normalized = dict(value)
         action = str(normalized.get("action") or "")
         target_actions = {
-            "assert_active", "select_dropdown_index", "set_slider_value", "set_toggle_on", "set_input_text",
+            "assert_active", "assert_text_not_equals", "select_dropdown_index", "set_slider_value", "set_toggle_on", "set_input_text",
             "click_button",
         }
         if action not in target_actions:
@@ -125,7 +129,7 @@ class UnityEvidenceJourneyStep(BaseModel):
             normalized["number_value"] = None
         if action not in {"assert_player_pref_float", "assert_player_pref_string"}:
             normalized["preference_key"] = None
-        if action not in {"set_input_text", "assert_player_pref_string"}:
+        if action not in {"set_input_text", "assert_text_not_equals", "assert_player_pref_string"}:
             normalized["text_value"] = None
         if action != "capture":
             normalized["scenario_id"] = None
@@ -187,7 +191,7 @@ class UnityEvidenceJourneyStep(BaseModel):
     @model_validator(mode="after")
     def fields_match_action(self) -> "UnityEvidenceJourneyStep":
         target_actions = {
-            "assert_active", "select_dropdown_index", "set_slider_value", "set_toggle_on", "set_input_text",
+            "assert_active", "assert_text_not_equals", "select_dropdown_index", "set_slider_value", "set_toggle_on", "set_input_text",
             "click_button",
         }
         if self.action in target_actions and not self.target:
@@ -202,6 +206,8 @@ class UnityEvidenceJourneyStep(BaseModel):
             raise ValueError(f"{self.action} requires preference_key")
         if self.action == "set_input_text" and self.text_value is None:
             raise ValueError("set_input_text requires text_value")
+        if self.action == "assert_text_not_equals" and self.text_value is None:
+            raise ValueError("assert_text_not_equals requires text_value")
         if self.action == "assert_player_pref_string" and self.text_value is None:
             raise ValueError("assert_player_pref_string requires text_value")
         if self.action == "capture" and not self.scenario_id:
@@ -292,7 +298,7 @@ class UnityEvidenceJourneyPlan(BaseModel):
 
 
 _TARGET_ACTIONS = {
-    "assert_active", "select_dropdown_index", "set_slider_value",
+    "assert_active", "assert_text_not_equals", "select_dropdown_index", "set_slider_value",
     "set_toggle_on", "set_input_text", "click_button",
 }
 
@@ -557,6 +563,19 @@ def _step_source(step: UnityEvidenceJourneyStep) -> list[str]:
         return [
             f"RequireActive({_cs(step.target or '')});",
             f"assertions++; trace.Add({_cs('assert_active:' + leaf)});",
+        ]
+    if step.action == "assert_text_not_equals":
+        leaf = (step.target or "").replace("\\", "/").split("/")[-1]
+        return [
+            "{",
+            f"    GameObject textTarget = RequireActive({_cs(step.target or '')});",
+            "    TMP_Text tmpText = textTarget.GetComponent<TMP_Text>();",
+            "    Text legacyText = tmpText == null ? textTarget.GetComponent<Text>() : null;",
+            "    string visibleText = tmpText != null ? tmpText.text : legacyText != null ? legacyText.text : \"\";",
+            "    Assert.IsFalse(string.IsNullOrWhiteSpace(visibleText), \"Expected visible runtime text.\");",
+            f"    Assert.AreNotEqual({_cs(step.text_value or '')}, visibleText, \"Placeholder text is not runtime data.\");",
+            f"    assertions++; trace.Add({_cs('assert_text_not_equals:' + leaf)});",
+            "}",
         ]
     if step.action == "select_dropdown_index":
         leaf = (step.target or "").replace("\\", "/").split("/")[-1]
