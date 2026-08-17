@@ -426,6 +426,7 @@ def build_milestone_plan(
         and all(token in target_text for token in ("login", "lobby", "settings"))
     )
     new_client_construction = requires_new_product_construction(target_text)
+    progressive_breadth = not unity_surface_flow and bool(compile_items)
     if unity_surface_flow:
         login_outcome = (
             "A newly constructed Login surface in a separate client presentation layer reuses the approved "
@@ -493,6 +494,95 @@ def build_milestone_plan(
                 [],
             ),
         ])
+    elif progressive_breadth:
+        used_ids = {item.criterion_id for item in criteria}
+
+        def maturity_criterion(
+            preferred: int, description: str, evidence_required: str,
+            mode: EvaluationMode = EvaluationMode.DETERMINISTIC,
+        ) -> QualityCriterion:
+            for number in range(preferred, 79, -1):
+                criterion_id = f"Q{number:02d}"
+                if criterion_id not in used_ids:
+                    used_ids.add(criterion_id)
+                    return QualityCriterion(
+                        criterion_id=criterion_id,
+                        description=description,
+                        evaluation_mode=mode,
+                        evidence_required=evidence_required,
+                    )
+            raise ValueError("no reserved maturity criterion ID is available")
+
+        topology = maturity_criterion(
+            89,
+            (
+                "The whole approved product topology exists as runtime-reachable production code: "
+                "every major requested surface and system has a cohesive scene, prefab, bootstrap, or interface."
+            ),
+            (
+                "Compile output plus a topology receipt mapping every major approved product region to a "
+                "runtime-reachable production path; detached scripts do not count."
+            ),
+        )
+        connected = maturity_criterion(
+            88,
+            (
+                "One rough but real end-to-end runtime journey crosses every major product region and returns "
+                "observable state; detailed mechanics and polish remain owned by later passes."
+            ),
+            (
+                "Executed runtime trace and representative captures proving transitions across the complete "
+                "product outline without substituting synthetic test UI."
+            ),
+        )
+        refinement = maturity_criterion(
+            87,
+            (
+                "The complete product receives one cross-surface refinement pass for coherent presentation, "
+                "feedback, and usability after functional completion."
+            ),
+            (
+                "Independent cross-surface observation against the approved outcome, with remaining release "
+                "gaps recorded for final integration rather than silently waived."
+            ),
+            EvaluationMode.INDEPENDENT_REVIEW,
+        )
+        presentation_ids = {item.criterion_id for item in presentation_items}
+        preservation_ids = {item.criterion_id for item in preservation_items}
+        functional_items = [
+            item for item in criteria
+            if item.criterion_id not in presentation_ids | preservation_ids
+        ]
+        remaining.clear()
+        groups.extend([
+            (
+                "Whole-product executable topology",
+                "All major approved product regions exist in rough, runtime-reachable form before detail work begins.",
+                [],
+                [topology],
+            ),
+            (
+                "Connected whole-product prototype",
+                "A representative end-to-end journey traverses the entire rough product before local completion work.",
+                [],
+                [connected],
+            ),
+            (
+                "Whole-product functional completion",
+                "Every approved functional rule is completed across the already connected product outline.",
+                functional_items,
+                [],
+            ),
+            (
+                "Whole-product experience refinement",
+                "Presentation and usability are refined coherently across the functionally complete product.",
+                presentation_items,
+                [refinement],
+            ),
+        ])
+        # These criteria are now intentionally owned by the maturity passes.
+        settings_items = []
+        presentation_items = []
     elif flow_items:
         groups.append((
             "Executable primary flow",

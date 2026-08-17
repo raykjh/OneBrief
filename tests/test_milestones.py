@@ -269,7 +269,7 @@ def test_plan_assigns_every_criterion_once_and_finishes_with_full_regression() -
     assert sum(item.budget_weight for item in plan.milestones) == pytest.approx(1.0)
 
 
-def test_compile_only_match_is_paired_with_greenfield_product_foundation() -> None:
+def test_greenfield_product_uses_progressive_whole_product_maturity_passes() -> None:
     criteria = [
         QualityCriterion(
             criterion_id="Q01",
@@ -322,10 +322,23 @@ def test_compile_only_match_is_paired_with_greenfield_product_foundation() -> No
         maximum_cost_usd=10.0,
     )
 
-    first = plan.milestones[1]
-    assert first.title == "Executable product foundation"
-    assert first.contract.primary_criterion_ids == ["Q01", "Q02", "Q03"]
-    assert first.contract.primary_criterion_ids != ["Q01"]
+    assert [item.title for item in plan.milestones[1:5]] == [
+        "Whole-product executable topology",
+        "Connected whole-product prototype",
+        "Whole-product functional completion",
+        "Whole-product experience refinement",
+    ]
+    topology, connected, functional, refinement = plan.milestones[1:5]
+    assert topology.contract.primary_criterion_ids == []
+    assert [item.criterion_id for item in topology.contract.slice_quality_criteria] == ["Q89"]
+    assert [item.criterion_id for item in connected.contract.slice_quality_criteria] == [
+        "Q89", "Q88",
+    ]
+    assert functional.contract.primary_criterion_ids == ["Q01", "Q02", "Q03"]
+    assert refinement.contract.primary_criterion_ids == ["Q04"]
+    assert [item.criterion_id for item in refinement.contract.slice_quality_criteria] == [
+        "Q89", "Q88", "Q87",
+    ]
 
 
 def test_scoped_requirements_revalidate_passed_dependencies() -> None:
