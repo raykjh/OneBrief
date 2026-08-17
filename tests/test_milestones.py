@@ -329,6 +329,10 @@ def test_greenfield_product_uses_progressive_whole_product_maturity_passes() -> 
         "Whole-product experience refinement",
     ]
     topology, connected, functional, refinement = plan.milestones[1:5]
+    assert [
+        item.contract.max_revision_rounds
+        for item in (topology, connected, functional, refinement)
+    ] == [6, 6, 6, 6]
     assert topology.contract.primary_criterion_ids == []
     assert [item.criterion_id for item in topology.contract.slice_quality_criteria] == ["Q89"]
     assert [item.criterion_id for item in connected.contract.slice_quality_criteria] == [

@@ -703,7 +703,11 @@ def build_milestone_plan(
                 verification_scope=(
                     VerificationScope.TARGETED if index == 1 else VerificationScope.AFFECTED
                 ),
-                max_revision_rounds=min(4, requirements.completion_contract.quality_criteria.__len__()),
+                max_revision_rounds=(
+                    6
+                    if progressive_breadth
+                    else min(4, requirements.completion_contract.quality_criteria.__len__())
+                ),
             ),
             budget_weight=per_group,
         ))
