@@ -591,6 +591,16 @@ def bind_semantic_product_repair_scope(
         for source in relevant_product_repair_sources(sources, failure_text)
     ]
     normalized_failure = failure_text.replace("\\", "/").casefold()
+    missing_declared_paths = re.findall(
+        r"declares missing scene/prefab path\s+((?:Assets|Packages)/[^\s;|]+\.(?:unity|prefab))",
+        failure_text.replace("\\", "/"),
+        flags=re.IGNORECASE,
+    )
+    missing_runtime_scene = bool(re.search(
+        r"scene\s+'[^']+'\s+couldn'?t be loaded because it has not been added",
+        failure_text,
+        flags=re.IGNORECASE,
+    ))
     named_candidate_paths = [
         path.replace("\\", "/")
         for path in (candidate_paths or [])
@@ -599,8 +609,9 @@ def bind_semantic_product_repair_scope(
     permitted = [
         path.replace("\\", "/")
         for path in [
-            *contract.permitted_paths,
+            *([] if missing_runtime_scene else contract.permitted_paths),
             *(diagnostic_paths or []),
+            *missing_declared_paths,
             *named_candidate_paths,
             *selected_paths,
         ]

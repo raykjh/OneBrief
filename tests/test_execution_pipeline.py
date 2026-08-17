@@ -1220,6 +1220,71 @@ def test_semantic_product_contract_keeps_named_failing_candidate_path() -> None:
     ]
 
 
+def test_missing_declared_scene_is_added_to_product_repair_scope() -> None:
+    contract = RepairContract.model_validate({
+        "contract_id": "RC-5123456789abcdef",
+        "observation_id": "FO-5123456789abcdef",
+        "progress_kind": "first_observation",
+        "occurrence": 1,
+        "hypothesis": {
+            "hypothesis_id": "RH-5123456789abcdef",
+            "suspected_cause": "A declared topology path is absent.",
+            "cheapest_probe": "Materialize the missing product region.",
+            "expected_signal": "The trusted topology scan sees the region.",
+            "repair_boundary": "The existing topology source and named missing asset.",
+            "requires_model_reasoning": True,
+        },
+        "permitted_paths": ["Assets/Scripts/TopologyReceipt.cs"],
+        "verification_ladder": ["compile", "targeted_state"],
+        "execution_allowed": True,
+        "escalation_required": False,
+        "rationale": "Repair the observed product defect.",
+    })
+
+    bound = bind_semantic_product_repair_scope(
+        contract,
+        [],
+        "new Unity production source declares missing scene/prefab path "
+        "Assets/Scenes/TitleScreen.unity; a maker-authored topology mapping is not evidence",
+    )
+
+    assert bound.permitted_paths == [
+        "Assets/Scripts/TopologyReceipt.cs",
+        "Assets/Scenes/TitleScreen.unity",
+    ]
+
+
+def test_runtime_missing_scene_does_not_bind_repair_to_unrelated_candidate() -> None:
+    contract = RepairContract.model_validate({
+        "contract_id": "RC-6123456789abcdef",
+        "observation_id": "FO-6123456789abcdef",
+        "progress_kind": "first_observation",
+        "occurrence": 1,
+        "hypothesis": {
+            "hypothesis_id": "RH-6123456789abcdef",
+            "suspected_cause": "The requested runtime scene is absent.",
+            "cheapest_probe": "Materialize or bootstrap the requested scene.",
+            "expected_signal": "The runtime can enter the requested region.",
+            "repair_boundary": "One approved product scene or bootstrap.",
+            "requires_model_reasoning": True,
+        },
+        "permitted_paths": ["Assets/Scripts/TopologyReceipt.cs"],
+        "verification_ladder": ["compile", "targeted_state"],
+        "execution_allowed": True,
+        "escalation_required": False,
+        "rationale": "Repair the observed product defect.",
+    })
+
+    bound = bind_semantic_product_repair_scope(
+        contract,
+        [],
+        "Scene 'TitleScreen' couldn't be loaded because it has not been added to the active build profile",
+        candidate_paths=["Assets/Scripts/TopologyReceipt.cs"],
+    )
+
+    assert bound.permitted_paths == []
+
+
 def test_cross_surface_visual_failure_rejects_unrelated_local_anchor() -> None:
     context = [
         {"path": "Assets/Scripts/StoreCatalogImageBinding.cs", "anchors": [{"anchor_id": "A1"}]},
