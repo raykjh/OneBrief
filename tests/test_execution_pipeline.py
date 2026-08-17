@@ -1285,6 +1285,41 @@ def test_runtime_missing_scene_does_not_bind_repair_to_unrelated_candidate() -> 
     assert bound.permitted_paths == []
 
 
+def test_runtime_missing_scene_binds_to_declared_candidate_asset() -> None:
+    contract = RepairContract.model_validate({
+        "contract_id": "RC-7123456789abcdef",
+        "observation_id": "FO-7123456789abcdef",
+        "progress_kind": "first_observation",
+        "occurrence": 1,
+        "hypothesis": {
+            "hypothesis_id": "RH-7123456789abcdef",
+            "suspected_cause": "The requested runtime scene is absent.",
+            "cheapest_probe": "Materialize the declared scene.",
+            "expected_signal": "The runtime enters the requested region.",
+            "repair_boundary": "The named approved product scene only.",
+            "requires_model_reasoning": True,
+        },
+        "permitted_paths": ["Packages/packages-lock.json"],
+        "verification_ladder": ["compile", "targeted_state"],
+        "execution_allowed": True,
+        "escalation_required": False,
+        "rationale": "Repair the observed product defect.",
+    })
+
+    bound = bind_semantic_product_repair_scope(
+        contract,
+        [{
+            "repository_path": "Assets/Scripts/Runtime/Bootstrap/TopologyBootstrap.cs",
+            "content": 'Debug.Log("Assets/Scenes/01_TitleScreen.unity");',
+        }],
+        "Scene '01_TitleScreen' couldn't be loaded because it has not been added "
+        "to the active build profile or shared scene list",
+        candidate_paths=["Assets/Scripts/Runtime/Bootstrap/TopologyBootstrap.cs"],
+    )
+
+    assert bound.permitted_paths == ["Assets/Scenes/01_TitleScreen.unity"]
+
+
 def test_cross_surface_visual_failure_rejects_unrelated_local_anchor() -> None:
     context = [
         {"path": "Assets/Scripts/StoreCatalogImageBinding.cs", "anchors": [{"anchor_id": "A1"}]},
@@ -3601,6 +3636,23 @@ def test_missing_topology_assets_require_new_product_construction_files() -> Non
         None,
         exact_edit_anchors=[{
             "path": "Assets/Scripts/Runtime/TopologyBootstrap.cs",
+            "anchors": [{"anchor_id": "A0123456789ab", "text": "class TopologyBootstrap"}],
+        }],
+        active_phase=ExecutionPhase.PRODUCT_IMPLEMENTATION,
+    ) is NewProductConstructionChangeSet
+
+
+def test_runtime_missing_scene_requires_new_product_construction_file() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "unity_playmode_visual_tests: Scene '01_TitleScreen' couldn't be loaded "
+        "because it has not been added to the active build profile or shared scene list"
+    )
+
+    assert development_maker_schema_for(
+        report,
+        None,
+        exact_edit_anchors=[{
+            "path": "Assets/Scripts/Runtime/Bootstrap/TopologyBootstrap.cs",
             "anchors": [{"anchor_id": "A0123456789ab", "text": "class TopologyBootstrap"}],
         }],
         active_phase=ExecutionPhase.PRODUCT_IMPLEMENTATION,

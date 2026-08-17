@@ -596,11 +596,26 @@ def bind_semantic_product_repair_scope(
         failure_text.replace("\\", "/"),
         flags=re.IGNORECASE,
     )
-    missing_runtime_scene = bool(re.search(
-        r"scene\s+'[^']+'\s+couldn'?t be loaded because it has not been added",
-        failure_text,
-        flags=re.IGNORECASE,
-    ))
+    missing_runtime_scene_names = {
+        match.casefold()
+        for match in re.findall(
+            r"scene\s+'([^']+)'\s+couldn'?t be loaded because it has not been added",
+            failure_text,
+            flags=re.IGNORECASE,
+        )
+    }
+    missing_runtime_scene = bool(missing_runtime_scene_names)
+    missing_runtime_paths: list[str] = []
+    if missing_runtime_scene_names:
+        for source in sources:
+            content = str(source.get("content") or "").replace("\\", "/")
+            for declared_path in re.findall(
+                r"(?:Assets|Packages)/[^\s'\";&|]+\.unity",
+                content,
+                flags=re.IGNORECASE,
+            ):
+                if PurePosixPath(declared_path).stem.casefold() in missing_runtime_scene_names:
+                    missing_runtime_paths.append(declared_path)
     named_candidate_paths = [
         path.replace("\\", "/")
         for path in (candidate_paths or [])
@@ -612,8 +627,9 @@ def bind_semantic_product_repair_scope(
             *([] if missing_runtime_scene else contract.permitted_paths),
             *(diagnostic_paths or []),
             *missing_declared_paths,
+            *missing_runtime_paths,
             *named_candidate_paths,
-            *selected_paths,
+            *([] if missing_runtime_scene else selected_paths),
         ]
         if path and path.casefold() not in {"none", "null"}
         if path_allowed_for_phase(path, ExecutionPhase.PRODUCT_IMPLEMENTATION)
@@ -1080,6 +1096,10 @@ def development_maker_schema_for(
         and (
             "declares missing scene/prefab path" in normalized_feedback
             or "maker-authored topology mapping is not evidence" in normalized_feedback
+            or (
+                "scene '" in normalized_feedback
+                and "couldn't be loaded because it has not been added" in normalized_feedback
+            )
         )
     ):
         return NewProductConstructionChangeSet
@@ -2848,7 +2868,18 @@ class ExecutionPipeline:
             if observation.layer == FailureLayer.SEMANTIC_PRODUCT:
                 contract = bind_semantic_product_repair_scope(
                     contract,
-                    prepared_sources,
+                    [
+                        *prepared_sources,
+                        *[
+                            {
+                                "repository_path": str(item.path),
+                                "content": str(item.content),
+                            }
+                            for item in getattr(previous_change_set, "changes", [])
+                            if getattr(item, "path", None)
+                            and isinstance(getattr(item, "content", None), str)
+                        ],
+                    ],
                     failure_text,
                     diagnostic_paths,
                     [
