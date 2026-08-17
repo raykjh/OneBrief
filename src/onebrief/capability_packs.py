@@ -131,18 +131,21 @@ BUILTIN_CAPABILITY_PACKS: dict[CapabilityPackId, CapabilityPackDefinition] = {
     ),
     CapabilityPackId.GODOT_CONTROL: CapabilityPackDefinition(
         pack_id=CapabilityPackId.GODOT_CONTROL,
-        version="1.0.0",
-        title="Godot trusted topology and headless verification",
+        version="1.1.0",
+        title="Godot trusted incremental construction and verification",
         ecosystems=["godot"],
         adapter_ids=["godot_headless_probe"],
         capabilities=[
             "bind one exact Godot executable by path and SHA-256",
             "materialize a trusted declarative topology inside an isolated snapshot",
             "run the committed headless topology probe with a bounded receipt path",
+            "increment a verified predecessor with a trusted gameplay compiler",
+            "capture an actual runtime frame and export a Windows artifact with fixed argv",
         ],
         evidence_contracts=[
             "plan, bundle, source revision, executable digest, and probe receipt lineage",
             "independent file-hash and visited-region verification",
+            "quest-unique runtime PNG and exported binary evidence",
         ],
         blocked_boundaries=[
             *_COMMON_BLOCKS,

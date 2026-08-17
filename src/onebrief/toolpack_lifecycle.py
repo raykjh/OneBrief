@@ -38,7 +38,7 @@ SAFE_SUFFIXES = {
     ".asmdef", ".asset", ".cs", ".css", ".html", ".ini", ".js", ".json",
     ".jsx", ".md", ".mjs", ".prefab", ".py", ".shader", ".toml", ".ts",
     ".tsx", ".txt", ".unity", ".uss", ".uxml", ".xml", ".yaml", ".yml",
-    ".gd", ".godot", ".tscn", ".tres",
+    ".cfg", ".gd", ".godot", ".tscn", ".tres",
 }
 
 
@@ -173,9 +173,12 @@ class GeneratedProjectToolPack(BaseModel):
         if host_adapters != required_host_adapters:
             raise ValueError("every enabled approved-host adapter requires one executable binding")
         if AdapterId.GODOT_HEADLESS_PROBE in enabled_adapters:
-            digest = self.trusted_component_digests.get("godot_topology_compiler")
-            if digest is None or not re.fullmatch(r"[a-f0-9]{64}", digest):
-                raise ValueError("Godot adapter requires the trusted compiler implementation digest")
+            required = {"godot_topology_compiler", "godot_gameplay_compiler"}
+            if any(
+                not re.fullmatch(r"[a-f0-9]{64}", self.trusted_component_digests.get(name, ""))
+                for name in required
+            ):
+                raise ValueError("Godot adapter requires every trusted compiler implementation digest")
         if self.schema_version == "onebrief-generated-toolpack-v2":
             errors = validate_capability_pack_refs(
                 self.capability_packs,
@@ -389,8 +392,13 @@ class ProjectToolPackLifecycle:
         enabled = {item.adapter_id for item in adapters if item.enabled}
         if AdapterId.GODOT_HEADLESS_PROBE not in enabled:
             return {}
-        compiler = Path(__file__).with_name("godot_topology.py")
-        return {"godot_topology_compiler": hashlib.sha256(compiler.read_bytes()).hexdigest()}
+        return {
+            name: hashlib.sha256(Path(__file__).with_name(filename).read_bytes()).hexdigest()
+            for name, filename in {
+                "godot_topology_compiler": "godot_topology.py",
+                "godot_gameplay_compiler": "godot_gameplay.py",
+            }.items()
+        }
 
     @staticmethod
     def _approved_runtime_arguments(root: Path, head_sha: str | None) -> list[ApprovedRuntimeArgument]:
