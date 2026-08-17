@@ -8,6 +8,7 @@ from onebrief.execution_pipeline import (
     compact_unity_client_planning_sources,
     development_maker_schema_for,
     normalize_unity_client_construction_plan,
+    verified_unity_client_construction_lineage,
 )
 from onebrief.execution_schemas import VerificationReport, Verdict
 from onebrief.generic_development_toolpack import ProjectCodeChangeSet
@@ -325,6 +326,20 @@ def test_compact_client_context_exposes_verified_plan_without_csharp() -> None:
     assert payload["verified_base"]["runtime_source_sha256"] == source["sha256"]
     assert payload["prior_plan"]["brand_title"] == "JULPAE"
     assert TRUSTED_UNITY_CLIENT_MARKER not in str(compact["content"])
+
+
+def test_verified_generated_client_seeds_next_quest_construction_lineage() -> None:
+    source = {
+        **_verified_source(),
+        "source_role": "trusted_incremental_client_base",
+    }
+
+    lineage = verified_unity_client_construction_lineage([source])
+
+    assert lineage == {str(source["repository_path"]).casefold()}
+    assert verified_unity_client_construction_lineage([
+        {**source, "source_role": "editable_source"}
+    ]) == set()
 
 
 def test_m02_incrementally_compiles_the_committed_m01_client(tmp_path: Path) -> None:

@@ -189,6 +189,7 @@ from onebrief.unity_evidence_plan import (
     validate_unity_journey_targets,
 )
 from onebrief.unity_client_plan import (
+    TRUSTED_UNITY_CLIENT_MARKER,
     UnityClientConstructionPlan,
     bind_unity_client_plan_incremental_base,
     bind_unity_client_plan_targets,
@@ -1023,6 +1024,20 @@ def compact_unity_client_planning_sources(
     if verified_base is not None:
         compact.append(verified_base)
     return compact
+
+
+def verified_unity_client_construction_lineage(
+    sources: list[dict[str, object]],
+) -> set[str]:
+    """Carry only marker- and Git-bound generated client paths into the next Quest."""
+
+    return {
+        str(source["repository_path"]).replace("\\", "/").casefold()
+        for source in sources
+        if source.get("source_role") == "trusted_incremental_client_base"
+        and isinstance(source.get("repository_path"), str)
+        and TRUSTED_UNITY_CLIENT_MARKER in str(source.get("content", ""))
+    }
 
 
 def development_maker_schema_for(
@@ -3248,6 +3263,9 @@ class ExecutionPipeline:
         product_construction_preflight_failures = 0
         quest_product_construction_lineage = new_product_construction_paths(
             previous_change_set
+        )
+        quest_product_construction_lineage.update(
+            verified_unity_client_construction_lineage(prepared_sources)
         )
         trusted_client_plan: UnityClientConstructionPlan | None = None
         for client_plan_path in sorted(
