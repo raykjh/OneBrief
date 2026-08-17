@@ -1,0 +1,15 @@
+{
+  "schema_version": "khalinos-godot-gameplay-shaping-plan-v1",
+  "board_width": 9,
+  "board_height": 9,
+  "player_start": [1, 7],
+  "seal_position": [1, 3],
+  "exit_position": [1, 1],
+  "key_position": [2, 7],
+  "door_position": [3, 7],
+  "pressure_plate_position": [1, 6],
+  "trap_position": [2, 6],
+  "obstacles": [[4, 3], [4, 4], [4, 5]],
+  "guard_patrol": [[7, 1], [7, 2], [7, 3], [7, 4], [7, 5], [7, 6], [7, 7], [7, 6], [7, 5], [7, 4], [7, 3], [7, 2]],
+  "solution_actions": ["up", "up", "up", "up", "up", "up"]
+}

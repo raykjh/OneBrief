@@ -63,7 +63,7 @@ class CompiledGodotGameplay(BaseModel):
     plan_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     bundle_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     replacements: dict[str, str] = Field(min_length=1, max_length=8)
-    additions: dict[str, str] = Field(min_length=3, max_length=12)
+    additions: dict[str, str] = Field(min_length=1, max_length=12)
 
 
 class GodotGameplayMaterializationReceipt(BaseModel):

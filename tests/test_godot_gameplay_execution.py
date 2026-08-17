@@ -17,6 +17,12 @@ from onebrief.godot_quest_execution import (
     GodotM01Request,
     execute_godot_m01,
 )
+from onebrief.godot_quest_chain import verify_godot_quest_chain
+from onebrief.godot_shaping_execution import (
+    GodotM03CommandReceipt,
+    GodotM03Request,
+    execute_godot_m03,
+)
 from onebrief.godot_topology import GodotRegion, GodotTopologyPlan
 from onebrief.project_import import ExternalProjectImporter, MANIFEST_NAME
 from onebrief.toolpack_lifecycle import AdapterId, ProjectToolPackLifecycle
@@ -115,4 +121,49 @@ def test_m02_consumes_raw_m01_receipt_and_preserves_lineage(tmp_path: Path, monk
     assert result.quest_receipt.preserved_receipt_ids == [m01.quest_receipt.receipt_id]
     assert result.quest_receipt.state.value == "passed"
     assert result.quest_receipt.passed_criterion_ids == [f"M02-C{index}" for index in range(1, 7)]
+    uid = Path(result.candidate_dir) / "game/scripts/khalinos_gameplay.gd.uid"
+    uid.write_text("uid://deterministicsidecar\n", encoding="utf-8")
+    chain = verify_godot_quest_chain([Path(m01.output_dir), Path(result.output_dir)])
+    assert [item.milestone_id for item in chain] == ["M01", "M02"]
+    assert chain[-1].quest_receipt.receipt_id == result.quest_receipt.receipt_id
+
+    m03_payload = {
+        "schema_version": "khalinos-godot-m03-probe-v1",
+        "initial": {
+            "feature_counts": {"obstacles": 3, "door": 1, "key": 1, "trap": 1, "pressure_plate": 1},
+            "vision": [[7, 2]], "guard_next": [7, 2],
+        },
+        "rule_checks": {"trap_lethal": True, "key_door": True, "pressure_safe": True},
+        "interaction": {"pressure_active": True, "state": "playing"},
+        "recovery": {"undo": True, "restart": True, "red_thread": True},
+        "solution": {"state": "escaped", "has_seal": True},
+        "errors": [], "passed": True,
+    }
+
+    def fake_m03_run(argv, *, cwd, kind, executable_sha256, artifact, timeout):
+        if kind == "shaping_probe": artifact.write_text(json.dumps(m03_payload), encoding="utf-8")
+        elif kind == "runtime_capture":
+            artifact.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (1280).to_bytes(4, "big") + (720).to_bytes(4, "big") + b"\x00" * 10_000)
+        else:
+            artifact.write_bytes(b"MZ" + b"\x00" * 1_000_000)
+        return GodotM03CommandReceipt(
+            command_kind=kind, executable_sha256=executable_sha256, argv=argv,
+            returncode=0, output_tail="PASS", artifact_sha256=hashlib.sha256(artifact.read_bytes()).hexdigest(),
+        )
+
+    monkeypatch.setattr("onebrief.godot_shaping_execution._run", fake_m03_run)
+    m03 = execute_godot_m03(
+        GodotM03Request(
+            project_id="puzzle-m02", source_revision=revision, toolpack_sha256=profile.sha256,
+            milestone_plan_sha256="e" * 64, authority_envelope_sha256="f" * 64,
+            predecessor_result_dirs=[m01.output_dir, result.output_dir],
+        ), registry_root=registry, output_dir=tmp_path / "m03",
+    )
+    complete_chain = verify_godot_quest_chain([
+        Path(m01.output_dir), Path(result.output_dir), Path(m03.output_dir)
+    ])
+    assert [item.milestone_id for item in complete_chain] == ["M01", "M02", "M03"]
+    assert m03.quest_contract.parent_quest_id == result.quest_contract.quest_id
+    assert m03.quest_receipt.preserved_receipt_ids == [m01.quest_receipt.receipt_id, result.quest_receipt.receipt_id]
+    assert m03.quest_receipt.passed_criterion_ids == [f"M03-C{index}" for index in range(1, 9)]
     assert _git(root, "status", "--porcelain") in {"", "?? ONEBRIEF_PROJECT.json"}
