@@ -24,14 +24,47 @@ from onebrief.product_language import enforce_canonical_product_language
 APP_NAME = "onebrief"
 
 
-def _finalize_requirements(
+def _apply_final_requirement_policies(
     intake: IntakeRequest, requirements: RequirementsAnalysis
 ) -> RequirementsAnalysis:
-    result = apply_standard_first_delivery_policy(
+    return apply_standard_first_delivery_policy(
         intake, enforce_contract_integrity(intake, requirements)
     )
-    enforce_canonical_product_language(result, surface="RequirementsAnalysis")
-    return result
+
+
+async def _finalize_requirements(
+    intake: IntakeRequest, requirements: RequirementsAnalysis
+) -> RequirementsAnalysis:
+    """Enforce English once, with one bounded semantic-preserving reissue."""
+
+    result = _apply_final_requirement_policies(intake, requirements)
+    try:
+        enforce_canonical_product_language(result, surface="RequirementsAnalysis")
+        return result
+    except ValueError as language_error:
+        repaired = await _run_requirements({
+            "mode": "canonical_english_reissue",
+            "requirements_analysis": result.model_dump(mode="json"),
+            "violations": str(language_error),
+            "instruction": (
+                "Reissue the same RequirementsAnalysis in canonical English. Translate or "
+                "replace only non-English KHALINOS-authored control text. Preserve scope, "
+                "meaning, IDs, evidence strength, authority boundaries, budgets, and every "
+                "already-English field. Do not add deliverables, criteria, assumptions, or "
+                "questions. Return only the schema."
+            ),
+        })
+        repaired = apply_assurance_policy(
+            intake,
+            apply_sixsense_policy(
+                intake, apply_requirements_gate(intake, repaired)
+            ),
+        )
+        repaired = _apply_final_requirement_policies(intake, repaired)
+        enforce_canonical_product_language(
+            repaired, surface="RequirementsAnalysis canonical-English reissue"
+        )
+        return repaired
 
 
 def _normalize_requirements_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -229,7 +262,7 @@ async def inspect_requirements(intake: IntakeRequest) -> RequirementsAnalysis:
     result = apply_assurance_policy(
         intake, apply_sixsense_policy(intake, apply_requirements_gate(intake, result))
     )
-    return _finalize_requirements(intake, result)
+    return await _finalize_requirements(intake, result)
 
 
 async def analyze_requirements(intake: IntakeRequest) -> RequirementsAnalysis:
@@ -239,7 +272,7 @@ async def analyze_requirements(intake: IntakeRequest) -> RequirementsAnalysis:
     result = apply_assurance_policy(
         intake, apply_sixsense_policy(intake, apply_requirements_gate(intake, result))
     )
-    return _finalize_requirements(intake, result)
+    return await _finalize_requirements(intake, result)
 
 
 async def reinspect_requirements(
@@ -296,5 +329,5 @@ async def reinspect_requirements(
             update={"sixsense": result.sixsense.model_copy(update={"questions": []})}
         )
     result = apply_assurance_policy(intake, result)
-    return _finalize_requirements(intake, result)
+    return await _finalize_requirements(intake, result)
 
