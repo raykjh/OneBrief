@@ -190,10 +190,12 @@ from onebrief.unity_evidence_plan import (
 )
 from onebrief.unity_client_plan import (
     UnityClientConstructionPlan,
+    bind_unity_client_plan_incremental_base,
     bind_unity_client_plan_targets,
     derive_unity_client_evidence_journey,
     is_trusted_unity_client_change_set,
     render_unity_client_construction,
+    verified_unity_client_planning_source,
 )
 from onebrief.workbook_export import export_workbook
 from onebrief.temperament import (
@@ -968,7 +970,7 @@ def normalize_unity_client_construction_plan(raw: object) -> object:
         raw if isinstance(raw, UnityClientConstructionPlan)
         else UnityClientConstructionPlan.model_validate({
             **raw,
-            "schema_version": "khalinos-unity-client-construction-plan-v1",
+            "schema_version": "khalinos-unity-client-construction-plan-v2",
         })
     )
     rendered = render_unity_client_construction(plan)
@@ -976,7 +978,11 @@ def normalize_unity_client_construction_plan(raw: object) -> object:
         summary=plan.summary,
         changes=[{
             "path": rendered.runtime_source_path,
-            "base_sha256": None,
+            "base_sha256": (
+                plan.verified_base.runtime_source_sha256
+                if plan.verified_base is not None
+                else None
+            ),
             "content": rendered.runtime_source,
             "reason": "Trusted KHALINOS compilation of the declarative Unity client plan.",
         }],
@@ -1002,7 +1008,7 @@ def compact_unity_client_planning_sources(
 ) -> list[dict[str, object]]:
     """Expose only topology and approved public auth bindings to the planner."""
 
-    return [
+    compact = [
         source
         for source in sources
         if (
@@ -1013,6 +1019,10 @@ def compact_unity_client_planning_sources(
             == "onebrief-approved-runtime-authority.json"
         )
     ]
+    verified_base = verified_unity_client_planning_source(sources)
+    if verified_base is not None:
+        compact.append(verified_base)
+    return compact
 
 
 def development_maker_schema_for(
@@ -3375,14 +3385,19 @@ class ExecutionPipeline:
             ):
                 provider_client_plan = UnityClientConstructionPlan.model_validate({
                     **raw_provider_payload,
-                    "schema_version": "khalinos-unity-client-construction-plan-v1",
+                    "schema_version": "khalinos-unity-client-construction-plan-v2",
                 })
             if provider_client_plan is not None:
+                provider_client_plan, base_issues = bind_unity_client_plan_incremental_base(
+                    provider_client_plan,
+                    prepared_sources,
+                )
                 provider_client_plan, target_issues = bind_unity_client_plan_targets(
                     provider_client_plan,
                     unity_scene_catalog,
                     unity_authentication_authority,
                 )
+                target_issues = [*base_issues, *target_issues]
                 if target_issues:
                     client_plan_preflight_failures += 1
                     self._write(
@@ -4795,7 +4810,11 @@ class ExecutionPipeline:
                 "the new Login, Lobby, and Settings copy and accent color, but do not author C#, asmdef, scenes, "
                 "prefabs, listeners, adapters, or private-method calls. KHALINOS compiles the plan into a new "
                 "production-owned client shell which preserves and invokes the shipped public authentication "
-                "controls without replacing their listeners."
+                "controls without replacing their listeners. When onebrief-verified-unity-client-base.json is "
+                "present, this is an incremental milestone: copy its verified_base exactly, preserve every "
+                "prior_plan field, and add exact Lobby data selector, Lobby navigation button, committed "
+                "navigation destination scene, and proxy label from the scene catalog. Never return the prior "
+                "runtime as a new file; KHALINOS binds its current digest as base_sha256 and recompiles it."
             )
         if prior_failure.is_file():
             maker_instruction += (

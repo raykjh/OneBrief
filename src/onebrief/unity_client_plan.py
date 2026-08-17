@@ -9,9 +9,11 @@ authority boundaries.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 from pathlib import PurePosixPath
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -19,12 +21,30 @@ from onebrief.unity_evidence_plan import UnityEvidenceJourneyPlan
 
 
 TRUSTED_UNITY_CLIENT_MARKER = "KHALINOS_DECLARATIVE_CLIENT_V1"
+TRUSTED_UNITY_CLIENT_PLAN_MARKER = "KHALINOS_DECLARATIVE_CLIENT_PLAN_B64"
+
+
+class VerifiedUnityClientBase(BaseModel):
+    """Digest-bound generated client accepted by an earlier milestone."""
+
+    runtime_source_path: str
+    runtime_source_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @field_validator("runtime_source_path")
+    @classmethod
+    def validate_runtime_source_path(cls, value: str) -> str:
+        normalized = str(PurePosixPath(value.replace("\\", "/"))).strip("/")
+        if not normalized.startswith("Assets/") or not normalized.endswith(
+            "/KhalinosGeneratedClientShell.cs"
+        ):
+            raise ValueError("verified base must identify the generated client runtime")
+        return normalized
 
 
 class UnityClientConstructionPlan(BaseModel):
-    """Provider-visible plan for one new Login-to-Lobby client shell."""
+    """Provider-visible plan for a new or incrementally extended Unity client."""
 
-    schema_version: str = "khalinos-unity-client-construction-plan-v1"
+    schema_version: str = "khalinos-unity-client-construction-plan-v2"
     summary: str = Field(min_length=3, max_length=500)
     product_directory: str = Field(
         description=(
@@ -54,6 +74,29 @@ class UnityClientConstructionPlan(BaseModel):
     settings_title: str = Field(min_length=1, max_length=120)
     settings_body: str = Field(min_length=1, max_length=300)
     close_button_label: str = Field(min_length=1, max_length=80)
+    verified_base: VerifiedUnityClientBase | None = Field(
+        default=None,
+        description=(
+            "Exact path and SHA-256 of the previously verified generated client. "
+            "Copy only from onebrief-verified-unity-client-base.json."
+        ),
+    )
+    lobby_data_selector: str | None = Field(
+        default=None,
+        max_length=300,
+        description="Exact committed Lobby object/path whose visible text represents preserved data.",
+    )
+    lobby_navigation_selector: str | None = Field(
+        default=None,
+        max_length=300,
+        description="Exact committed Lobby button/path whose shipped listener owns navigation.",
+    )
+    lobby_navigation_destination_scene: str | None = Field(
+        default=None,
+        max_length=160,
+        description="Exact committed scene reached by the selected Lobby navigation control.",
+    )
+    lobby_navigation_label: str | None = Field(default=None, max_length=80)
     accent_hex: str = Field(
         default="#35D7FF",
         pattern=r"^#[0-9A-Fa-f]{6}$",
@@ -75,10 +118,16 @@ class UnityClientConstructionPlan(BaseModel):
         "settings_title",
         "settings_body",
         "close_button_label",
+        "lobby_data_selector",
+        "lobby_navigation_selector",
+        "lobby_navigation_destination_scene",
+        "lobby_navigation_label",
         mode="before",
     )
     @classmethod
     def normalize_text(cls, value: object) -> str:
+        if value is None:
+            return value  # type: ignore[return-value]
         return " ".join(str(value).split()).strip()
 
     @field_validator("product_directory")
@@ -104,6 +153,22 @@ class UnityClientConstructionPlan(BaseModel):
             raise ValueError("authentication_account_selector must identify an account/profile control")
         if not any(marker in submit for marker in ("directenter", "signin", "login", "authenticate")):
             raise ValueError("authentication_submit_selector must identify an authentication submit control")
+        incremental = (
+            self.verified_base,
+            self.lobby_data_selector,
+            self.lobby_navigation_selector,
+            self.lobby_navigation_destination_scene,
+            self.lobby_navigation_label,
+        )
+        if any(item is not None for item in incremental) and not all(
+            isinstance(item, str) and item.strip()
+            if not isinstance(item, VerifiedUnityClientBase)
+            else True
+            for item in incremental
+        ):
+            raise ValueError(
+                "incremental client plans require verified_base plus complete Lobby data and navigation bindings"
+            )
         return self
 
 
@@ -118,6 +183,152 @@ def _cs(value: str) -> str:
 
 def _hex_rgb(value: str) -> tuple[float, float, float]:
     return tuple(int(value[index:index + 2], 16) / 255.0 for index in (1, 3, 5))  # type: ignore[return-value]
+
+
+def _embedded_plan_payload(plan: UnityClientConstructionPlan) -> str:
+    payload = plan.model_dump(mode="json", exclude={"verified_base"})
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return base64.b64encode(encoded).decode("ascii")
+
+
+def _extract_embedded_plan(source: str) -> dict[str, object] | None:
+    prefix = f"// {TRUSTED_UNITY_CLIENT_PLAN_MARKER}:"
+    line = next(
+        (item.strip() for item in source.splitlines() if item.strip().startswith(prefix)),
+        None,
+    )
+    if line is None:
+        return None
+    try:
+        decoded = base64.b64decode(line[len(prefix):].strip(), validate=True)
+        payload = json.loads(decoded.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def verified_unity_client_base_from_sources(
+    sources: Sequence[Mapping[str, object]],
+) -> tuple[VerifiedUnityClientBase, dict[str, object]] | None:
+    """Find one committed generated client and recover its trusted plan metadata."""
+
+    matches: list[tuple[VerifiedUnityClientBase, dict[str, object]]] = []
+    for source in sources:
+        content = source.get("content")
+        path = source.get("repository_path")
+        if not isinstance(content, str) or not isinstance(path, str):
+            continue
+        if TRUSTED_UNITY_CLIENT_MARKER not in content:
+            continue
+        payload = _extract_embedded_plan(content)
+        if payload is None:
+            continue
+        actual_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        declared_sha256 = source.get("sha256")
+        if isinstance(declared_sha256, str) and declared_sha256 != actual_sha256:
+            continue
+        try:
+            base = VerifiedUnityClientBase(
+                runtime_source_path=path,
+                runtime_source_sha256=actual_sha256,
+            )
+        except ValueError:
+            continue
+        matches.append((base, payload))
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def verified_unity_client_planning_source(
+    sources: Sequence[Mapping[str, object]],
+) -> dict[str, object] | None:
+    """Expose prior plan facts without exposing generated C# implementation text."""
+
+    discovered = verified_unity_client_base_from_sources(sources)
+    if discovered is None:
+        return None
+    base, prior_plan = discovered
+    content = json.dumps(
+        {
+            "schema_version": "khalinos-verified-unity-client-base-v1",
+            "verified_base": base.model_dump(mode="json"),
+            "prior_plan": prior_plan,
+            "rule": (
+                "Preserve prior_plan fields and add exact Lobby data/navigation bindings "
+                "from the committed scene catalog."
+            ),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    return {
+        "name": "onebrief-verified-unity-client-base.json",
+        "priority": "must_use",
+        "requirement_keys": ["verified_incremental_client"],
+        "content": content,
+        "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "repository_path": None,
+        "source_role": "read_only_context",
+    }
+
+
+def bind_unity_client_plan_incremental_base(
+    plan: UnityClientConstructionPlan,
+    sources: Sequence[Mapping[str, object]],
+) -> tuple[UnityClientConstructionPlan, list[str]]:
+    """Bind an M02 plan to the sole verified M01 generated artifact."""
+
+    discovered = verified_unity_client_base_from_sources(sources)
+    if discovered is None:
+        if plan.verified_base is not None:
+            return plan, [
+                "The declared verified_base is not present as one digest-valid generated client in the approved source snapshot."
+            ]
+        return plan, []
+    base, prior_payload = discovered
+    issues: list[str] = []
+    if plan.verified_base is None:
+        issues.append(
+            "A verified generated client already exists; this milestone must extend it through verified_base instead of creating it again."
+        )
+        return plan, issues
+    if plan.verified_base != base:
+        issues.append(
+            "verified_base does not match the exact path and SHA-256 of the approved generated client."
+        )
+        return plan, issues
+    preserved_fields = (
+        "product_directory",
+        "initial_scene",
+        "destination_scene",
+        "authentication_account_selector",
+        "authentication_submit_selector",
+        "brand_title",
+        "login_title",
+        "login_subtitle",
+        "login_button_label",
+        "lobby_title",
+        "lobby_subtitle",
+        "settings_button_label",
+        "settings_title",
+        "settings_body",
+        "close_button_label",
+        "accent_hex",
+    )
+    drift = [
+        field_name
+        for field_name in preserved_fields
+        if prior_payload.get(field_name) != getattr(plan, field_name)
+    ]
+    if drift:
+        issues.append(
+            "Incremental plan changed verified M01 fields instead of preserving them: "
+            + ", ".join(drift)
+        )
+    return plan, issues
 
 
 def validate_unity_client_plan_targets(
@@ -147,6 +358,7 @@ def bind_unity_client_plan_targets(
     """
 
     by_scene: dict[str, set[str]] = {}
+    controls_by_scene: dict[str, set[str]] = {}
     raw_scenes = (
         scene_catalog.get("scenes", [])
         if scene_catalog and isinstance(scene_catalog.get("scenes"), list)
@@ -160,7 +372,14 @@ def bind_unity_client_plan_targets(
             values = raw.get(key)
             if isinstance(values, list):
                 names.update(str(item) for item in values if isinstance(item, str))
-        by_scene[str(raw["scene_name"])] = names
+        scene_name = str(raw["scene_name"])
+        by_scene[scene_name] = names
+        raw_controls = raw.get("control_object_names")
+        controls_by_scene[scene_name] = (
+            {str(item) for item in raw_controls if isinstance(item, str)}
+            if isinstance(raw_controls, list)
+            else set()
+        )
     updates: dict[str, str] = {}
     for field_name in ("initial_scene", "destination_scene"):
         value = str(getattr(plan, field_name))
@@ -216,6 +435,31 @@ def bind_unity_client_plan_targets(
                 f"Committed scene {plan.initial_scene!r} has no {label} named {leaf!r}; "
                 f"relevant exact candidates: {', '.join(relevant) or 'none'}."
             )
+    if plan.verified_base is not None:
+        destination_names = by_scene.get(plan.destination_scene, set())
+        for label, selector in (
+            ("Lobby data selector", plan.lobby_data_selector),
+            ("Lobby navigation selector", plan.lobby_navigation_selector),
+        ):
+            leaf = str(selector or "").replace("\\", "/").split("/")[-1]
+            if destination_names and leaf not in destination_names:
+                issues.append(
+                    f"Committed scene {plan.destination_scene!r} has no {label} named {leaf!r}."
+                )
+        navigation_leaf = str(plan.lobby_navigation_selector or "").replace(
+            "\\", "/"
+        ).split("/")[-1]
+        destination_controls = controls_by_scene.get(plan.destination_scene, set())
+        if destination_controls and navigation_leaf not in destination_controls:
+            issues.append(
+                f"Lobby navigation selector {navigation_leaf!r} is not a committed control in scene {plan.destination_scene!r}."
+            )
+        navigation_destination = str(plan.lobby_navigation_destination_scene or "")
+        if by_scene and navigation_destination not in by_scene:
+            issues.append(
+                f"Lobby navigation destination {navigation_destination!r} is not committed; exact scenes: "
+                + ", ".join(sorted(by_scene))
+            )
     return plan, issues
 
 
@@ -241,8 +485,16 @@ def render_unity_client_construction(
         "settings_title": _cs(plan.settings_title),
         "settings_body": _cs(plan.settings_body),
         "close_button": _cs(plan.close_button_label),
+        "lobby_data": _cs(plan.lobby_data_selector or ""),
+        "lobby_navigation": _cs(plan.lobby_navigation_selector or ""),
+        "lobby_navigation_destination": _cs(
+            plan.lobby_navigation_destination_scene or ""
+        ),
+        "lobby_navigation_label": _cs(plan.lobby_navigation_label or ""),
     }
+    plan_payload = _embedded_plan_payload(plan)
     source = f'''// {TRUSTED_UNITY_CLIENT_MARKER} - generated by KHALINOS; do not hand edit.
+// {TRUSTED_UNITY_CLIENT_PLAN_MARKER}: {plan_payload}
 using System;
 using System.Linq;
 using TMPro;
@@ -258,6 +510,10 @@ namespace Khalinos.GeneratedClient
         private const string DestinationScene = {values["destination"]};
         private const string AccountSelector = {values["account"]};
         private const string SubmitSelector = {values["submit"]};
+        private const string LobbyDataSelector = {values["lobby_data"]};
+        private const string LobbyNavigationSelector = {values["lobby_navigation"]};
+        private const string LobbyNavigationDestination = {values["lobby_navigation_destination"]};
+        private const string LobbyNavigationLabel = {values["lobby_navigation_label"]};
         private static readonly Color Accent = new Color({red:.6f}f, {green:.6f}f, {blue:.6f}f, 1f);
         private GameObject surfaceRoot;
         private TMP_Dropdown preservedTmpDropdown;
@@ -265,6 +521,8 @@ namespace Khalinos.GeneratedClient
         private Button preservedSubmit;
         private TMP_Dropdown proxyAccountDropdown;
         private Button proxySubmitButton;
+        private TMP_Text proxyLobbyData;
+        private Button proxyLobbyNavigation;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Install()
@@ -293,10 +551,14 @@ namespace Khalinos.GeneratedClient
 
         private void Update()
         {{
-            if (proxyAccountDropdown == null) return;
-            BindPreservedAuthenticationControls();
-            if (!AccountOptionsAreCurrent())
-                CopyOptions(proxyAccountDropdown);
+            if (proxyAccountDropdown != null)
+            {{
+                BindPreservedAuthenticationControls();
+                if (!AccountOptionsAreCurrent())
+                    CopyOptions(proxyAccountDropdown);
+            }}
+            if (proxyLobbyData != null || proxyLobbyNavigation != null)
+                RefreshLobbyBindings();
         }}
 
         private void BuildFor(Scene scene)
@@ -353,7 +615,34 @@ namespace Khalinos.GeneratedClient
             CreateText("OneBriefLobbyBrand", panel.transform, {values["brand"]}, 24f, Accent, 0f, 230f, 780f, 50f);
             CreateText("OneBriefLobbyTitle", panel.transform, {values["lobby_title"]}, 50f, Color.white, 0f, 125f, 860f, 80f);
             CreateText("OneBriefLobbySubtitle", panel.transform, {values["lobby_subtitle"]}, 22f, new Color(0.78f, 0.84f, 0.92f), 0f, 50f, 760f, 70f);
-            CreateButton("NewClientSettingsButton", panel.transform, {values["settings_button"]}, 0f, -90f, 360f, 68f, () => BuildSettings(panel.transform));
+            if (!string.IsNullOrEmpty(LobbyDataSelector))
+                proxyLobbyData = CreateText("NewClientLobbyData", panel.transform, "Waiting for approved data", 21f, new Color(0.78f, 0.84f, 0.92f), 0f, -40f, 760f, 64f);
+            if (!string.IsNullOrEmpty(LobbyNavigationSelector))
+                proxyLobbyNavigation = CreateButton("NewClientLobbyNavigationButton", panel.transform, LobbyNavigationLabel, -205f, -145f, 360f, 68f, InvokePreservedLobbyNavigation);
+            CreateButton("NewClientSettingsButton", panel.transform, {values["settings_button"]}, string.IsNullOrEmpty(LobbyNavigationSelector) ? 0f : 205f, -145f, 360f, 68f, () => BuildSettings(panel.transform));
+            RefreshLobbyBindings();
+        }}
+
+        private void RefreshLobbyBindings()
+        {{
+            if (proxyLobbyData != null)
+            {{
+                GameObject source = FindActive(LobbyDataSelector);
+                TMP_Text tmp = source?.GetComponent<TMP_Text>();
+                Text legacy = tmp == null ? source?.GetComponent<Text>() : null;
+                string value = tmp != null ? tmp.text : legacy != null ? legacy.text : "";
+                if (!string.IsNullOrWhiteSpace(value)) proxyLobbyData.text = value;
+            }}
+            if (proxyLobbyNavigation != null)
+                proxyLobbyNavigation.interactable = FindActive(LobbyNavigationSelector)?.GetComponent<Button>() != null;
+        }}
+
+        private void InvokePreservedLobbyNavigation()
+        {{
+            Button preserved = FindActive(LobbyNavigationSelector)?.GetComponent<Button>();
+            if (preserved == null)
+                throw new InvalidOperationException("Approved Lobby navigation control is unavailable: " + LobbyNavigationSelector);
+            preserved.onClick.Invoke();
         }}
 
         private void BuildSettings(Transform parent)
@@ -521,32 +810,49 @@ def derive_unity_client_evidence_journey(
     product_parts = PurePosixPath(plan.product_directory).parts
     product_root = PurePosixPath(*product_parts[:2])
     test_directory = str(product_root / "Tests" / "PlayMode")
-    return UnityEvidenceJourneyPlan.model_validate({
-        "summary": "Verify the generated Login, Lobby, and Settings client journey.",
-        "test_directory": test_directory,
-        "steps": [
-            {"action": "load_scene", "scene_name": plan.initial_scene},
-            {"action": "wait_frames", "frames": 10},
-            {"action": "assert_active", "target": "OneBriefLoginPanel"},
-            {"action": "capture", "scenario_id": "login_surface_initial"},
-            {
-                "action": "select_dropdown_index",
-                "target": "NewClientTestAccountDropdown",
-                "value_index": 1,
-            },
-            {"action": "click_button", "target": "NewClientDirectEnterButton"},
+    steps: list[dict[str, object]] = [
+        {"action": "load_scene", "scene_name": plan.initial_scene},
+        {"action": "wait_frames", "frames": 10},
+        {"action": "assert_active", "target": "OneBriefLoginPanel"},
+        {"action": "capture", "scenario_id": "login_surface_initial"},
+        {
+            "action": "select_dropdown_index",
+            "target": "NewClientTestAccountDropdown",
+            "value_index": 1,
+        },
+        {"action": "click_button", "target": "NewClientDirectEnterButton"},
+        {
+            "action": "wait_for_scene",
+            "scene_name": plan.destination_scene,
+            "timeout_seconds": 20.0,
+        },
+        {"action": "assert_active", "target": "NewClientLobbyPanel"},
+    ]
+    if plan.verified_base is not None:
+        steps.extend([
+            {"action": "assert_active", "target": "NewClientLobbyData"},
+            {"action": "assert_active", "target": "NewClientLobbyNavigationButton"},
+            {"action": "capture", "scenario_id": "lobby_data_navigation_active"},
+            {"action": "click_button", "target": "NewClientLobbyNavigationButton"},
             {
                 "action": "wait_for_scene",
-                "scene_name": plan.destination_scene,
+                "scene_name": plan.lobby_navigation_destination_scene,
                 "timeout_seconds": 20.0,
             },
-            {"action": "assert_active", "target": "NewClientLobbyPanel"},
+            {"action": "capture", "scenario_id": "lobby_navigation_destination"},
+        ])
+    else:
+        steps.extend([
             {"action": "capture", "scenario_id": "lobby_surface_initial"},
             {"action": "click_button", "target": "NewClientSettingsButton"},
             {"action": "wait_frames", "frames": 5},
             {"action": "assert_active", "target": "NewClientSettingsPanel"},
             {"action": "capture", "scenario_id": "settings_panel_active"},
-        ],
+        ])
+    return UnityEvidenceJourneyPlan.model_validate({
+        "summary": "Verify the generated Login, Lobby, and Settings client journey.",
+        "test_directory": test_directory,
+        "steps": steps,
     })
 
 

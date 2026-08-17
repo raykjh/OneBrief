@@ -1,3 +1,8 @@
+import hashlib
+import json
+import subprocess
+from pathlib import Path
+
 from onebrief.execution_pipeline import (
     bound_unity_client_maker_schema,
     compact_unity_client_planning_sources,
@@ -10,10 +15,12 @@ from onebrief.schemas import ExecutionPhase
 from onebrief.unity_client_plan import (
     TRUSTED_UNITY_CLIENT_MARKER,
     UnityClientConstructionPlan,
+    bind_unity_client_plan_incremental_base,
     bind_unity_client_plan_targets,
     derive_unity_client_evidence_journey,
     render_unity_client_construction,
     validate_unity_client_plan_targets,
+    verified_unity_client_planning_source,
 )
 from onebrief.unity_evidence_plan import candidate_unity_object_names
 
@@ -52,9 +59,41 @@ def _catalog() -> dict[str, object]:
                 "object_names": ["DevPanel", "TestAccountDropdown", "DirectEnterButton"],
                 "control_object_names": ["TestAccountDropdown", "DirectEnterButton"],
             },
-            {"scene_name": "Lobby", "object_names": ["MainCanvas"]},
+            {
+                "scene_name": "Lobby",
+                "object_names": ["MainCanvas", "RoomCountText", "MatchButton"],
+                "control_object_names": ["MatchButton"],
+            },
+            {"scene_name": "Match", "object_names": ["MatchCanvas"]},
         ],
     }
+
+
+def _verified_source(plan: UnityClientConstructionPlan | None = None) -> dict[str, object]:
+    rendered = render_unity_client_construction(plan or _plan())
+    return {
+        "name": f"repository/{rendered.runtime_source_path}",
+        "repository_path": rendered.runtime_source_path,
+        "content": rendered.runtime_source,
+        "sha256": hashlib.sha256(rendered.runtime_source.encode("utf-8")).hexdigest(),
+    }
+
+
+def _incremental_plan(**updates: object) -> UnityClientConstructionPlan:
+    source = _verified_source()
+    payload = {
+        **_plan().model_dump(mode="json"),
+        "verified_base": {
+            "runtime_source_path": source["repository_path"],
+            "runtime_source_sha256": source["sha256"],
+        },
+        "lobby_data_selector": "RoomCountText",
+        "lobby_navigation_selector": "MatchButton",
+        "lobby_navigation_destination_scene": "Match",
+        "lobby_navigation_label": "Find Match",
+    }
+    payload.update(updates)
+    return UnityClientConstructionPlan.model_validate(payload)
 
 
 def test_trusted_client_renderer_preserves_authentication_authority() -> None:
@@ -192,6 +231,152 @@ def test_client_plan_normalizes_to_one_trusted_new_product_file() -> None:
     }.issubset(candidate_unity_object_names(normalized))
 
 
+def test_incremental_client_plan_reuses_verified_runtime_digest() -> None:
+    plan = _incremental_plan()
+    bound, issues = bind_unity_client_plan_incremental_base(
+        plan, [_verified_source()]
+    )
+
+    assert issues == []
+    normalized = normalize_unity_client_construction_plan(bound)
+    assert isinstance(normalized, ProjectCodeChangeSet)
+    assert normalized.changes[0].base_sha256 == plan.verified_base.runtime_source_sha256
+    assert 'private const string LobbyDataSelector = "RoomCountText";' in normalized.changes[0].content
+    assert "preserved.onClick.Invoke();" in normalized.changes[0].content
+
+
+def test_incremental_client_plan_rejects_missing_digest_and_prior_plan_drift() -> None:
+    source = _verified_source()
+    missing_base = _plan()
+    _bound, missing_issues = bind_unity_client_plan_incremental_base(
+        missing_base, [source]
+    )
+    assert any("must extend it through verified_base" in issue for issue in missing_issues)
+
+    drifted = _incremental_plan(brand_title="Changed after M01")
+    _bound, drift_issues = bind_unity_client_plan_incremental_base(
+        drifted, [source]
+    )
+    assert any("brand_title" in issue for issue in drift_issues)
+
+
+def test_incremental_client_plan_binds_lobby_data_and_navigation_to_catalog() -> None:
+    plan = _incremental_plan()
+    assert validate_unity_client_plan_targets(plan, _catalog()) == []
+
+    issues = validate_unity_client_plan_targets(
+        _incremental_plan(lobby_navigation_selector="InventedButton"), _catalog()
+    )
+    assert any("InventedButton" in issue for issue in issues)
+
+    non_control_issues = validate_unity_client_plan_targets(
+        _incremental_plan(lobby_navigation_selector="RoomCountText"), _catalog()
+    )
+    assert any("not a committed control" in issue for issue in non_control_issues)
+
+
+def test_incremental_client_plan_derives_navigation_evidence() -> None:
+    journey = derive_unity_client_evidence_journey(_incremental_plan())
+
+    assert any(
+        step.action == "assert_active" and step.target == "NewClientLobbyData"
+        for step in journey.steps
+    )
+    assert any(
+        step.action == "click_button"
+        and step.target == "NewClientLobbyNavigationButton"
+        for step in journey.steps
+    )
+    assert any(
+        step.action == "wait_for_scene" and step.scene_name == "Match"
+        for step in journey.steps
+    )
+
+
+def test_compact_client_context_exposes_verified_plan_without_csharp() -> None:
+    source = _verified_source()
+    compact = verified_unity_client_planning_source([source])
+
+    assert compact is not None
+    payload = json.loads(str(compact["content"]))
+    assert payload["verified_base"]["runtime_source_sha256"] == source["sha256"]
+    assert payload["prior_plan"]["brand_title"] == "JULPAE"
+    assert TRUSTED_UNITY_CLIENT_MARKER not in str(compact["content"])
+
+
+def test_m02_incrementally_compiles_the_committed_m01_client(tmp_path: Path) -> None:
+    repo = tmp_path / "integration"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "KHALINOS Test"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "khalinos@example.invalid"],
+        cwd=repo,
+        check=True,
+    )
+    subprocess.run(["git", "config", "core.autocrlf", "false"], cwd=repo, check=True)
+
+    m01 = render_unity_client_construction(_plan())
+    runtime = repo / Path(*Path(m01.runtime_source_path).parts)
+    runtime.parent.mkdir(parents=True)
+    runtime.write_text(m01.runtime_source, encoding="utf-8", newline="\n")
+    subprocess.run(["git", "add", "--", m01.runtime_source_path], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "M01 verified client"], cwd=repo, check=True)
+
+    committed = subprocess.run(
+        ["git", "show", f"HEAD:{m01.runtime_source_path}"],
+        cwd=repo,
+        capture_output=True,
+        check=True,
+    ).stdout
+    committed_sha256 = hashlib.sha256(committed).hexdigest()
+    approved_source = {
+        "name": f"repository/{m01.runtime_source_path}",
+        "repository_path": m01.runtime_source_path,
+        "content": committed.decode("utf-8"),
+        "sha256": committed_sha256,
+    }
+    m02_payload = {
+        **_plan().model_dump(mode="json"),
+        "summary": "Extend the verified client with Lobby data and navigation.",
+        "verified_base": {
+            "runtime_source_path": m01.runtime_source_path,
+            "runtime_source_sha256": committed_sha256,
+        },
+        "lobby_data_selector": "RoomCountText",
+        "lobby_navigation_selector": "MatchButton",
+        "lobby_navigation_destination_scene": "Match",
+        "lobby_navigation_label": "Find Match",
+    }
+    m02 = UnityClientConstructionPlan.model_validate(m02_payload)
+    bound, base_issues = bind_unity_client_plan_incremental_base(
+        m02, [approved_source]
+    )
+    bound, target_issues = bind_unity_client_plan_targets(bound, _catalog())
+
+    assert base_issues == []
+    assert target_issues == []
+    change_set = normalize_unity_client_construction_plan(bound)
+    assert isinstance(change_set, ProjectCodeChangeSet)
+    change = change_set.changes[0]
+    assert change.path == m01.runtime_source_path
+    assert change.base_sha256 == committed_sha256
+    assert change.content != committed.decode("utf-8")
+
+    runtime.write_text(change.content, encoding="utf-8", newline="\n")
+    subprocess.run(["git", "add", "--", change.path], cwd=repo, check=True)
+    subprocess.run(["git", "diff", "--cached", "--check"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "M02 incremental client"], cwd=repo, check=True)
+    commit_count = subprocess.run(
+        ["git", "rev-list", "--count", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        check=True,
+        text=True,
+    ).stdout.strip()
+    assert commit_count == "2"
+
+
 def test_trusted_client_product_failure_replans_in_dsl_not_freeform_csharp() -> None:
     candidate = normalize_unity_client_construction_plan(_plan())
     report = VerificationReport(
@@ -253,11 +438,13 @@ def test_typed_client_schema_binding_survives_product_repairs_only() -> None:
 
 
 def test_client_planner_context_excludes_preserved_implementation_source() -> None:
+    verified_source = _verified_source()
     sources = [
         {"name": "repository/Assets/Scripts/LoginController.cs", "content": "large"},
         {"name": "repository/toolpack/unity-scene-catalog.json", "content": "scenes"},
         {"name": "onebrief-approved-runtime-authority.json", "content": "auth"},
         {"name": "requirements.md", "content": "duplicated contract"},
+        verified_source,
     ]
 
     compact = compact_unity_client_planning_sources(sources)
@@ -265,4 +452,6 @@ def test_client_planner_context_excludes_preserved_implementation_source() -> No
     assert [item["name"] for item in compact] == [
         "repository/toolpack/unity-scene-catalog.json",
         "onebrief-approved-runtime-authority.json",
+        "onebrief-verified-unity-client-base.json",
     ]
+    assert TRUSTED_UNITY_CLIENT_MARKER not in str(compact[-1]["content"])
