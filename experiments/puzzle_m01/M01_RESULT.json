@@ -1,0 +1,19 @@
+{
+  "schema_version": "khalinos-puzzle-m01-result-summary-v1",
+  "state": "passed",
+  "quest_id": "QC-08859bc54fa47ae1",
+  "quest_sha256": "d27dc6251de1267a183ed71d446c8a972e8ee1127e4e4318ece5bd6316c88ad1",
+  "receipt_id": "QR-24873f9e34954f5f",
+  "source_revision": "a89aea51caa6382ae89dbfa910f6cdc743eb8fb2",
+  "toolpack_sha256": "f5563f5f3f788b51adcbea4985013a13645352d8160110d4b8de41726f03a94c",
+  "trusted_compiler_sha256": "ab643318ea70917c53593acdef27c6773e859ddb0abdbda96164896098fa9403",
+  "godot_version": "4.7.1.stable.official.a13da4feb",
+  "godot_executable_sha256": "323f9c4cc5db674e98815cdd8e69da007d5efc779abedc8c0e42883b7fdea12a",
+  "plan_sha256": "924fc7f523ff55cf55715273b371c1811e64fc96d9aa32dba9bd8ff1357f6249",
+  "bundle_sha256": "e3895fba1f80a4b9555307bdac4b4a70e2d5a95b926b5c5e43c6f6a94046cc5b",
+  "materialization_sha256": "e895646609ed366cf2cdf5d9c9f3cff408607b67d51dbabb8069f905546784be",
+  "command_receipt_sha256": "f78eccf5167aa2f74faabd34120cdf4cc118f39f0510a187aca7cebcbff8c13c",
+  "passed_criterion_ids": ["M01-C1", "M01-C2", "M01-C3", "M01-C4"],
+  "visited_regions": ["title", "chamber_select", "gameplay", "pause", "mission_result"],
+  "cloud_or_model_cost_usd": 0
+}

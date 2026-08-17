@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from onebrief.project_catalog import ProjectCatalog
 from onebrief.project_continuity import ProjectContinuityStore
-from onebrief.project_import import ExternalProjectImporter, MANIFEST_NAME
+from onebrief.project_import import ExternalProjectImporter, MANIFEST_NAME, inspect_project
 from onebrief.schemas import RequirementsAnalysis
 from onebrief.web_service import app
 
@@ -49,6 +49,34 @@ def _unity_project(root: Path) -> bytes:
     _git(root, "add", ".")
     _git(root, "commit", "-m", "Create sample Unity project")
     return payload
+
+
+def test_inspection_detects_godot_project_marker(tmp_path: Path) -> None:
+    root = tmp_path / "godot-game"
+    root.mkdir()
+    (root / "project.godot").write_text(
+        '[application]\nconfig/name="Puzzle"\n', encoding="utf-8"
+    )
+    _git(root, "init")
+    _git(root, "config", "user.name", "OneBrief Test")
+    _git(root, "config", "user.email", "onebrief@example.invalid")
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "Create Godot project")
+    manifest = ExternalProjectImporter.parse(json.dumps({
+        "schema_version": "onebrief-project-v1",
+        "project_id": "godot-game",
+        "name": "Godot Game",
+        "project_type": "godot_project",
+        "project_root": str(root.resolve()),
+        "canonical_goal": "Build the approved puzzle.",
+        "summary": "Godot project detection test.",
+        "authoritative_documents": ["project.godot"],
+    }).encode("utf-8"))
+
+    inventory = inspect_project(manifest)
+
+    assert inventory.detected_ecosystems == ["godot"]
+    assert inventory.detected_markers == ["project.godot"]
 
 
 def test_external_project_import_creates_sidecar_workspace_and_catalog_entry(tmp_path: Path) -> None:

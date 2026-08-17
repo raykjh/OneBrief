@@ -36,6 +36,8 @@ goal into a complete work contract in about 30 seconds. See `docs/SIXSENSE.md`.
   meaning, authority, acceptance criteria, or verification
 - a trusted Godot topology compiler that materializes declared product regions as native
   scenes with a deterministic headless probe
+- a digest-bound Godot vertical path from ecosystem discovery and approved-host Capability
+  Pack through isolated Quest materialization and independent headless verification
 - standard-first product delivery when no distinctive visual direction is requested
 - criterion-level completion ledger showing pending, failed, revised, and proven work
 - software convergence with isolated ToolPack build/test execution before independent review

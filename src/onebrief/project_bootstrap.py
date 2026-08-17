@@ -58,6 +58,8 @@ def _project_type(ecosystems: list[str]) -> str:
     detected = set(ecosystems)
     if "unity" in detected:
         return "unity_project"
+    if "godot" in detected:
+        return "godot_project"
     if "node" in detected:
         return "node_application"
     if "python" in detected:
@@ -79,6 +81,7 @@ def _authoritative_documents(root: Path, git_repository: bool) -> list[str]:
         "README.txt",
         "docs/README.md",
         "ProjectSettings/ProjectVersion.txt",
+        "project.godot",
         "Packages/manifest.json",
         "package.json",
         "pyproject.toml",

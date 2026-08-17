@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -58,6 +59,35 @@ def _registered_unity(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     return root, registry
 
 
+def _registered_godot(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
+    root = tmp_path / "godot-game"
+    registry = tmp_path / "registry"
+    (root / "game").mkdir(parents=True)
+    (root / "docs").mkdir()
+    (root / "game" / ".gitkeep").write_text("", encoding="utf-8")
+    (root / "docs" / "outcome.md").write_text("Approved outcome\n", encoding="utf-8")
+    _git(root, "init")
+    _git(root, "config", "user.name", "OneBrief Test")
+    _git(root, "config", "user.email", "onebrief@example.invalid")
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "Create Godot project envelope")
+    manifest = {
+        "schema_version": "onebrief-project-v1",
+        "project_id": "godot-game",
+        "name": "Godot Game",
+        "project_type": "godot_project",
+        "project_root": str(root.resolve()),
+        "canonical_goal": "Materialize the approved puzzle topology.",
+        "summary": "Greenfield Godot project envelope.",
+        "authoritative_documents": ["docs/outcome.md"],
+    }
+    payload = json.dumps(manifest, indent=2).encode("utf-8")
+    (root / MANIFEST_NAME).write_bytes(payload)
+    ExternalProjectImporter(registry).import_bytes(payload)
+    monkeypatch.setenv("KHALINOS_GODOT_EXECUTABLE", sys.executable)
+    return root, registry
+
+
 def test_generated_toolpack_is_qualified_and_exact_hash_approved(tmp_path: Path, monkeypatch) -> None:
     _root, registry = _registered_unity(tmp_path, monkeypatch)
     lifecycle = ProjectToolPackLifecycle("toolpack-game", registry)
@@ -109,6 +139,31 @@ def test_generated_toolpack_is_qualified_and_exact_hash_approved(tmp_path: Path,
     assert approved_pack.approved_edit_path("Assets/Prefabs/Guard.prefab") == (
         "Assets/Prefabs/Guard.prefab"
     )
+
+
+def test_godot_toolpack_binds_exact_host_executable_and_write_prefix(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _root, registry = _registered_godot(tmp_path, monkeypatch)
+    lifecycle = ProjectToolPackLifecycle("godot-game", registry)
+
+    state = lifecycle.generate_and_qualify()
+
+    assert state.status == "validated"
+    assert state.generated is not None
+    assert state.generated.allowed_write_prefixes == ["game/"]
+    assert {".gd", ".godot", ".tscn", ".tres"}.issubset(
+        set(state.generated.allowed_suffixes)
+    )
+    assert [item.pack_id.value for item in state.generated.capability_packs] == [
+        "repository-control", "godot-control"
+    ]
+    binding = state.generated.approved_host_executables[0]
+    assert binding.adapter_id.value == "godot_headless_probe"
+    assert binding.executable_path == str(Path(sys.executable).resolve())
+    assert len(state.generated.trusted_component_digests["godot_topology_compiler"]) == 64
+    approved = lifecycle.approve(state.generated.sha256)
+    assert approved.execution_ready is True
 
 
 def test_regeneration_invalidates_approval_when_repository_head_changes(tmp_path: Path, monkeypatch) -> None:

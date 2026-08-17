@@ -72,6 +72,7 @@ src/onebrief/
     protocol.py            # execute(QuestContract) -> ExecutionResult
     software.py            # existing-project software adapter
     unity.py               # Unity compile/layout/PlayMode adapter binding
+    godot.py               # target extraction of the current trusted Godot vertical path
   verification/
     protocol.py            # independent verifier boundary
     evidence_receipt.py    # executable evidence bindings
@@ -105,6 +106,7 @@ dependencies.
 | `adk_convergence.py` | ADK execution primitive | Retains meaningful Google ADK agent orchestration |
 | Unity evidence/runtime modules | Existing-project Unity adapter internals | Real compile, layout, PlayMode, screenshot, and semantic observation |
 | `godot_topology.py` | Primary greenfield topology compiler | Deterministically materializes declared regions as native scenes plus a headless probe |
+| `godot_quest_execution.py` | Initial Godot execution adapter | Issues M01, checks exact ToolPack/compiler/engine authority, materializes in an isolated clone, and emits independently reproduced Receipts |
 
 ## REDUCE
 
@@ -291,6 +293,11 @@ Exit: a judge can understand the product without reading logs.
 - Keep the existing Unity compile, layout, and PlayMode regressions green.
 - Kernel issues M02 only after M01 PASS.
 - Record Google Cloud execution and immutable digest chain.
+
+Current checkpoint: the local M01 topology slice passes `M01-C1` through `M01-C4`
+with independent headless reproduction. Runtime screenshots, Windows export in the PUZZLE
+Quest lineage, M02 issuance, and Cloud lineage remain pending; the earlier engine bake-off
+is supporting evidence rather than a substitute for those remaining gates.
 
 Exit: one uninterrupted end-to-end demo and a reproducible result package.
 

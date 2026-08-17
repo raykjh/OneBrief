@@ -60,6 +60,25 @@ def test_folder_draft_namespaces_a_builtin_project_id(tmp_path: Path) -> None:
     assert draft.manifest.project_id == "exchange-project"
 
 
+def test_folder_draft_detects_godot_project(tmp_path: Path) -> None:
+    root = tmp_path / "Puzzle_Godot"
+    root.mkdir()
+    (root / "project.godot").write_text(
+        '[application]\nconfig/name="Puzzle"\n', encoding="utf-8"
+    )
+    _git(root, "init")
+    _git(root, "config", "user.name", "OneBrief Test")
+    _git(root, "config", "user.email", "onebrief@example.invalid")
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "Create Godot project")
+
+    draft = draft_project_folder(root)
+
+    assert draft.manifest.project_type == "godot_project"
+    assert draft.inventory.detected_ecosystems == ["godot"]
+    assert "project.godot" in draft.manifest.authoritative_documents
+
+
 def test_confirmation_creates_manifest_and_registers_sidecar(tmp_path: Path) -> None:
     root = tmp_path / "My_Unity_Game"
     _unity_root(root)

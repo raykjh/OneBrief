@@ -61,3 +61,13 @@ def test_unity_capabilities_are_bound_to_the_approved_host() -> None:
         CapabilityPackId.UNITY_CONTROL
     ) is ExecutionPlacement.APPROVED_HOST
     assert capability_pack_refs_require_approved_host(refs) is True
+
+
+def test_godot_headless_capability_is_digest_bound_to_approved_host() -> None:
+    refs = capability_pack_refs_for_adapter_ids(["godot_headless_probe"])
+
+    assert [item.pack_id for item in refs] == [CapabilityPackId.GODOT_CONTROL]
+    assert validate_capability_pack_refs(refs, ["godot_headless_probe"]) == []
+    assert capability_pack_execution_placement(
+        CapabilityPackId.GODOT_CONTROL
+    ) is ExecutionPlacement.APPROVED_HOST

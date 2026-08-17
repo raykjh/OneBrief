@@ -19,6 +19,7 @@ class CapabilityPackId(StrEnum):
     REPOSITORY_CONTROL = "repository-control"
     UNITY_CONTROL = "unity-control"
     UNITY_LAYOUT_DIAGNOSTICS = "unity-layout-diagnostics"
+    GODOT_CONTROL = "godot-control"
     NODE_CONTROL = "node-control"
     WEB_OBSERVATION = "web-observation"
     PYTHON_CONTROL = "python-control"
@@ -128,6 +129,26 @@ BUILTIN_CAPABILITY_PACKS: dict[CapabilityPackId, CapabilityPackDefinition] = {
             "does not edit scenes, prefabs, tests, screenshots, or product UI",
         ],
     ),
+    CapabilityPackId.GODOT_CONTROL: CapabilityPackDefinition(
+        pack_id=CapabilityPackId.GODOT_CONTROL,
+        version="1.0.0",
+        title="Godot trusted topology and headless verification",
+        ecosystems=["godot"],
+        adapter_ids=["godot_headless_probe"],
+        capabilities=[
+            "bind one exact Godot executable by path and SHA-256",
+            "materialize a trusted declarative topology inside an isolated snapshot",
+            "run the committed headless topology probe with a bounded receipt path",
+        ],
+        evidence_contracts=[
+            "plan, bundle, source revision, executable digest, and probe receipt lineage",
+            "independent file-hash and visited-region verification",
+        ],
+        blocked_boundaries=[
+            *_COMMON_BLOCKS,
+            "does not permit model-authored commands, engine arguments, or executable paths",
+        ],
+    ),
     CapabilityPackId.NODE_CONTROL: CapabilityPackDefinition(
         pack_id=CapabilityPackId.NODE_CONTROL,
         version="1.0.0",
@@ -164,6 +185,7 @@ BUILTIN_CAPABILITY_PACKS: dict[CapabilityPackId, CapabilityPackDefinition] = {
 _HOST_BOUND_PACKS = frozenset({
     CapabilityPackId.UNITY_CONTROL,
     CapabilityPackId.UNITY_LAYOUT_DIAGNOSTICS,
+    CapabilityPackId.GODOT_CONTROL,
 })
 
 

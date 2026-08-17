@@ -1,0 +1,44 @@
+{
+  "schema_version": "khalinos-godot-topology-plan-v1",
+  "project_name": "PUZZLE",
+  "initial_region": "title",
+  "viewport_width": 1280,
+  "viewport_height": 720,
+  "regions": [
+    {
+      "region_id": "title",
+      "kind": "screen",
+      "label": "PUZZLE",
+      "background_hex": "172033",
+      "transitions": ["chamber_select"]
+    },
+    {
+      "region_id": "chamber_select",
+      "kind": "screen",
+      "label": "Chamber Select",
+      "background_hex": "203844",
+      "transitions": ["gameplay"]
+    },
+    {
+      "region_id": "gameplay",
+      "kind": "screen",
+      "label": "Ancient Labyrinth",
+      "background_hex": "173B35",
+      "transitions": ["pause", "mission_result"]
+    },
+    {
+      "region_id": "pause",
+      "kind": "overlay",
+      "label": "Pause",
+      "background_hex": "49382B",
+      "transitions": ["gameplay"]
+    },
+    {
+      "region_id": "mission_result",
+      "kind": "overlay",
+      "label": "Mission Result",
+      "background_hex": "3D2848",
+      "transitions": ["chamber_select"]
+    }
+  ]
+}

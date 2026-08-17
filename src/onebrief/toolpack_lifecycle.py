@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 from datetime import UTC, datetime
@@ -37,6 +38,7 @@ SAFE_SUFFIXES = {
     ".asmdef", ".asset", ".cs", ".css", ".html", ".ini", ".js", ".json",
     ".jsx", ".md", ".mjs", ".prefab", ".py", ".shader", ".toml", ".ts",
     ".tsx", ".txt", ".unity", ".uss", ".uxml", ".xml", ".yaml", ".yml",
+    ".gd", ".godot", ".tscn", ".tres",
 }
 
 
@@ -68,6 +70,7 @@ class AdapterId(StrEnum):
     UNITY_EDITMODE_TESTS = "unity_editmode_tests"
     UNITY_PLAYMODE_VISUAL_TESTS = "unity_playmode_visual_tests"
     UNITY_LAYOUT_DIAGNOSTICS = "unity_layout_diagnostics"
+    GODOT_HEADLESS_PROBE = "godot_headless_probe"
     NODE_SCRIPT = "node_script"
     NODE_WEB_OBSERVATION = "node_web_observation"
     PYTHON_TESTS = "python_tests"
@@ -105,6 +108,21 @@ class ApprovedRuntimeArgument(BaseModel):
         return self
 
 
+class ApprovedHostExecutable(BaseModel):
+    """Exact local runtime identity included in the approved ToolPack digest."""
+
+    adapter_id: Literal[AdapterId.GODOT_HEADLESS_PROBE]
+    executable_path: str = Field(min_length=3, max_length=1000)
+    executable_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    executable_size: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def require_absolute_executable(self) -> "ApprovedHostExecutable":
+        if not Path(self.executable_path).is_absolute():
+            raise ValueError("approved host executable path must be absolute")
+        return self
+
+
 class GeneratedProjectToolPack(BaseModel):
     schema_version: Literal[
         "onebrief-generated-toolpack-v1", "onebrief-generated-toolpack-v2"
@@ -121,6 +139,10 @@ class GeneratedProjectToolPack(BaseModel):
     allowed_suffixes: list[str] = Field(min_length=1, max_length=80)
     adapters: list[ToolAdapter] = Field(min_length=1, max_length=12)
     runtime_arguments: list[ApprovedRuntimeArgument] = Field(default_factory=list, max_length=8)
+    approved_host_executables: list[ApprovedHostExecutable] = Field(
+        default_factory=list, max_length=8
+    )
+    trusted_component_digests: dict[str, str] = Field(default_factory=dict, max_length=16)
     capability_packs: list[CapabilityPackRef] = Field(default_factory=list, max_length=12)
     blocked_boundaries: list[str] = Field(min_length=1, max_length=20)
 
@@ -142,6 +164,18 @@ class GeneratedProjectToolPack(BaseModel):
             (item.adapter_id, item.argument) for item in self.runtime_arguments
         }):
             raise ValueError("ToolPack runtime arguments must be unique")
+        host_adapters = {item.adapter_id for item in self.approved_host_executables}
+        if len(host_adapters) != len(self.approved_host_executables):
+            raise ValueError("approved host executable bindings must be unique")
+        if any(item.adapter_id not in enabled_adapters for item in self.approved_host_executables):
+            raise ValueError("approved host executable requires its exact enabled adapter")
+        required_host_adapters = enabled_adapters & {AdapterId.GODOT_HEADLESS_PROBE}
+        if host_adapters != required_host_adapters:
+            raise ValueError("every enabled approved-host adapter requires one executable binding")
+        if AdapterId.GODOT_HEADLESS_PROBE in enabled_adapters:
+            digest = self.trusted_component_digests.get("godot_topology_compiler")
+            if digest is None or not re.fullmatch(r"[a-f0-9]{64}", digest):
+                raise ValueError("Godot adapter requires the trusted compiler implementation digest")
         if self.schema_version == "onebrief-generated-toolpack-v2":
             errors = validate_capability_pack_refs(
                 self.capability_packs,
@@ -229,6 +263,8 @@ class ProjectToolPackLifecycle:
         systems = set(inventory.detected_ecosystems)
         if "unity" in systems:
             return ["Assets/", "Packages/", "ProjectSettings/"], ["Assets/", "Packages/"]
+        if "godot" in systems:
+            return ["game/", "docs/"], ["game/"]
         if "node" in systems:
             writable = ["app/", "src/", "web/", "public/"]
             return [*writable, "tests/", "scripts/"], writable
@@ -307,6 +343,56 @@ class ProjectToolPackLifecycle:
         return next((item.resolve() for item in candidates if item and item.is_file()), None)
 
     @staticmethod
+    def _godot_executable() -> Path | None:
+        configured = (
+            os.environ.get("KHALINOS_GODOT_EXECUTABLE")
+            or os.environ.get("ONEBRIEF_GODOT_EXECUTABLE")
+        )
+        candidates = [Path(configured)] if configured else []
+        for name in ("godot", "godot4"):
+            discovered = shutil.which(name)
+            if discovered:
+                candidates.append(Path(discovered))
+        return next((item.resolve() for item in candidates if item.is_file()), None)
+
+    @staticmethod
+    def _host_executable_binding(
+        adapter_id: AdapterId, executable: Path | None
+    ) -> list[ApprovedHostExecutable]:
+        if executable is None:
+            return []
+        digest = hashlib.sha256()
+        size = 0
+        with executable.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+                size += len(block)
+        return [ApprovedHostExecutable(
+            adapter_id=adapter_id,
+            executable_path=str(executable),
+            executable_sha256=digest.hexdigest(),
+            executable_size=size,
+        )]
+
+    @classmethod
+    def _host_binding_matches(cls, binding: ApprovedHostExecutable) -> bool:
+        try:
+            current = cls._host_executable_binding(
+                binding.adapter_id, Path(binding.executable_path)
+            )
+        except OSError:
+            return False
+        return len(current) == 1 and current[0] == binding
+
+    @staticmethod
+    def _trusted_component_digests(adapters: list[ToolAdapter]) -> dict[str, str]:
+        enabled = {item.adapter_id for item in adapters if item.enabled}
+        if AdapterId.GODOT_HEADLESS_PROBE not in enabled:
+            return {}
+        compiler = Path(__file__).with_name("godot_topology.py")
+        return {"godot_topology_compiler": hashlib.sha256(compiler.read_bytes()).hexdigest()}
+
+    @staticmethod
     def _approved_runtime_arguments(root: Path, head_sha: str | None) -> list[ApprovedRuntimeArgument]:
         """Discover only fixed argv contracts proven by committed project source."""
 
@@ -378,6 +464,7 @@ class ProjectToolPackLifecycle:
             enabled=inventory.git_repository and inventory.head_sha is not None,
         )]
         systems = set(inventory.detected_ecosystems)
+        approved_host_executables: list[ApprovedHostExecutable] = []
         if "unity" in systems:
             editor = self._unity_editor(root)
             has_editmode_tests = any(
@@ -430,6 +517,18 @@ class ProjectToolPackLifecycle:
                     ),
                 ),
             ])
+        if "godot" in systems:
+            godot = self._godot_executable()
+            adapters.append(ToolAdapter(
+                adapter_id=AdapterId.GODOT_HEADLESS_PROBE,
+                label="Run the trusted Godot topology probe headlessly",
+                enabled=godot is not None,
+                parameter="game",
+                evidence=str(godot) if godot else "An approved Godot executable was not found.",
+            ))
+            approved_host_executables.extend(self._host_executable_binding(
+                AdapterId.GODOT_HEADLESS_PROBE, godot
+            ))
         adapters.extend(self._node_adapters(root))
         if "python" in systems:
             adapters.append(ToolAdapter(
@@ -463,6 +562,8 @@ class ProjectToolPackLifecycle:
             allowed_suffixes=sorted(SAFE_SUFFIXES),
             adapters=adapters,
             runtime_arguments=runtime_arguments,
+            approved_host_executables=approved_host_executables,
+            trusted_component_digests=self._trusted_component_digests(adapters),
             capability_packs=capability_packs,
             blocked_boundaries=[
                 "source repository writes",
@@ -540,6 +641,28 @@ class ProjectToolPackLifecycle:
                 message=(
                     "Every project-specific runtime argument is allowlisted and bound to "
                     "the exact committed source that activates it."
+                ),
+            ),
+            QualificationCheck(
+                check_id="approved_host_executable_integrity",
+                passed=all(
+                    self._host_binding_matches(binding)
+                    for binding in generated.approved_host_executables
+                ),
+                message=(
+                    "Every approved-host executable remains at the exact path, size, and SHA-256 "
+                    "included in the ToolPack approval digest."
+                ),
+            ),
+            QualificationCheck(
+                check_id="trusted_component_integrity",
+                passed=(
+                    generated.trusted_component_digests
+                    == self._trusted_component_digests(generated.adapters)
+                ),
+                message=(
+                    "Trusted compiler implementations match the digests included in the "
+                    "ToolPack approval."
                 ),
             ),
         ]

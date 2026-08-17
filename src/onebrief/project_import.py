@@ -160,6 +160,7 @@ def inspect_project(manifest: ProjectManifest) -> ProjectInventory:
     ecosystems: list[str] = []
     checks = [
         ("ProjectSettings/ProjectVersion.txt", "unity"),
+        ("project.godot", "godot"),
         ("package.json", "node"),
         ("pyproject.toml", "python"),
         ("requirements.txt", "python"),
@@ -171,6 +172,9 @@ def inspect_project(manifest: ProjectManifest) -> ProjectInventory:
             markers.append(marker)
             if ecosystem not in ecosystems:
                 ecosystems.append(ecosystem)
+    if "godot" in manifest.project_type.casefold() and "godot" not in ecosystems:
+        markers.append("manifest:project_type=godot")
+        ecosystems.append("godot")
     if any(item.endswith((".sln", ".csproj")) for item in lowered):
         ecosystems.append("dotnet")
     branch = _git(root, "branch", "--show-current") or None if git_repository else None
@@ -203,6 +207,9 @@ def prepare_toolpack(manifest: ProjectManifest, inventory: ProjectInventory) -> 
     if "unity" in inventory.detected_ecosystems:
         capabilities += ["prepare Unity compile adapter", "prepare Unity test adapter"]
         validations += ["Unity batch-mode compilation", "Unity EditMode or project-specific tests"]
+    if "godot" in inventory.detected_ecosystems:
+        capabilities += ["prepare Godot headless verification adapter"]
+        validations += ["Godot trusted topology probe"]
     if "node" in inventory.detected_ecosystems:
         validations += ["package-defined test", "package-defined build"]
     if "python" in inventory.detected_ecosystems:
