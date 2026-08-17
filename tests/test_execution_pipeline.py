@@ -3589,6 +3589,24 @@ def test_new_client_preflight_repair_requires_new_product_files() -> None:
     ) is NewProductConstructionChangeSet
 
 
+def test_missing_topology_assets_require_new_product_construction_files() -> None:
+    report = ExecutionPipeline._development_failure_report(
+        "Unity visual test contract: new Unity production source declares missing "
+        "scene/prefab path Assets/Scenes/TitleScreen.unity; a maker-authored topology "
+        "mapping is not evidence that the product region exists"
+    )
+
+    assert development_maker_schema_for(
+        report,
+        None,
+        exact_edit_anchors=[{
+            "path": "Assets/Scripts/Runtime/TopologyBootstrap.cs",
+            "anchors": [{"anchor_id": "A0123456789ab", "text": "class TopologyBootstrap"}],
+        }],
+        active_phase=ExecutionPhase.PRODUCT_IMPLEMENTATION,
+    ) is NewProductConstructionChangeSet
+
+
 def test_inert_new_unity_source_is_a_product_target_even_with_missing_evidence() -> None:
     feedback = (
         "Unity visual test contract: new Unity UI MonoBehaviour NewClientPresentationController "

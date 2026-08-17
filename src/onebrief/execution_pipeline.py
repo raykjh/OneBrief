@@ -1077,6 +1077,14 @@ def development_maker_schema_for(
         return UnityClientConstructionPlan
     if (
         active_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
+        and (
+            "declares missing scene/prefab path" in normalized_feedback
+            or "maker-authored topology mapping is not evidence" in normalized_feedback
+        )
+    ):
+        return NewProductConstructionChangeSet
+    if (
+        active_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
         and "new-client construction preflight" in normalized_feedback
     ):
         return NewProductConstructionChangeSet
