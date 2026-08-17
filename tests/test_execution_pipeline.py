@@ -1337,6 +1337,37 @@ def test_runtime_missing_scene_binds_to_declared_candidate_asset() -> None:
     assert bound.permitted_paths == ["Assets/Scenes/01_TitleScreen.unity"]
 
 
+def test_runtime_missing_scene_accepts_exact_assets_path_from_unity() -> None:
+    contract = RepairContract.model_validate({
+        "contract_id": "RC-8123456789abcdef",
+        "observation_id": "FO-8123456789abcdef",
+        "progress_kind": "first_observation",
+        "occurrence": 1,
+        "hypothesis": {
+            "hypothesis_id": "RH-8123456789abcdef",
+            "suspected_cause": "The requested runtime scene is absent.",
+            "cheapest_probe": "Materialize the exact scene path.",
+            "expected_signal": "The runtime enters the scene.",
+            "repair_boundary": "The exact missing scene only.",
+            "requires_model_reasoning": True,
+        },
+        "permitted_paths": ["Packages/packages-lock.json"],
+        "verification_ladder": ["compile", "targeted_state"],
+        "execution_allowed": True,
+        "escalation_required": False,
+        "rationale": "Repair the observed product defect.",
+    })
+
+    bound = bind_semantic_product_repair_scope(
+        contract,
+        [],
+        "Scene 'Assets/Scenes/BootstrapScene.unity' couldn't be loaded because it has "
+        "not been added to the active build profile or shared scene list",
+    )
+
+    assert bound.permitted_paths == ["Assets/Scenes/BootstrapScene.unity"]
+
+
 def test_causal_new_unity_asset_uses_trusted_feedback_not_wrapper_type() -> None:
     feedback = (
         "Unity visual test contract: New-client construction preflight: the whole-product "

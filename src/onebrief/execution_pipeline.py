@@ -617,16 +617,29 @@ def bind_semantic_product_repair_scope(
         failure_text.replace("\\", "/"),
         flags=re.IGNORECASE,
     )
+    missing_runtime_scene_refs = re.findall(
+        r"scene\s+'([^']+)'\s+couldn'?t be loaded because it has not been added",
+        failure_text,
+        flags=re.IGNORECASE,
+    )
     missing_runtime_scene_names = {
-        match.casefold()
-        for match in re.findall(
-            r"scene\s+'([^']+)'\s+couldn'?t be loaded because it has not been added",
-            failure_text,
-            flags=re.IGNORECASE,
+        (
+            PurePosixPath(match.replace("\\", "/")).stem.casefold()
+            if match.replace("\\", "/").casefold().endswith(".unity")
+            else match.casefold()
         )
+        for match in missing_runtime_scene_refs
     }
     missing_runtime_scene = bool(missing_runtime_scene_names)
-    missing_runtime_paths: list[str] = []
+    missing_runtime_paths: list[str] = [
+        match.replace("\\", "/")
+        for match in missing_runtime_scene_refs
+        if re.fullmatch(
+            r"(?:Assets|Packages)/[^\s'\";&|]+\.unity",
+            match.replace("\\", "/"),
+            flags=re.IGNORECASE,
+        )
+    ]
     if missing_runtime_scene_names:
         for source in sources:
             content = str(source.get("content") or "").replace("\\", "/")
