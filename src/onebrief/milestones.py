@@ -493,11 +493,26 @@ def build_milestone_plan(
                 [],
             ),
         ])
-    elif flow_items or compile_items:
+    elif flow_items:
         groups.append((
             "Executable primary flow",
             "The primary user flow works in the target runtime on a compiling candidate.",
             [*compile_items, *flow_items],
+            [],
+        ))
+    elif compile_items:
+        # A compile/build criterion is a support condition, not a useful
+        # greenfield milestone by itself. Pair it with the first bounded
+        # non-presentation product outcomes so M01 must create and exercise a
+        # real user-facing foundation instead of adding a build helper to an
+        # otherwise empty project.
+        foundation_items = list(remaining.values())[:2]
+        for item in foundation_items:
+            remaining.pop(item.criterion_id, None)
+        groups.append((
+            "Executable product foundation",
+            "The first user-facing product slice works in the target runtime on a compiling candidate.",
+            [*compile_items, *foundation_items],
             [],
         ))
     if settings_items and not unity_surface_flow:

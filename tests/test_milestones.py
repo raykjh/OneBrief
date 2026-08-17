@@ -268,6 +268,65 @@ def test_plan_assigns_every_criterion_once_and_finishes_with_full_regression() -
     assert sum(item.budget_weight for item in plan.milestones) == pytest.approx(1.0)
 
 
+def test_compile_only_match_is_paired_with_greenfield_product_foundation() -> None:
+    criteria = [
+        QualityCriterion(
+            criterion_id="Q01",
+            description="The Unity project compiles and builds successfully.",
+            evaluation_mode=EvaluationMode.DETERMINISTIC,
+            evidence_required="Unity build log.",
+        ),
+        QualityCriterion(
+            criterion_id="Q02",
+            description="The title screen opens the chamber selection screen.",
+            evaluation_mode=EvaluationMode.DETERMINISTIC,
+            evidence_required="Executed screen transition.",
+        ),
+        QualityCriterion(
+            criterion_id="Q03",
+            description="Chamber progress and scores persist locally.",
+            evaluation_mode=EvaluationMode.DETERMINISTIC,
+            evidence_required="Persistence test.",
+        ),
+        QualityCriterion(
+            criterion_id="Q04",
+            description="The rendered 9x9 board has a polished visual layout.",
+            evaluation_mode=EvaluationMode.INDEPENDENT_REVIEW,
+            evidence_required="Rendered gameplay screenshot.",
+        ),
+    ]
+    requirements = RequirementsAnalysis(
+        supported=True,
+        support_reason="The greenfield Unity product is approved.",
+        normalized_goal="Create an offline Unity puzzle.",
+        deliverables=["Playable Unity puzzle"],
+        mandatory_information=[],
+        optional_information=[],
+        acceptance_criteria=[item.description for item in criteria],
+        completion_contract=CompletionContract(
+            target_state="A playable offline Unity puzzle.",
+            quality_criteria=criteria,
+        ),
+        assumptions=[],
+        consolidated_questions=[],
+        ready_for_estimate=True,
+    )
+
+    plan = build_milestone_plan(
+        project_id="puzzle-telos",
+        goal="Create PUZZLE TELOS from an empty Unity foundation.",
+        requirements=requirements,
+        source_revision="a" * 40,
+        minimum_cost_usd=1.0,
+        maximum_cost_usd=10.0,
+    )
+
+    first = plan.milestones[1]
+    assert first.title == "Executable product foundation"
+    assert first.contract.primary_criterion_ids == ["Q01", "Q02", "Q03"]
+    assert first.contract.primary_criterion_ids != ["Q01"]
+
+
 def test_scoped_requirements_revalidate_passed_dependencies() -> None:
     plan = _plan()
     requirements = _requirements()
