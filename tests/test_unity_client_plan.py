@@ -104,7 +104,7 @@ def test_trusted_client_renderer_preserves_authentication_authority() -> None:
         "Assets/JULPAE/NewClient/Runtime/KhalinosGeneratedClientShell.cs"
     )
     assert TRUSTED_UNITY_CLIENT_MARKER in rendered.runtime_source
-    assert 'new GameObject("OneBriefNewClientRoot"' in rendered.runtime_source
+    assert 'new GameObject("KhalinosNewClientRoot"' in rendered.runtime_source
     assert 'new GameObject("NewClientLobbyPanel"' not in rendered.runtime_source
     assert 'CreatePanel("NewClientLobbyPanel"' in rendered.runtime_source
     assert 'CreatePanel("KhalinosLoginBackdrop"' in rendered.runtime_source
@@ -150,7 +150,7 @@ def test_client_plan_derives_complete_proxy_evidence_journey() -> None:
     assert [(step.action, step.target, step.scene_name) for step in journey.steps] == [
         ("load_scene", None, "LoginScene_All"),
         ("wait_frames", None, None),
-        ("assert_active", "OneBriefLoginPanel", None),
+        ("assert_active", "KhalinosLoginPanel", None),
         ("capture", None, None),
         ("select_dropdown_index", "NewClientTestAccountDropdown", None),
         ("click_button", "NewClientDirectEnterButton", None),

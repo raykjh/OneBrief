@@ -577,9 +577,9 @@ namespace Khalinos.GeneratedClient
             Stretch(backdrop.GetComponent<RectTransform>(), 0f);
             GameObject panel = CreatePanel("KhalinosLoginPanel", backdrop.transform, new Color(0.035f, 0.047f, 0.075f, 1f));
             Place(panel.GetComponent<RectTransform>(), 0.5f, 0.5f, 720f, 540f);
-            CreateText("OneBriefBrandTitle", panel.transform, {values["brand"]}, 26f, Accent, 0f, 190f, 620f, 52f);
-            CreateText("OneBriefLoginTitle", panel.transform, {values["login_title"]}, 46f, Color.white, 0f, 105f, 620f, 76f);
-            CreateText("OneBriefLoginSubtitle", panel.transform, {values["login_subtitle"]}, 22f, new Color(0.78f, 0.84f, 0.92f), 0f, 35f, 620f, 70f);
+            CreateText("KhalinosBrandTitle", panel.transform, {values["brand"]}, 26f, Accent, 0f, 190f, 620f, 52f);
+            CreateText("KhalinosLoginTitle", panel.transform, {values["login_title"]}, 46f, Color.white, 0f, 105f, 620f, 76f);
+            CreateText("KhalinosLoginSubtitle", panel.transform, {values["login_subtitle"]}, 22f, new Color(0.78f, 0.84f, 0.92f), 0f, 35f, 620f, 70f);
             proxyAccountDropdown = CreateDropdown("NewClientTestAccountDropdown", panel.transform, 0f, -65f, 500f, 64f);
             CopyOptions(proxyAccountDropdown);
             proxyAccountDropdown.onValueChanged.AddListener(SyncAccountSelection);
@@ -615,9 +615,9 @@ namespace Khalinos.GeneratedClient
             Stretch(backdrop.GetComponent<RectTransform>(), 0f);
             GameObject panel = CreatePanel("NewClientLobbyPanel", backdrop.transform, new Color(0.025f, 0.035f, 0.06f, 1f));
             Stretch(panel.GetComponent<RectTransform>(), 42f);
-            CreateText("OneBriefLobbyBrand", panel.transform, {values["brand"]}, 24f, Accent, 0f, 230f, 780f, 50f);
-            CreateText("OneBriefLobbyTitle", panel.transform, {values["lobby_title"]}, 50f, Color.white, 0f, 125f, 860f, 80f);
-            CreateText("OneBriefLobbySubtitle", panel.transform, {values["lobby_subtitle"]}, 22f, new Color(0.78f, 0.84f, 0.92f), 0f, 50f, 760f, 70f);
+            CreateText("KhalinosLobbyBrand", panel.transform, {values["brand"]}, 24f, Accent, 0f, 230f, 780f, 50f);
+            CreateText("KhalinosLobbyTitle", panel.transform, {values["lobby_title"]}, 50f, Color.white, 0f, 125f, 860f, 80f);
+            CreateText("KhalinosLobbySubtitle", panel.transform, {values["lobby_subtitle"]}, 22f, new Color(0.78f, 0.84f, 0.92f), 0f, 50f, 760f, 70f);
             if (!string.IsNullOrEmpty(LobbyDataSelector))
                 proxyLobbyData = CreateText("NewClientLobbyData", panel.transform, "Waiting for approved data", 21f, new Color(0.78f, 0.84f, 0.92f), 0f, -40f, 760f, 64f);
             if (!string.IsNullOrEmpty(LobbyNavigationSelector))
@@ -658,14 +658,14 @@ namespace Khalinos.GeneratedClient
             if (old != null) Destroy(old.gameObject);
             GameObject panel = CreatePanel("NewClientSettingsPanel", parent, new Color(0.055f, 0.07f, 0.11f, 0.99f));
             Place(panel.GetComponent<RectTransform>(), 0.5f, 0.5f, 680f, 470f);
-            CreateText("OneBriefSettingsTitle", panel.transform, {values["settings_title"]}, 42f, Color.white, 0f, 105f, 580f, 70f);
-            CreateText("OneBriefSettingsBody", panel.transform, {values["settings_body"]}, 21f, new Color(0.78f, 0.84f, 0.92f), 0f, 5f, 560f, 130f);
+            CreateText("KhalinosSettingsTitle", panel.transform, {values["settings_title"]}, 42f, Color.white, 0f, 105f, 580f, 70f);
+            CreateText("KhalinosSettingsBody", panel.transform, {values["settings_body"]}, 21f, new Color(0.78f, 0.84f, 0.92f), 0f, 5f, 560f, 130f);
             CreateButton("NewClientSettingsCloseButton", panel.transform, {values["close_button"]}, 0f, -140f, 300f, 64f, () => Destroy(panel));
         }}
 
         private Canvas CreateCanvas()
         {{
-            surfaceRoot = new GameObject("OneBriefNewClientRoot", typeof(RectTransform));
+            surfaceRoot = new GameObject("KhalinosNewClientRoot", typeof(RectTransform));
             Canvas canvas = surfaceRoot.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.sortingOrder = 32000;
@@ -820,7 +820,7 @@ def derive_unity_client_evidence_journey(
     steps: list[dict[str, object]] = [
         {"action": "load_scene", "scene_name": plan.initial_scene},
         {"action": "wait_frames", "frames": 10},
-        {"action": "assert_active", "target": "OneBriefLoginPanel"},
+        {"action": "assert_active", "target": "KhalinosLoginPanel"},
         {"action": "capture", "scenario_id": "login_surface_initial"},
         {
             "action": "select_dropdown_index",
