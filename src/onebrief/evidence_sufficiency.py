@@ -310,7 +310,7 @@ def append_grounded_public_source_registry(
     body = draft.body_markdown.rstrip()
     registry = "\n".join(missing_lines)
     return draft.model_copy(update={
-        "body_markdown": f"{body}\n\n## 검증된 공개 출처\n\n{registry}\n",
+        "body_markdown": f"{body}\n\n## Verified public sources\n\n{registry}\n",
     })
 
 

@@ -24,7 +24,7 @@ def test_first_product_delivery_defaults_to_standard_design() -> None:
     )
     result = apply_standard_first_delivery_policy(intake, _requirements())
 
-    assert any("표준적인 상용 디자인" in item for item in result.assumptions)
+    assert any("conventional commercial design" in item for item in result.assumptions)
 
 
 def test_explicit_design_improvement_is_not_overridden() -> None:
@@ -35,4 +35,3 @@ def test_explicit_design_improvement_is_not_overridden() -> None:
     result = apply_standard_first_delivery_policy(intake, _requirements())
 
     assert result.assumptions == []
-

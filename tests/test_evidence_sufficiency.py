@@ -448,7 +448,7 @@ def test_trusted_public_source_registry_is_appended_without_model_copying() -> N
     appended = append_grounded_public_source_registry([source], draft)
     appended_twice = append_grounded_public_source_registry([source], appended)
 
-    assert "## 검증된 공개 출처" in appended.body_markdown
+    assert "## Verified public sources" in appended.body_markdown
     assert "https://example.com/products/a" in appended.body_markdown
     assert "https://example.com/products/b" in appended.body_markdown
     assert appended_twice.body_markdown == appended.body_markdown

@@ -203,8 +203,8 @@ class AnalystAgent:
                 "W-prefixed source IDs that support it into source_refs. A public finding without a valid "
                 "W source reference is not usable evidence. Prefer primary official sources for legal, "
                 "regulatory, safety, and standards claims. Do not draft the final artifact or invent missing "
-                "facts, specifications, prices, or timelines. Write in the "
-                "goal's language and return only the required structured object."
+                "facts, specifications, prices, or timelines. Write every KHALINOS-authored "
+                "field in English and return only the required structured object."
                 + " "
                 + ANALYST_PROFILE.instruction()
                 + (("\n\n" + self.skill_context) if self.skill_context else "")
@@ -261,8 +261,8 @@ class WriterAgent:
                 "audit findings as project evidence, but do not generalize them into universal clinical efficacy. Treat any "
                 "forbidden_output_terms in the work contract as private: preserve the resulting requirement without copying, "
                 "paraphrasing, or attributing the private context in the deliverable. Never change the "
-                "goal, invent a source, or make a high-impact decision for a human. Write in the goal's "
-                "language and return only the required structured object."
+                "goal, invent a source, or make a high-impact decision for a human. Write every "
+                "KHALINOS-authored field in English and return only the required structured object."
                 + " "
                 + WRITER_PROFILE.instruction()
                 + (("\n\n" + self.skill_context) if self.skill_context else "")
@@ -1088,7 +1088,7 @@ class VerifierAgent:
                 "Give exact revision instructions. For every completion_contract quality criterion, "
                 "return exactly one criterion_check and copy its Q-prefixed criterion_id into "
                 "criterion_id. Keep system or safety checks separate and leave criterion_id null for them. "
-                "Write every user-facing field in the goal's language. "
+                "Write every KHALINOS-authored user-facing field in English. "
                 "Return only the structured object."
                 + " "
                 + VERIFIER_PROFILE.instruction()
@@ -1133,7 +1133,7 @@ class RevisionAgent:
                 "You are OneBrief's revision specialist. "
                 "Apply every blocking revision instruction while preserving correct grounded content. "
                 "Do not hide unresolved issues or broaden scope. Keep material claims linked to existing "
-                "finding IDs. Write in the goal's language and return only the structured object."
+                "finding IDs. Write every KHALINOS-authored field in English and return only the structured object."
                 + " "
                 + REVISION_PROFILE.instruction()
                 + (("\n\n" + self.skill_context) if self.skill_context else "")

@@ -597,13 +597,13 @@ def _approval_ceiling(session: WebSession) -> float:
 
 def validate_approval(session: WebSession, approved_usd: float) -> None:
     if session.budget is None or not session.requirements.ready_for_estimate:
-        raise ValueError("아직 실행 예산을 승인할 수 있는 상태가 아닙니다.")
+        raise ValueError("This session is not ready for budget authorization.")
     minimum = session.budget.minimum_cost_usd
     ceiling = _approval_ceiling(session)
     if approved_usd + 1e-9 < minimum:
-        raise ValueError(f"승인액은 최소 예상 금액 ${minimum:.4f} 이상이어야 합니다.")
+        raise ValueError(f"The approved amount must be at least the minimum estimate of ${minimum:.4f}.")
     if approved_usd - 1e-9 > ceiling:
-        raise ValueError(f"승인액은 현재 허용 상한 ${ceiling:.4f} 이하여야 합니다.")
+        raise ValueError(f"The approved amount must not exceed the current ceiling of ${ceiling:.4f}.")
 
 
 def _service_config() -> tuple[str, str, str, str]:
@@ -805,7 +805,7 @@ async def inspect(
     toolpack_state = None
     if output_target == OutputTarget.EXISTING_PROJECT:
         if not existing_project_id:
-            raise HTTPException(422, "기존 프로젝트 개선을 선택하면 대상 프로젝트를 골라야 합니다.")
+            raise HTTPException(422, "Select a project when improving an existing project.")
         try:
             selected_project = ProjectCatalog().get(existing_project_id)
         except KeyError as exc:
@@ -824,7 +824,7 @@ async def inspect(
         ).context().for_request(goal)
         sources = [*sources, continuation_context.as_internal_source()]
     elif existing_project_id:
-        raise HTTPException(422, "기존 프로젝트가 아닌 작업에는 프로젝트를 지정할 수 없습니다.")
+        raise HTTPException(422, "A project cannot be selected for a new-project delivery.")
     intake = IntakeRequest(
         goal=goal,
         output_target=output_target,
@@ -894,19 +894,19 @@ async def confirm_sixsense(
         raise HTTPException(404, str(exc)) from exc
     plan = previous.requirements.sixsense
     if previous.sixsense_confirmed or plan is None or not plan.questions:
-        raise HTTPException(409, "SixSense 확인이 필요한 세션이 아닙니다.")
+        raise HTTPException(409, "This session does not require SixSense confirmation.")
 
     supplied = {choice.question_id: choice for choice in confirmation.choices}
     unknown = set(supplied) - {question.question_id for question in plan.questions}
     if unknown:
-        raise HTTPException(422, "현재 SixSense 질문과 일치하지 않는 답변이 있습니다.")
-    decision_lines = [f"표준 방향: {plan.standard_profile}"]
+        raise HTTPException(422, "One or more answers do not match the active SixSense questions.")
+    decision_lines = [f"Professional default: {plan.standard_profile}"]
     for question in plan.questions:
         choice = supplied.get(question.question_id)
         custom = (choice.custom_text or "").strip() if choice else ""
         if custom:
             if not question.allow_custom:
-                raise HTTPException(422, f"{question.question_id}은 직접 입력을 허용하지 않습니다.")
+                raise HTTPException(422, f"{question.question_id} does not allow a custom answer.")
             decision = custom
         else:
             option_id = choice.option_id if choice else None
@@ -918,7 +918,7 @@ async def confirm_sixsense(
                     None,
                 )
                 if option is None:
-                    raise HTTPException(422, f"{question.question_id}의 선택지가 유효하지 않습니다.")
+                    raise HTTPException(422, f"The selected option for {question.question_id} is invalid.")
             decision = option.decision
         decision_lines.append(f"{question.question_id} {question.dimension}: {decision}")
     answer_text = "\n".join(decision_lines)
@@ -930,7 +930,7 @@ async def confirm_sixsense(
             or ["sixsense_preferences"]
         ),
         summary="User-confirmed rapid SixSense decisions and accepted working defaults.",
-        content=f"# SixSense 확정사항\n\n{answer_text}\n",
+        content=f"# Confirmed SixSense Decisions\n\n{answer_text}\n",
         media_type="text/markdown",
     )
     augmented = previous.intake.model_copy(
@@ -982,7 +982,7 @@ async def reinspect_session(
         raise HTTPException(404, str(exc)) from exc
     answer_text = answers.strip()
     if not answer_text:
-        raise HTTPException(422, "부족한 정보에 대한 답변을 입력해 주세요.")
+        raise HTTPException(422, "Provide answers for the missing required information.")
     requirement_keys = [item.key for item in previous.requirements.mandatory_information]
     answer_source = InternalSource(
         name=f"user-supplement-{uuid4().hex[:8]}.md",
@@ -990,7 +990,7 @@ async def reinspect_session(
         requirement_keys=requirement_keys or ["user_supplement"],
         summary="User-provided answers to the consolidated requirements questions.",
         content=(
-            "# 요구사항 보완 답변\n\n"
+            "# Requirements Supplement\n\n"
             f"{answer_text}\n"
         ),
         media_type="text/markdown",
@@ -1213,8 +1213,8 @@ async def run_session(
                 selected_project = ProjectCatalog().get(session.intake.existing_project_id)
             if not selected_project.ready_for_isolated_edit:
                 raise ValueError(
-                    "선택한 프로젝트에 커밋되지 않은 변경이 있습니다. 현재 변경을 보존한 채 "
-                    "안전하게 격리 실행할 수 있도록 먼저 정리해야 합니다."
+                    "The selected project has uncommitted changes. Preserve or commit them before "
+                    "starting an isolated execution."
                 )
         store.claim_run(session_id)
     except (FileNotFoundError, KeyError) as exc:
@@ -1279,7 +1279,7 @@ async def run_session(
             return {
                 "session_id": session_id,
                 "status": "queued",
-                "message": "승인된 한도 안에서 로컬 개발 작업을 시작했습니다.",
+                "message": "Local development started within the approved limit.",
             }
         if development_job and not isinstance(store, InMemoryWebSessionStore):
             raise RuntimeError(
@@ -2075,7 +2075,7 @@ async def session_result(
                     return FileResponse(
                         workbook,
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        filename="KHALINOS 결과.xlsx",
+                        filename="KHALINOS-result.xlsx",
                     )
             if not record.result_package:
                 raise RuntimeError("result package is not ready")
@@ -2110,7 +2110,7 @@ async def session_result(
                 return FileResponse(
                     workbook,
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    filename="KHALINOS 결과.xlsx",
+                    filename="KHALINOS-result.xlsx",
                     background=BackgroundTask(shutil.rmtree, temp, ignore_errors=True),
                 )
         archive = Path(shutil.make_archive(str(temp / "onebrief-result"), "zip", result_dir))
@@ -2136,12 +2136,12 @@ async def apply_session_result(
 ) -> dict[str, object]:
     """Apply one verified Cloud/local result to its unchanged local project."""
     if not isinstance(store, InMemoryWebSessionStore):
-        raise HTTPException(409, "안전 적용은 원본 프로젝트에 접근할 수 있는 로컬 KHALINOS에서만 가능합니다.")
+        raise HTTPException(409, "Safe apply is available only in local KHALINOS with access to the source project.")
     try:
         session = store.read(session_id)
         project_id = session.intake.existing_project_id
         if session.intake.output_target != OutputTarget.EXISTING_PROJECT or not project_id:
-            raise RuntimeError("이 작업은 기존 프로젝트 개선 결과가 아닙니다.")
+            raise RuntimeError("This result is not an existing-project improvement.")
         link = store.read_execution(session_id)
         expected_apply = None
         if session.preparation is not None:
@@ -2162,10 +2162,10 @@ async def apply_session_result(
                 job_dir = Path(link.job_uri).resolve()
                 record = await asyncio.to_thread(JobStore(job_dir).read)
                 if record.status.value != "complete" or not record.result_package:
-                    raise RuntimeError("적용할 완료 결과가 아직 없습니다.")
+                    raise RuntimeError("No completed result is available to apply.")
                 result_root = (job_dir / record.result_package).resolve()
                 if not result_root.is_relative_to(job_dir) or not result_root.is_dir():
-                    raise RuntimeError("결과 패키지를 찾을 수 없습니다.")
+                    raise RuntimeError("The result package is unavailable.")
             else:
                 result_root = Path(temp_name) / "result"
                 await asyncio.to_thread(GCSJobStore(link.job_uri).download_result, result_root)

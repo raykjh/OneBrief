@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from fastapi.testclient import TestClient
@@ -110,10 +111,12 @@ def test_home_serves_the_real_workflow() -> None:
     assert response.status_code == 200
     assert "KHALINOS" in response.text
     assert 'class="identity-hero"' in response.text
-    assert 'id="languageToggle"' in response.text
-    assert 'localStorage.getItem("onebrief-language")||"en"' in response.text
-    assert '"What should KHALINOS complete?"' in response.text
-    assert 'document.documentElement.lang=uiLanguage' in response.text
+    assert '<html lang="en">' in response.text
+    assert 'id="languageToggle"' not in response.text
+    assert 'onebrief-language' not in response.text
+    assert "What should KHALINOS complete?" in response.text
+    assert 'document.documentElement.lang="en"' in response.text
+    assert re.search(r"[가-힣]", response.text) is None
     assert 'id="completionContract"' in response.text
     assert 'id="qualityCriteria"' in response.text
     assert '.checks label:has(select[name=max_revision_rounds]){display:none}' in response.text
@@ -142,13 +145,13 @@ def test_home_serves_the_real_workflow() -> None:
     assert 'name="toolpack_ids"' not in response.text
     assert 'name="public_research_disabled"' in response.text
     assert 'id="dropZone"' in response.text
-    assert "파일당 1MB · 전체 3MB" in response.text
+    assert "1 MB per file · 3 MB total" in response.text
     assert 'id="supplement"' in response.text
     assert 'id="supplementButton"' in response.text
     assert "/reinspect" in response.text
-    assert "답변 반영하여 다시 검수" in response.text
+    assert "Apply answers and inspect again" in response.text
     assert 'if(p.requirements.ready_for_estimate){q("#supplement").value=""}' in response.text
-    assert "입력한 답변은 반영됐습니다" in response.text
+    assert "The answers were applied" in response.text
     assert "/api/sessions/" in response.text and "/graph" in response.text
     assert 'id="criteriaList"' in response.text
     assert 'id="criteriaScore"' in response.text
@@ -158,9 +161,9 @@ def test_home_serves_the_real_workflow() -> None:
     assert 'id="questList"' in response.text
     assert '"/quests"' in response.text
     assert "renderQuests(quests)" in response.text
-    assert "계약 기준 " in response.text
-    assert "최종 미완료" in response.text
-    assert "에이전트 실행 흐름" in response.text
+    assert "Contract " in response.text
+    assert "final incomplete" in response.text
+    assert "Execution trace" in response.text
     assert 'new URLSearchParams(location.search).get("session")' in response.text
     assert "terminalWaits>=5" in response.text
     assert 'id="convergenceStatus"' in response.text
@@ -168,9 +171,9 @@ def test_home_serves_the_real_workflow() -> None:
     assert "Automatic retry stopped" in response.text
 
     assert 'name="output_target"' in response.text
-    assert "기존 프로젝트 개선" in response.text
-    assert "웹프로그램" in response.text
-    assert "확정 결과물" in response.text
+    assert "Improve an existing project" in response.text
+    assert "Web application" in response.text
+    assert "Confirmed deliverable" in response.text
     assert 'p.requirements.deliverables.join(" · ")' in response.text
     assert 'id="projectPicker"' in response.text
     assert 'id="projectGoalRevision"' in response.text
@@ -199,12 +202,12 @@ def test_home_serves_the_real_workflow() -> None:
     assert 'id="continuationNotice"' in response.text
     assert 'id="projectLatestResult"' in response.text
     assert 'id="projectPreviewResult"' in response.text
-    assert "기술자료 ZIP 다운로드" in response.text
+    assert "Download technical package" in response.text
     assert 'fetch("/api/projects?q="' in response.text
     assert "p.previous_attempt" in response.text
     assert 'id="applyResult"' in response.text
-    assert "안전하게 프로젝트에 적용" in response.text
-    assert "검토용 결과 ZIP" in response.text
+    assert "Safely apply to project" in response.text
+    assert "Review result ZIP" in response.text
     assert 'fetch("/api/sessions/"+sid+"/apply"' in response.text
 
 

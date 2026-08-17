@@ -43,11 +43,9 @@ def apply_standard_first_delivery_policy(
     request_text = "\n".join(filter(None, [intake.goal, intake.desired_output or ""]))
     if not is_product or _EXPLICIT_DESIGN_DIRECTION.search(request_text):
         return requirements
-    korean = bool(re.search(r"[가-힣]", intake.goal))
     assumption = (
-        "1차 결과는 접근성과 사용성을 갖춘 표준적인 상용 디자인을 사용하고, 독창적인 시각 재설계는 후속 개선 목표로 분리한다."
-        if korean else
-        "The first result uses an accessible conventional commercial design; distinctive visual redesign is deferred to a later improvement goal."
+        "The first result uses an accessible conventional commercial design; "
+        "distinctive visual redesign is deferred to a later improvement goal."
     )
     assumptions = list(dict.fromkeys([*requirements.assumptions, assumption]))[:10]
     sixsense = requirements.sixsense

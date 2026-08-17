@@ -109,7 +109,7 @@ def append_authoritative_csv_tables(
             return str(value or "").replace("|", "\\|").replace("\n", " ").strip()
 
         lines = [
-            f"### 원자료 · {source.name}",
+            f"### Authoritative source · {source.name}",
             "| " + " | ".join(cell(field) for field in fields) + " |",
             "| " + " | ".join("---" for _ in fields) + " |",
         ]
@@ -125,7 +125,7 @@ def append_authoritative_csv_tables(
             body
             + "\n\n"
             + _SOURCE_APPENDIX_MARKER
-            + "\n\n## 검증용 원자료\n\n"
+            + "\n\n## Authoritative source data for verification\n\n"
             + "\n\n".join(sections)
         )
     })

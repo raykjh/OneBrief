@@ -201,28 +201,17 @@ def find_scoring_gap(
 
 def _gap_requirement(gap: ScoringGap, korean: bool) -> tuple[InformationRequirement, str]:
     field_list = ", ".join(gap.fields)
-    if korean:
-        request = (
-            f"원자료 필드({field_list})를 점수로 환산하고 합산·동점을 처리하는 "
-            "승인된 기준표나 공식을 제공해 주세요."
-        )
-        reason = "배점만으로는 원자료 값을 점수와 순위로 변환할 수 없어 임의 규칙 생성을 막아야 합니다."
-        question = request
-        evidence = ["승인된 점수 환산표", "필드별 계산 공식", "동점 처리 규칙이 포함된 평가 정책"]
-    else:
-        request = (
-            f"Provide an approved conversion table or formula for source fields ({field_list}), "
-            "including aggregation and tie handling."
-        )
-        reason = (
-            "Weights alone cannot convert raw values into scores and ranks without inventing rules."
-        )
-        question = request
-        evidence = [
-            "approved score conversion table",
-            "field-level calculation formula",
-            "evaluation policy with tie handling",
-        ]
+    request = (
+        f"Provide an approved conversion table or formula for source fields ({field_list}), "
+        "including aggregation and tie handling."
+    )
+    reason = "Weights alone cannot convert raw values into scores and ranks without inventing rules."
+    question = request
+    evidence = [
+        "approved score conversion table",
+        "field-level calculation formula",
+        "evaluation policy with tie handling",
+    ]
     return (
         InformationRequirement(
             key="scoring_conversion_rules",

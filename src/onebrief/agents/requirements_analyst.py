@@ -27,8 +27,11 @@ Rules:
    artifact. existing_project means improve the supplied project's runnable form.
    When output_target is auto, infer the most useful native artifact from the goal
    and supplied project or sources without asking a separate format question.
-2. Write every user-facing field in the same language as the user's goal unless the
-   user explicitly requests another language. Schema keys remain unchanged.
+2. English is KHALINOS's canonical product language. Write every KHALINOS-authored
+   user-facing field in English, regardless of the language used in the intake.
+   Preserve non-English source names only when exact source identity is necessary.
+   Schema keys remain unchanged. Translation is a separate downstream presentation
+   concern and is not part of this contract.
 3. Ask only for information actually missing from the supplied content.
    For existing_project continuation, treat the onebrief-project-continuation source
    as authoritative project memory. Restore the canonical goal, repository state,

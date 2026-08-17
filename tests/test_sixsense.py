@@ -38,7 +38,7 @@ def test_vague_web_upgrade_gets_five_ordered_material_decisions() -> None:
     questions = result.sixsense.questions
     assert [question.question_id for question in questions] == ["S02", "S03", "S04", "S05", "S06"]
     assert [question.dimension for question in questions[:4]] == [
-        "기능 범위", "정보 구조", "주요 사용자", "서비스 범위"
+        "Functional scope", "Information structure", "Primary audience", "Service breadth"
     ]
     assert questions[-1].dimension == "visual_style"
     assert all(sum(option.recommended for option in question.options) == 1 for question in questions)

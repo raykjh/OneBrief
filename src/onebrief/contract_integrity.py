@@ -66,11 +66,9 @@ def _sanitize_standard_profile(
     plan = requirements.sixsense
     if plan is None or not _PERSONA_PROFILE.search(plan.standard_profile):
         return requirements
-    korean = bool(re.search(r"[가-힣]", intake.goal))
     profile = (
-        "목표 분야에 적용되는 공식 기준과 일반적인 전문 실무 형식을 사용하고, 명시되지 않은 세부사항에는 보수적인 기본값을 적용합니다."
-        if korean else
-        "Use applicable official standards and conventional professional practice, with conservative defaults for unspecified details."
+        "Use applicable official standards and conventional professional practice, "
+        "with conservative defaults for unspecified details."
     )
     return requirements.model_copy(update={
         "sixsense": plan.model_copy(update={"standard_profile": profile})
@@ -128,18 +126,14 @@ def enforce_contract_integrity(
     )
     if not missing and (not construction_required or construction_covered):
         return requirements
-    korean = bool(re.search(r"[가-힣]", intake.goal))
-    evidence = (
-        "최종 산출물과 근거에서 이 사용자 제약이 충족되었음을 독립적으로 확인한다."
-        if korean else
-        "Independent evidence maps the final artifact to this exact user constraint."
-    )
+    evidence = "Independent evidence maps the final artifact to this exact user constraint."
     criteria = list(contract.quality_criteria)
     acceptance = list(requirements.acceptance_criteria)
     for clause in missing:
         description = (
-            f"사용자가 명시한 제약을 충족한다: {clause}"
-            if korean else f"Satisfy the explicit user constraint: {clause}"
+            f"Satisfy the explicit user constraint: {clause}"
+            if not re.search(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]", clause)
+            else "Satisfy every explicit user constraint preserved in the authorized intake."
         )[:300]
         item = QualityCriterion(
             criterion_id="Q01",
