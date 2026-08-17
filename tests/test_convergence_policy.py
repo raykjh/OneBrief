@@ -232,6 +232,22 @@ def test_missing_requested_unity_scene_routes_to_product_owner() -> None:
     assert observation.owner == FailureOwner.PRODUCT
 
 
+def test_inert_unity_component_routes_to_product_owner() -> None:
+    observation = ConvergencePolicy().observe(
+        context="development_verification",
+        failure_text=(
+            "Unity visual test contract: new Unity UI MonoBehaviour NavigationManager "
+            "is not attached to a changed scene/prefab and has no runtime initialization "
+            "entrypoint; an inert source file does not implement the UI"
+        ),
+        attempt_number=1,
+        affected_paths=["Assets/Scripts/UI/NavigationManager.cs"],
+    )
+
+    assert observation.layer == FailureLayer.SEMANTIC_PRODUCT
+    assert observation.owner == FailureOwner.PRODUCT
+
+
 def test_locale_observer_measurement_order_is_evidence_topology() -> None:
     observation = ConvergencePolicy().observe(
         context="development_verification",
