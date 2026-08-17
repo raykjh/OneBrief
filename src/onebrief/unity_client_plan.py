@@ -283,16 +283,21 @@ def bind_unity_client_plan_incremental_base(
 
     discovered = verified_unity_client_base_from_sources(sources)
     if discovered is None:
-        if plan.verified_base is not None or any((
-            plan.lobby_data_selector,
-            plan.lobby_navigation_selector,
-            plan.lobby_navigation_destination_scene,
-            plan.lobby_navigation_label,
-        )):
+        if plan.verified_base is not None:
             return plan, [
-                "The incremental client base is not present as one digest-valid generated client in the approved source snapshot."
+                "The declared verified_base is not present as one digest-valid generated client in the approved source snapshot."
             ]
-        return plan, []
+        # No committed generated client means this is the initial construction
+        # milestone. Weaker models may eagerly fill optional later-milestone
+        # Lobby bindings because the outcome sketch mentions the full client.
+        # Keep M01 bounded by dropping those future fields deterministically.
+        return UnityClientConstructionPlan.model_validate({
+            **plan.model_dump(mode="json"),
+            "lobby_data_selector": None,
+            "lobby_navigation_selector": None,
+            "lobby_navigation_destination_scene": None,
+            "lobby_navigation_label": None,
+        }), []
     base, prior_payload = discovered
     preserved_fields = (
         "product_directory",

@@ -265,7 +265,7 @@ def test_incremental_client_plan_trusts_committed_digest_and_prior_plan() -> Non
     assert bound.lobby_data_selector == "RoomCountText"
 
 
-def test_incremental_bindings_without_committed_base_are_rejected() -> None:
+def test_initial_milestone_drops_eager_future_lobby_bindings() -> None:
     model_plan = _plan(
         lobby_data_selector="RoomCountText",
         lobby_navigation_selector="MatchButton",
@@ -273,9 +273,14 @@ def test_incremental_bindings_without_committed_base_are_rejected() -> None:
         lobby_navigation_label="Find Match",
     )
 
-    _bound, issues = bind_unity_client_plan_incremental_base(model_plan, [])
+    bound, issues = bind_unity_client_plan_incremental_base(model_plan, [])
 
-    assert any("incremental client base is not present" in issue for issue in issues)
+    assert issues == []
+    assert bound.verified_base is None
+    assert bound.lobby_data_selector is None
+    assert bound.lobby_navigation_selector is None
+    assert bound.lobby_navigation_destination_scene is None
+    assert bound.lobby_navigation_label is None
 
 
 def test_incremental_client_plan_binds_lobby_data_and_navigation_to_catalog() -> None:
