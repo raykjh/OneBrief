@@ -430,6 +430,27 @@ def visual_repair_production_target_allowed(path: str) -> bool:
     return True
 
 
+def causal_new_unity_asset_allowed(
+    path: str,
+    raw: object,
+    feedback: str,
+) -> bool:
+    """Recognize a bounded new topology asset independently of provider wrappers."""
+
+    suffix = PurePosixPath(path.replace("\\", "/")).suffix.casefold()
+    if suffix not in {".unity", ".prefab"}:
+        return False
+    normalized_feedback = " ".join(str(feedback).split()).casefold()
+    return isinstance(raw, NewProductConstructionChangeSet) or any(
+        marker in normalized_feedback
+        for marker in (
+            "new-client construction preflight",
+            "declares missing scene/prefab path",
+            "maker-authored topology mapping is not evidence",
+        )
+    )
+
+
 def semantic_visual_edit_context(
     context: list[dict[str, object]], failure_text: str,
 ) -> list[dict[str, object]]:
@@ -3845,10 +3866,7 @@ class ExecutionPipeline:
                         and content.strip()
                         and (
                             PurePosixPath(normalized_path).suffix == ".cs"
-                            or (
-                                isinstance(raw, NewProductConstructionChangeSet)
-                                and PurePosixPath(normalized_path).suffix in {".unity", ".prefab"}
-                            )
+                            or causal_new_unity_asset_allowed(path, raw, active_feedback)
                         )
                         and visual_repair_production_target_allowed(path)
                         and developer.path_approver(path) is not None

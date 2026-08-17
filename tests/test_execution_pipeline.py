@@ -42,6 +42,7 @@ from onebrief.execution_pipeline import (
     semantic_visual_edit_context,
     relevant_product_repair_sources,
     bind_semantic_product_repair_scope,
+    causal_new_unity_asset_allowed,
     product_failure_edit_anchors,
     active_exact_edit_anchors,
     candidate_first_edit_anchors,
@@ -1334,6 +1335,29 @@ def test_runtime_missing_scene_binds_to_declared_candidate_asset() -> None:
     )
 
     assert bound.permitted_paths == ["Assets/Scenes/01_TitleScreen.unity"]
+
+
+def test_causal_new_unity_asset_uses_trusted_feedback_not_wrapper_type() -> None:
+    feedback = (
+        "Unity visual test contract: New-client construction preflight: the whole-product "
+        "topology contains no actual production scene or prefab."
+    )
+
+    assert causal_new_unity_asset_allowed(
+        "Assets/Scenes/TitleScene.unity",
+        {"schema_version": "onebrief-quest-contract-v1"},
+        feedback,
+    ) is True
+    assert causal_new_unity_asset_allowed(
+        "Assets/Scripts/TopologyBootstrap.cs",
+        {"schema_version": "onebrief-quest-contract-v1"},
+        feedback,
+    ) is False
+    assert causal_new_unity_asset_allowed(
+        "Assets/Scenes/Unrelated.unity",
+        {"schema_version": "onebrief-quest-contract-v1"},
+        "generic compile failure",
+    ) is False
 
 
 def test_cross_surface_visual_failure_rejects_unrelated_local_anchor() -> None:
