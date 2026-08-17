@@ -263,6 +263,22 @@ def test_missing_self_declared_unity_topology_path_routes_to_product_owner() -> 
     assert observation.owner == FailureOwner.PRODUCT
 
 
+def test_missing_tangible_topology_wins_over_missing_evidence_harness() -> None:
+    observation = ConvergencePolicy().observe(
+        context="development_verification",
+        failure_text=(
+            "Unity visual test contract: New-client construction preflight: the whole-product "
+            "topology contains no actual production scene or prefab. A region enum is not a "
+            "runtime product region. | Unity visual test contract: add a discoverable Unity "
+            "PlayMode test | Unity visual test contract: add a Unity test .asmdef"
+        ),
+        attempt_number=1,
+    )
+
+    assert observation.layer == FailureLayer.SEMANTIC_PRODUCT
+    assert observation.owner == FailureOwner.PRODUCT
+
+
 def test_locale_observer_measurement_order_is_evidence_topology() -> None:
     observation = ConvergencePolicy().observe(
         context="development_verification",

@@ -163,6 +163,7 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
         "newly wiring a product ui onclick listener directly to scenemanager.loadscene",
         "invoke the existing controller/router path and prove that path instead",
         "change set contains only verification code",
+        "new-client construction preflight: the whole-product topology contains no actual production scene or prefab",
         "declares missing scene/prefab path",
         "maker-authored topology mapping is not evidence",
         "not attached to a changed scene/prefab and has no runtime initialization entrypoint",

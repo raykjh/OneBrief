@@ -3814,6 +3814,11 @@ class ExecutionPipeline:
                 for item in prepared_sources
                 if item.get("repository_path")
             }
+            existing_candidate_paths = {
+                str(getattr(item, "path", "")).replace("\\", "/").casefold()
+                for item in getattr(previous_change_set, "changes", [])
+                if getattr(item, "path", None)
+            }
             safe_new_product_sidecars: list[str] = []
             if (
                 active_phase == ExecutionPhase.PRODUCT_IMPLEMENTATION
@@ -3834,6 +3839,7 @@ class ExecutionPipeline:
                     if (
                         path
                         and normalized_path not in approved_context_paths
+                        and normalized_path not in existing_candidate_paths
                         and base_sha256 is None
                         and isinstance(content, str)
                         and content.strip()
