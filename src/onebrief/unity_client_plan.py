@@ -573,7 +573,9 @@ namespace Khalinos.GeneratedClient
             BindPreservedAuthenticationControls();
 
             Canvas canvas = CreateCanvas();
-            GameObject panel = CreatePanel("OneBriefLoginPanel", canvas.transform, new Color(0.035f, 0.047f, 0.075f, 0.96f));
+            GameObject backdrop = CreatePanel("KhalinosLoginBackdrop", canvas.transform, new Color(0.018f, 0.025f, 0.045f, 1f));
+            Stretch(backdrop.GetComponent<RectTransform>(), 0f);
+            GameObject panel = CreatePanel("KhalinosLoginPanel", backdrop.transform, new Color(0.035f, 0.047f, 0.075f, 1f));
             Place(panel.GetComponent<RectTransform>(), 0.5f, 0.5f, 720f, 540f);
             CreateText("OneBriefBrandTitle", panel.transform, {values["brand"]}, 26f, Accent, 0f, 190f, 620f, 52f);
             CreateText("OneBriefLoginTitle", panel.transform, {values["login_title"]}, 46f, Color.white, 0f, 105f, 620f, 76f);
@@ -609,7 +611,9 @@ namespace Khalinos.GeneratedClient
         private void BuildLobby()
         {{
             Canvas canvas = CreateCanvas();
-            GameObject panel = CreatePanel("NewClientLobbyPanel", canvas.transform, new Color(0.025f, 0.035f, 0.06f, 0.97f));
+            GameObject backdrop = CreatePanel("KhalinosLobbyBackdrop", canvas.transform, new Color(0.012f, 0.019f, 0.035f, 1f));
+            Stretch(backdrop.GetComponent<RectTransform>(), 0f);
+            GameObject panel = CreatePanel("NewClientLobbyPanel", backdrop.transform, new Color(0.025f, 0.035f, 0.06f, 1f));
             Stretch(panel.GetComponent<RectTransform>(), 42f);
             CreateText("OneBriefLobbyBrand", panel.transform, {values["brand"]}, 24f, Accent, 0f, 230f, 780f, 50f);
             CreateText("OneBriefLobbyTitle", panel.transform, {values["lobby_title"]}, 50f, Color.white, 0f, 125f, 860f, 80f);
@@ -627,8 +631,12 @@ namespace Khalinos.GeneratedClient
             if (proxyLobbyData != null)
             {{
                 GameObject source = FindActive(LobbyDataSelector);
-                TMP_Text tmp = source?.GetComponent<TMP_Text>();
-                Text legacy = tmp == null ? source?.GetComponent<Text>() : null;
+                TMP_Text tmp = source?.GetComponentsInChildren<TMP_Text>(true)
+                    .FirstOrDefault(item => !string.IsNullOrWhiteSpace(item.text));
+                Text legacy = tmp == null
+                    ? source?.GetComponentsInChildren<Text>(true)
+                        .FirstOrDefault(item => !string.IsNullOrWhiteSpace(item.text))
+                    : null;
                 string value = tmp != null ? tmp.text : legacy != null ? legacy.text : "";
                 if (!string.IsNullOrWhiteSpace(value)) proxyLobbyData.text = value;
             }}

@@ -107,6 +107,13 @@ def test_trusted_client_renderer_preserves_authentication_authority() -> None:
     assert 'new GameObject("OneBriefNewClientRoot"' in rendered.runtime_source
     assert 'new GameObject("NewClientLobbyPanel"' not in rendered.runtime_source
     assert 'CreatePanel("NewClientLobbyPanel"' in rendered.runtime_source
+    assert 'CreatePanel("KhalinosLoginBackdrop"' in rendered.runtime_source
+    assert 'CreatePanel("KhalinosLobbyBackdrop"' in rendered.runtime_source
+    assert rendered.runtime_source.count(
+        "Stretch(backdrop.GetComponent<RectTransform>(), 0f);"
+    ) == 2
+    assert "new Color(0.018f, 0.025f, 0.045f, 1f)" in rendered.runtime_source
+    assert "new Color(0.012f, 0.019f, 0.035f, 1f)" in rendered.runtime_source
     assert "preservedSubmit.onClick.Invoke();" in rendered.runtime_source
     assert "RemoveAllListeners" not in rendered.runtime_source
     assert "DirectEnterWithSelectedDevAccount" not in rendered.runtime_source
@@ -118,6 +125,16 @@ def test_trusted_client_renderer_preserves_authentication_authority() -> None:
     assert "!AccountOptionsAreCurrent()" in rendered.runtime_source
     assert "CopyOptions(proxyAccountDropdown);" in rendered.runtime_source
     assert "RefreshProxySubmitAvailability();" in rendered.runtime_source
+
+
+def test_trusted_client_renderer_reads_text_from_approved_container_descendants() -> None:
+    rendered = render_unity_client_construction(_incremental_plan())
+
+    assert "source?.GetComponentsInChildren<TMP_Text>(true)" in rendered.runtime_source
+    assert "source?.GetComponentsInChildren<Text>(true)" in rendered.runtime_source
+    assert rendered.runtime_source.count(
+        "FirstOrDefault(item => !string.IsNullOrWhiteSpace(item.text))"
+    ) == 2
 
 
 def test_client_plan_derives_complete_proxy_evidence_journey() -> None:
@@ -223,7 +240,7 @@ def test_client_plan_normalizes_to_one_trusted_new_product_file() -> None:
     assert str(change.path).endswith("KhalinosGeneratedClientShell.cs")
     assert TRUSTED_UNITY_CLIENT_MARKER in (change.content or "")
     assert {
-        "OneBriefLoginPanel",
+        "KhalinosLoginPanel",
         "NewClientTestAccountDropdown",
         "NewClientDirectEnterButton",
         "NewClientLobbyPanel",
