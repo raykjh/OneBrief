@@ -153,22 +153,22 @@ class UnityClientConstructionPlan(BaseModel):
             raise ValueError("authentication_account_selector must identify an account/profile control")
         if not any(marker in submit for marker in ("directenter", "signin", "login", "authenticate")):
             raise ValueError("authentication_submit_selector must identify an authentication submit control")
-        incremental = (
-            self.verified_base,
+        lobby_bindings = (
             self.lobby_data_selector,
             self.lobby_navigation_selector,
             self.lobby_navigation_destination_scene,
             self.lobby_navigation_label,
         )
-        if any(item is not None for item in incremental) and not all(
-            isinstance(item, str) and item.strip()
-            if not isinstance(item, VerifiedUnityClientBase)
-            else True
-            for item in incremental
+        if any(item is not None for item in lobby_bindings) and not all(
+            isinstance(item, str) and item.strip() for item in lobby_bindings
         ):
             raise ValueError(
-                "incremental client plans require verified_base plus complete Lobby data and navigation bindings"
+                "incremental client plans require complete Lobby data and navigation bindings"
             )
+        if self.verified_base is not None and not all(
+            isinstance(item, str) and item.strip() for item in lobby_bindings
+        ):
+            raise ValueError("verified_base requires complete Lobby data and navigation bindings")
         return self
 
 
@@ -283,23 +283,17 @@ def bind_unity_client_plan_incremental_base(
 
     discovered = verified_unity_client_base_from_sources(sources)
     if discovered is None:
-        if plan.verified_base is not None:
+        if plan.verified_base is not None or any((
+            plan.lobby_data_selector,
+            plan.lobby_navigation_selector,
+            plan.lobby_navigation_destination_scene,
+            plan.lobby_navigation_label,
+        )):
             return plan, [
-                "The declared verified_base is not present as one digest-valid generated client in the approved source snapshot."
+                "The incremental client base is not present as one digest-valid generated client in the approved source snapshot."
             ]
         return plan, []
     base, prior_payload = discovered
-    issues: list[str] = []
-    if plan.verified_base is None:
-        issues.append(
-            "A verified generated client already exists; this milestone must extend it through verified_base instead of creating it again."
-        )
-        return plan, issues
-    if plan.verified_base != base:
-        issues.append(
-            "verified_base does not match the exact path and SHA-256 of the approved generated client."
-        )
-        return plan, issues
     preserved_fields = (
         "product_directory",
         "initial_scene",
@@ -318,17 +312,17 @@ def bind_unity_client_plan_incremental_base(
         "close_button_label",
         "accent_hex",
     )
-    drift = [
-        field_name
+    trusted_updates = {
+        field_name: prior_payload[field_name]
         for field_name in preserved_fields
-        if prior_payload.get(field_name) != getattr(plan, field_name)
-    ]
-    if drift:
-        issues.append(
-            "Incremental plan changed verified M01 fields instead of preserving them: "
-            + ", ".join(drift)
-        )
-    return plan, issues
+        if field_name in prior_payload
+    }
+    bound = UnityClientConstructionPlan.model_validate({
+        **plan.model_dump(mode="json"),
+        **trusted_updates,
+        "verified_base": base.model_dump(mode="json"),
+    })
+    return bound, []
 
 
 def validate_unity_client_plan_targets(

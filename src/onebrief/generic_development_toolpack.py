@@ -2224,6 +2224,42 @@ class ApprovedProjectDevelopmentToolPack:
             "content": data.decode("utf-8", errors="replace"),
         }
 
+    def trusted_generated_unity_client_sources(self) -> list[dict[str, object]]:
+        """Recover committed KHALINOS client lineage from the approved current HEAD.
+
+        Milestone ToolPacks are re-qualified after each passing commit. The normal
+        relevance sampler may omit a newly generated client from the next Quest,
+        so incremental compilation needs this exact, marker-bound Git source.
+        """
+
+        _profile, head = self._validate_root()
+        tracked = self._git(
+            "ls-tree", "-r", "--name-only", head, "--", "Assets"
+        ).splitlines()
+        sources: list[dict[str, object]] = []
+        for path in tracked:
+            normalized = path.replace("\\", "/")
+            if not normalized.endswith("/KhalinosGeneratedClientShell.cs"):
+                continue
+            if self.approved_edit_path(normalized) != normalized:
+                continue
+            data = self._blob(head, normalized)
+            try:
+                content = data.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            if "KHALINOS_DECLARATIVE_CLIENT_V1" not in content:
+                continue
+            sources.append({
+                "name": f"project-source/{normalized}",
+                "repository_path": normalized,
+                "source_revision": head,
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "source_role": "trusted_incremental_client_base",
+                "content": content,
+            })
+        return sources
+
     def _commands(
         self, profile, clone: Path, goal_text: str
     ) -> list[tuple[str, list[str], int]]:

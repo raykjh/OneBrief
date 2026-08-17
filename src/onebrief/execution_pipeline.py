@@ -2604,6 +2604,15 @@ class ExecutionPipeline:
             else:
                 prepared["source_role"] = "read_only_context"
             prepared_sources.append(prepared)
+        if unity_runtime and isinstance(
+            development_pack, ApprovedProjectDevelopmentToolPack
+        ):
+            existing_paths = {
+                str(item.get("repository_path", "")) for item in prepared_sources
+            }
+            for generated in development_pack.trusted_generated_unity_client_sources():
+                if str(generated.get("repository_path", "")) not in existing_paths:
+                    prepared_sources.append(generated)
         unity_scene_catalog = unity_scene_catalog_from_sources(prepared_sources)
 
         completion_contract_payload = (

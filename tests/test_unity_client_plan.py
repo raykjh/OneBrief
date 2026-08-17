@@ -245,19 +245,37 @@ def test_incremental_client_plan_reuses_verified_runtime_digest() -> None:
     assert "preserved.onClick.Invoke();" in normalized.changes[0].content
 
 
-def test_incremental_client_plan_rejects_missing_digest_and_prior_plan_drift() -> None:
+def test_incremental_client_plan_trusts_committed_digest_and_prior_plan() -> None:
     source = _verified_source()
-    missing_base = _plan()
-    _bound, missing_issues = bind_unity_client_plan_incremental_base(
-        missing_base, [source]
+    model_plan = _plan(
+        brand_title="Changed after M01",
+        lobby_data_selector="RoomCountText",
+        lobby_navigation_selector="MatchButton",
+        lobby_navigation_destination_scene="Match",
+        lobby_navigation_label="Find Match",
     )
-    assert any("must extend it through verified_base" in issue for issue in missing_issues)
+    bound, issues = bind_unity_client_plan_incremental_base(
+        model_plan, [source]
+    )
 
-    drifted = _incremental_plan(brand_title="Changed after M01")
-    _bound, drift_issues = bind_unity_client_plan_incremental_base(
-        drifted, [source]
+    assert issues == []
+    assert bound.verified_base is not None
+    assert bound.verified_base.runtime_source_sha256 == source["sha256"]
+    assert bound.brand_title == "JULPAE"
+    assert bound.lobby_data_selector == "RoomCountText"
+
+
+def test_incremental_bindings_without_committed_base_are_rejected() -> None:
+    model_plan = _plan(
+        lobby_data_selector="RoomCountText",
+        lobby_navigation_selector="MatchButton",
+        lobby_navigation_destination_scene="Match",
+        lobby_navigation_label="Find Match",
     )
-    assert any("brand_title" in issue for issue in drift_issues)
+
+    _bound, issues = bind_unity_client_plan_incremental_base(model_plan, [])
+
+    assert any("incremental client base is not present" in issue for issue in issues)
 
 
 def test_incremental_client_plan_binds_lobby_data_and_navigation_to_catalog() -> None:

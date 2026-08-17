@@ -503,6 +503,25 @@ def test_approved_generic_runner_ignores_onebrief_control_metadata(tmp_path: Pat
     ).stdout.strip()
 
 
+def test_committed_generated_unity_client_is_recovered_as_trusted_lineage() -> None:
+    pack = object.__new__(ApprovedProjectDevelopmentToolPack)
+    head = "a" * 40
+    path = "Assets/Game/NewClient/KhalinosGeneratedClientShell.cs"
+    content = "// KHALINOS_DECLARATIVE_CLIENT_V1\npublic sealed class Shell {}\n"
+    pack._validate_root = lambda: (object(), head)
+    pack._git = lambda *args, **kwargs: path + "\nAssets/Game/Other.cs\n"
+    pack.approved_edit_path = lambda value: value
+    pack._blob = lambda revision, relative: content.encode("utf-8")
+
+    sources = pack.trusted_generated_unity_client_sources()
+
+    assert len(sources) == 1
+    assert sources[0]["repository_path"] == path
+    assert sources[0]["source_revision"] == head
+    assert sources[0]["sha256"] == hashlib.sha256(content.encode("utf-8")).hexdigest()
+    assert sources[0]["source_role"] == "trusted_incremental_client_base"
+
+
 def test_node_dependency_bootstrap_is_lockfile_bound_and_disables_scripts(tmp_path: Path) -> None:
     project = tmp_path / "project"
     web = project / "web"
