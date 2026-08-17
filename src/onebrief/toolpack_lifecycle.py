@@ -173,7 +173,7 @@ class GeneratedProjectToolPack(BaseModel):
         if host_adapters != required_host_adapters:
             raise ValueError("every enabled approved-host adapter requires one executable binding")
         if AdapterId.GODOT_HEADLESS_PROBE in enabled_adapters:
-            required = {"godot_topology_compiler", "godot_gameplay_compiler", "godot_gameplay_shaping_compiler"}
+            required = {"godot_topology_compiler", "godot_gameplay_compiler", "godot_gameplay_shaping_compiler", "godot_product_finish_compiler"}
             if any(
                 not re.fullmatch(r"[a-f0-9]{64}", self.trusted_component_digests.get(name, ""))
                 for name in required
@@ -398,6 +398,7 @@ class ProjectToolPackLifecycle:
                 "godot_topology_compiler": "godot_topology.py",
                 "godot_gameplay_compiler": "godot_gameplay.py",
                 "godot_gameplay_shaping_compiler": "godot_gameplay_shaping.py",
+                "godot_product_finish_compiler": "godot_product_finish.py",
             }.items()
         }
 

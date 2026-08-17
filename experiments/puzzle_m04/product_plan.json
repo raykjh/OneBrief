@@ -1,0 +1,11 @@
+{
+  "schema_version": "khalinos-godot-product-finish-plan-v1",
+  "product_title": "THE THREADBOUND VAULT",
+  "chambers": [
+    "I. The Silent Seal",
+    "II. The Watcher's Turn",
+    "III. The Broken Path"
+  ],
+  "settings_keys": ["high_contrast", "reduced_motion", "master_volume"],
+  "capture_regions": ["title", "chamber_select", "gameplay", "mission_result"]
+}
