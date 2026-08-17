@@ -217,6 +217,21 @@ def test_verification_only_candidate_routes_next_repair_to_product_owner() -> No
     assert observation.owner == FailureOwner.PRODUCT
 
 
+def test_missing_requested_unity_scene_routes_to_product_owner() -> None:
+    observation = ConvergencePolicy().observe(
+        context="development_verification",
+        failure_text=(
+            "unity_playmode_visual_tests: Scene 'TitleScene' couldn't be loaded because "
+            "it has not been added to the active build profile or shared scene list"
+        ),
+        attempt_number=1,
+        affected_paths=["Assets/Tests/PlayMode/OneBriefGeneratedJourneyTest.cs"],
+    )
+
+    assert observation.layer == FailureLayer.SEMANTIC_PRODUCT
+    assert observation.owner == FailureOwner.PRODUCT
+
+
 def test_locale_observer_measurement_order_is_evidence_topology() -> None:
     observation = ConvergencePolicy().observe(
         context="development_verification",

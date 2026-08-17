@@ -53,6 +53,7 @@ from onebrief.schemas import (
 )
 from onebrief.source_loader import source_records
 from onebrief.team_planning import TeamPlan, TeamPlanningCoordinator
+from onebrief.toolpack_lifecycle import ProjectToolPackLifecycle
 
 
 def _now() -> str:
@@ -76,6 +77,27 @@ def _sha256(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _prepare_project_registry_root(job_dir: Path, intake: IntakeRequest) -> Path | None:
+    """Resolve the approved registry used by both direct and milestone execution.
+
+    Cloud jobs restore a copied registry below the job workspace. Host-bound local
+    projects deliberately avoid copying large Unity assets, but their approved
+    registry is still the authority for an isolated local Git clone. Returning
+    that registry keeps local projects on the same milestone/quest path instead
+    of silently degrading them to one monolithic maker turn.
+    """
+
+    if not intake.existing_project_id:
+        return None
+    restored = restore_project_snapshot(job_dir, intake.existing_project_id)
+    if restored is not None:
+        return job_dir / "work" / "project_snapshot" / "registry"
+    if ToolPackId.PROJECT_DEVELOPMENT not in intake.toolpack_ids:
+        return None
+    record_local_project_provenance(job_dir, intake.existing_project_id)
+    return ProjectToolPackLifecycle(intake.existing_project_id).registry_root
 
 
 class JobStatus(StrEnum):
@@ -401,13 +423,7 @@ def run_job(
         intake = IntakeRequest.model_validate_json(
             (job_dir / "inputs" / "intake.json").read_text(encoding="utf-8")
         )
-        project_registry_root = None
-        if intake.existing_project_id:
-            restored = restore_project_snapshot(job_dir, intake.existing_project_id)
-            if restored is not None:
-                project_registry_root = job_dir / "work" / "project_snapshot" / "registry"
-            elif ToolPackId.PROJECT_DEVELOPMENT in intake.toolpack_ids:
-                record_local_project_provenance(job_dir, intake.existing_project_id)
+        project_registry_root = _prepare_project_registry_root(job_dir, intake)
         requirements = RequirementsAnalysis.model_validate_json(
             (job_dir / "inputs" / "requirements.json").read_text(encoding="utf-8")
         )

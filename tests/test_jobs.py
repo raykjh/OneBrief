@@ -10,7 +10,14 @@ from onebrief.execution_schemas import (
     DraftArtifact,
     VerificationReport,
 )
-from onebrief.jobs import JobStatus, JobStore, create_job, run_job, start_background_job
+from onebrief.jobs import (
+    JobStatus,
+    JobStore,
+    _prepare_project_registry_root,
+    create_job,
+    run_job,
+    start_background_job,
+)
 from onebrief.producer import estimate_budget
 from onebrief.schemas import IntakeRequest, InternalSource, RequirementsAnalysis, SourcePriority
 
@@ -219,3 +226,32 @@ def test_background_start_returns_without_running_pipeline(tmp_path: Path, monke
     assert captured["command"][-2:] == ["job-worker", str(job_dir.resolve())]
     assert (job_dir / "logs" / "worker.stdout.log").exists()
     assert (job_dir / "logs" / "worker.stderr.log").exists()
+
+
+def test_local_development_project_keeps_registry_for_milestone_execution(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    registry = tmp_path / "approved-registry"
+    recorded: list[tuple[Path, str]] = []
+
+    monkeypatch.setattr("onebrief.jobs.restore_project_snapshot", lambda *_args: None)
+    monkeypatch.setattr(
+        "onebrief.jobs.record_local_project_provenance",
+        lambda job, project_id: recorded.append((job, project_id)),
+    )
+
+    class Lifecycle:
+        def __init__(self, _project_id: str):
+            self.registry_root = registry
+
+    monkeypatch.setattr("onebrief.jobs.ProjectToolPackLifecycle", Lifecycle)
+    intake = IntakeRequest(
+        goal="Build the approved Unity puzzle.",
+        existing_project_id="puzzle-telos",
+        toolpack_ids=["project_development"],
+    )
+
+    resolved = _prepare_project_registry_root(tmp_path / "job", intake)
+
+    assert resolved == registry
+    assert recorded == [(tmp_path / "job", "puzzle-telos")]

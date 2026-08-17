@@ -163,6 +163,8 @@ def classify_failure_layer(context: str, failure_text: str) -> FailureLayer:
         "newly wiring a product ui onclick listener directly to scenemanager.loadscene",
         "invoke the existing controller/router path and prove that path instead",
         "change set contains only verification code",
+        "couldn't be loaded because it has not been added to the active build profile",
+        "could not be loaded because it has not been added to the active build profile",
         "not reachable from any committed .unity/.prefab script guid",
         "repair or attach the active component instead of editing a detached source file",
     )):
