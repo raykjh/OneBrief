@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from onebrief.project_catalog import ProjectCatalog
 from onebrief.project_import import ExternalProjectImporter, MANIFEST_NAME
+from onebrief.generic_development_toolpack import ApprovedProjectDevelopmentToolPack
 from onebrief.toolpack_lifecycle import ProjectToolPackLifecycle
 from onebrief.web_service import app
 
@@ -68,6 +69,9 @@ def test_generated_toolpack_is_qualified_and_exact_hash_approved(tmp_path: Path,
     assert all(item.passed for item in generated.qualification.checks)
     assert generated.generated is not None
     assert generated.generated.allowed_write_prefixes == ["Assets/", "Packages/"]
+    assert {".unity", ".prefab"}.issubset(
+        set(generated.generated.allowed_suffixes)
+    )
     assert any(item.adapter_id.value == "unity_compile" and item.enabled for item in generated.generated.adapters)
     assert any(
         item.adapter_id.value == "unity_layout_diagnostics" and item.enabled
@@ -98,6 +102,13 @@ def test_generated_toolpack_is_qualified_and_exact_hash_approved(tmp_path: Path,
     assert project.toolpack_status == "approved"
     assert project.ready_for_isolated_edit is True
     assert project.toolpack_id.value == "project_development"
+    approved_pack = ApprovedProjectDevelopmentToolPack("toolpack-game", registry)
+    assert approved_pack.approved_edit_path("Assets/Scenes/TitleScreen.unity") == (
+        "Assets/Scenes/TitleScreen.unity"
+    )
+    assert approved_pack.approved_edit_path("Assets/Prefabs/Guard.prefab") == (
+        "Assets/Prefabs/Guard.prefab"
+    )
 
 
 def test_regeneration_invalidates_approval_when_repository_head_changes(tmp_path: Path, monkeypatch) -> None:

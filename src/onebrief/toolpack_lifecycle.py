@@ -35,8 +35,8 @@ BLOCKED_PARTS = {
 }
 SAFE_SUFFIXES = {
     ".asmdef", ".asset", ".cs", ".css", ".html", ".ini", ".js", ".json",
-    ".jsx", ".md", ".mjs", ".py", ".shader", ".toml", ".ts", ".tsx",
-    ".txt", ".uss", ".uxml", ".xml", ".yaml", ".yml",
+    ".jsx", ".md", ".mjs", ".prefab", ".py", ".shader", ".toml", ".ts",
+    ".tsx", ".txt", ".unity", ".uss", ".uxml", ".xml", ".yaml", ".yml",
 }
 
 
