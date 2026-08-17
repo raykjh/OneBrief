@@ -1,5 +1,11 @@
 from onebrief.delivery_policy import apply_standard_first_delivery_policy
-from onebrief.schemas import IntakeRequest, OutputTarget, RequirementsAnalysis
+from onebrief.schemas import (
+    IntakeRequest,
+    InternalSource,
+    OutputTarget,
+    RequirementsAnalysis,
+    SourcePriority,
+)
 
 
 def _requirements() -> RequirementsAnalysis:
@@ -32,6 +38,29 @@ def test_explicit_design_improvement_is_not_overridden() -> None:
         goal="기존 웹 프로그램의 디자인을 개선하고 고유한 시각 체계를 만들어줘.",
         output_target=OutputTarget.EXISTING_PROJECT,
     )
+    result = apply_standard_first_delivery_policy(intake, _requirements())
+
+    assert result.assumptions == []
+
+
+def test_authoritative_visual_outcome_upload_is_not_overridden() -> None:
+    intake = IntakeRequest(
+        goal="Build the requested offline Unity puzzle game.",
+        output_target=OutputTarget.UNITY_APP,
+        internal_sources=[
+            InternalSource(
+                name="Puzzle_Telos_User_Outcome_V1.md",
+                priority=SourcePriority.MANDATORY,
+                requirement_keys=["approved_visual_outcome"],
+                summary="User-approved distinctive visual direction.",
+                content=(
+                    "The supplied concept board is the approved visual outcome. "
+                    "Preserve its distinctive visual direction and finished-game quality."
+                ),
+            )
+        ],
+    )
+
     result = apply_standard_first_delivery_policy(intake, _requirements())
 
     assert result.assumptions == []

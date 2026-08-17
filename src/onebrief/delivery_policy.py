@@ -40,7 +40,19 @@ def apply_standard_first_delivery_policy(
             }
         )
     )
-    request_text = "\n".join(filter(None, [intake.goal, intake.desired_output or ""]))
+    request_text = "\n".join(
+        filter(
+            None,
+            [
+                intake.goal,
+                intake.desired_output or "",
+                *(
+                    f"{source.summary}\n{source.content}"
+                    for source in intake.internal_sources
+                ),
+            ],
+        )
+    )
     if not is_product or _EXPLICIT_DESIGN_DIRECTION.search(request_text):
         return requirements
     assumption = (
