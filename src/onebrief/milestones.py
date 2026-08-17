@@ -112,7 +112,7 @@ class MilestoneCompletionContract(BaseModel):
     deliverables: list[str] = Field(min_length=1, max_length=12)
     evidence_requirements: list[str] = Field(min_length=1, max_length=20)
     verification_scope: VerificationScope
-    max_revision_rounds: int = Field(default=3, ge=0, le=6)
+    max_revision_rounds: int = Field(default=3, ge=0, le=8)
 
     @model_validator(mode="after")
     def validate_criterion_scope(self) -> "MilestoneCompletionContract":
@@ -704,7 +704,7 @@ def build_milestone_plan(
                     VerificationScope.TARGETED if index == 1 else VerificationScope.AFFECTED
                 ),
                 max_revision_rounds=(
-                    6
+                    8
                     if progressive_breadth
                     else min(4, requirements.completion_contract.quality_criteria.__len__())
                 ),
