@@ -77,6 +77,7 @@ class QuestRole(StrEnum):
     EVIDENCE_BUILDER = "evidence_builder"
     INDEPENDENT_VERIFIER = "independent_verifier"
     ORCHESTRATOR = "orchestrator"
+    TECHNICAL_REPAIR_AGENT = "technical_repair_agent"
     HUMAN_SOVEREIGN = "human_sovereign"
 
 
@@ -87,6 +88,7 @@ class QuestFailureOwner(StrEnum):
     VERIFIER = "verifier"
     ORCHESTRATOR = "orchestrator"
     TOOLPACK = "toolpack"
+    TECHNICAL = "technical"
     AUTHORIZATION = "authorization"
     UNKNOWN = "unknown"
 

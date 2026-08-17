@@ -307,7 +307,7 @@ def test_invalid_unity_evidence_manifest_is_evidence_topology() -> None:
     assert observation.symptom_keys == ["artifact:invalid_evidence_manifest"]
 
 
-def test_evidence_topology_can_advance_when_static_blockers_change() -> None:
+def test_evidence_topology_second_variant_requires_generalization_and_third_stops() -> None:
     policy = ConvergencePolicy()
     ledger = ConvergenceLedger()
     failures = [
@@ -342,8 +342,14 @@ def test_evidence_topology_can_advance_when_static_blockers_change() -> None:
         ledger = policy.record(ledger, observation, contract)
         contracts.append(contract)
 
-    assert all(item.execution_allowed for item in contracts)
-    assert contracts[-1].progress_kind == ProgressKind.NARROWED_FAILURE
+    assert contracts[0].execution_allowed is True
+    assert contracts[1].execution_allowed is False
+    assert contracts[1].generalization_required is True
+    assert contracts[1].case_patch_allowed is False
+    assert contracts[2].execution_allowed is False
+    assert contracts[2].variant_count == 3
+    assert contracts[2].case_patch_allowed is False
+    assert contracts[-1].progress_kind == ProgressKind.NO_PROGRESS
     assert contracts[-1].permitted_paths == []
 
 
@@ -435,7 +441,7 @@ def test_all_static_unity_visual_contract_failures_are_evidence_topology() -> No
     assert observation.layer == FailureLayer.EVIDENCE_TOPOLOGY
 
 
-def test_one_materially_different_hypothesis_is_allowed() -> None:
+def test_second_variant_requires_generalization_before_execution() -> None:
     policy = ConvergencePolicy()
     ledger = ConvergenceLedger()
     first = policy.observe(
@@ -456,7 +462,9 @@ def test_one_materially_different_hypothesis_is_allowed() -> None:
     contract = policy.issue_contract(ledger, second)
 
     assert contract.progress_kind == ProgressKind.NEW_HYPOTHESIS
-    assert contract.execution_allowed is True
+    assert contract.execution_allowed is False
+    assert contract.generalization_required is True
+    assert contract.case_patch_allowed is False
     assert contract.occurrence == 2
 
 

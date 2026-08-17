@@ -1,0 +1,11 @@
+{
+  "schema_version": "khalinos-engine-bakeoff-v1",
+  "initial_region": "title",
+  "regions": [
+    {"id": "title", "label": "TITLE", "next": "chamber_select", "color": "172033"},
+    {"id": "chamber_select", "label": "CHAMBER SELECT", "next": "gameplay", "color": "203844"},
+    {"id": "gameplay", "label": "GAMEPLAY", "next": "pause", "color": "173B35"},
+    {"id": "pause", "label": "PAUSE", "next": "mission_result", "color": "49382B"},
+    {"id": "mission_result", "label": "MISSION RESULT", "next": null, "color": "3D2848"}
+  ]
+}

@@ -1,0 +1,134 @@
+{
+  "schema_version": "khalinos-engine-bakeoff-result-v1",
+  "input_sha256": "09c81ba861b4ff75cea577dc008c78d9fa2b83a2528b055dca3c66cfffb28a1a",
+  "route": [
+    "title",
+    "chamber_select",
+    "gameplay",
+    "pause",
+    "mission_result"
+  ],
+  "unity": {
+    "source_files": 5,
+    "source_bytes": 5305,
+    "scene_count_ok": true,
+    "route_ok": true,
+    "capture_ok": true,
+    "export_ok": true,
+    "export_bytes": 88411020,
+    "total_seconds": 64.425,
+    "steps": [
+      {
+        "name": "materialize_and_export",
+        "ok": true,
+        "seconds": 56.053,
+        "command": [
+          "C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.11f1\\Editor\\Unity.exe",
+          "-batchmode",
+          "-quit",
+          "-projectPath",
+          "C:\\tmp\\khalinos-engine-bakeoff\\run6\\unity",
+          "-executeMethod",
+          "BakeoffBuilder.BuildAll"
+        ],
+        "returncode": 0,
+        "output_tail": "\":79},{\"description\":\"Writing asset files\",\"duration\":437},{\"description\":\"Building Resources/unity_builtin_extra\",\"duration\":1595},{\"description\":\"Write data build dirty tracking information\",\"duration\":5},{\"description\":\"Postprocess built player\",\"duration\":16026}],\"duration\":26674}\nUnloading 0 Unused Serialized files (Serialized files now loaded: 0)\nLoaded scene 'Temp/__Backupscenes/0.backup'\n\tDeserialize:            0.561 ms\n\tIntegration:            4.124 ms\n\tIntegration of assets:  0.001 ms\n\tThread Wait Time:       0.012 ms\n\tTotal Operation Time:   4.697 ms\nUnloading 0 unused Assets / (0 B). Loaded Objects now: 683.\nMemory consumption went from 92.3 MB to 92.3 MB.\nTotal: 4.076700 ms (FindLiveObjects: 0.036800 ms CreateObjectMapping: 0.002500 ms MarkObjects: 4.033900 ms  DeleteObjects: 0.002700 ms)\n\nBatchmode quit successfully invoked - shutting down!\nTotal cache size 267592248\nTotal cache size after purge 267592248, took 00:00:00.2987295\nKilling ADB server in 2.1662133 seconds.\n[Physics::Module] Cleanup current backend.\n[Physics::Module] Id: 0xf2b8ea05\nInput System module state changed to: ShutdownInProgress.\nInput System polling thread exited.\nInput System module state changed to: Shutdown.\n[Licensing::IpcConnector] LicenseClient-SEVER-6000.3.11-notifications channel disconnected successfully.\n[Licensing::IpcConnector] LicenseClient-SEVER-6000.3.11 channel disconnected successfully.\nAcceleratorClientConnectionCallback - disconnected - :0\nShut down.\nCleanup mono\nabort_threads: Failed aborting id: 00000000000098A8, mono_thread_manage will ignore it\n\nabort_threads: Failed aborting id: 000000000000C2C0, mono_thread_manage will ignore it\n\nabort_threads: Failed aborting id: 00000000000098A8, mono_thread_manage will ignore it\n\nabort_threads: Failed aborting id: 000000000000C2C0, mono_thread_manage will ignore it\n\ndebugger-agent: Unable to listen on 5496\nExiting batchmode successfully now!\nExiting without the bug reporter. Application will terminate with return code 0"
+      },
+      {
+        "name": "route",
+        "ok": true,
+        "seconds": 3.117,
+        "command": [
+          "C:\\tmp\\khalinos-engine-bakeoff\\run6\\unity\\build\\unity-bakeoff.exe",
+          "-batchmode",
+          "-nographics",
+          "--bakeoff-output=C:\\tmp\\khalinos-engine-bakeoff\\run6\\unity-receipt.json"
+        ],
+        "returncode": 0,
+        "output_tail": " ReloadAssembly\n- Loaded All Assemblies, in  0.369 seconds\n- Finished resetting the current domain, in  0.003 seconds\n[Physics::Module] Selected backend.\n[Physics::Module] Name: PhysX\n[Physics::Module] Id: 0xf2b8ea05\n[Physics::Module] SDK Version: 4.1.2\n[Physics::Module] Integration Version: 1.0.0\n[Physics::Module] Threading Mode: Multi-Threaded\nMicrosoft Media Foundation video decoding to texture disabled: graphics device is Null, only Direct3D 11 and Direct3D 12 (only on desktop) are supported for hardware-accelerated video decoding.\nUnloadTime: 0.944500 ms\nUnloading 5 Unused Serialized files (Serialized files now loaded: 0)\nUnloadTime: 1.876300 ms\nUnloading 3 unused Assets to reduce memory usage. Loaded Objects now: 97.\nTotal: 0.393700 ms (FindLiveObjects: 0.006400 ms CreateObjectMapping: 0.001100 ms MarkObjects: 0.379300 ms  DeleteObjects: 0.003400 ms)\n\nUnloading 3 Unused Serialized files (Serialized files now loaded: 0)\nUnloadTime: 0.050300 ms\nUnloading 1 unused Assets to reduce memory usage. Loaded Objects now: 97.\nTotal: 0.275400 ms (FindLiveObjects: 0.003700 ms CreateObjectMapping: 0.000900 ms MarkObjects: 0.267600 ms  DeleteObjects: 0.003000 ms)\n\nUnloading 3 Unused Serialized files (Serialized files now loaded: 0)\nUnloadTime: 0.052500 ms\nUnloading 1 unused Assets to reduce memory usage. Loaded Objects now: 97.\nTotal: 0.272300 ms (FindLiveObjects: 0.003500 ms CreateObjectMapping: 0.000800 ms MarkObjects: 0.264400 ms  DeleteObjects: 0.003500 ms)\n\nUnloading 3 Unused Serialized files (Serialized files now loaded: 0)\nUnloadTime: 0.036100 ms\nUnloading 1 unused Assets to reduce memory usage. Loaded Objects now: 97.\nTotal: 0.251900 ms (FindLiveObjects: 0.003500 ms CreateObjectMapping: 0.000700 ms MarkObjects: 0.244300 ms  DeleteObjects: 0.003200 ms)\n\n[Physics::Module] Cleanup current backend.\n[Physics::Module] Id: 0xf2b8ea05\nInput System module state changed to: ShutdownInProgress.\nInput System polling thread exited.\nInput System module state changed to: Shutdown.\n"
+      },
+      {
+        "name": "capture",
+        "ok": true,
+        "seconds": 5.255,
+        "command": [
+          "C:\\tmp\\khalinos-engine-bakeoff\\run6\\unity\\build\\unity-bakeoff.exe",
+          "-screen-width",
+          "960",
+          "-screen-height",
+          "540",
+          "-popupwindow",
+          "--bakeoff-output=C:\\tmp\\khalinos-engine-bakeoff\\run6\\unity-receipt.json",
+          "--capture-dir=C:\\tmp\\khalinos-engine-bakeoff\\run6\\unity-captures"
+        ],
+        "returncode": 0,
+        "output_tail": "[UnityMemory] Configuration Parameters - Can be set up in boot.config\n    \"memorysetup-allocator-temp-initial-block-size-main=262144\"\n    \"memorysetup-allocator-temp-initial-block-size-worker=262144\"\n    \"memorysetup-temp-allocator-size-background-worker=32768\"\n    \"memorysetup-temp-allocator-size-job-worker=262144\"\n    \"memorysetup-temp-allocator-size-preload-manager=262144\"\n    \"memorysetup-temp-allocator-size-nav-mesh-worker=65536\"\n    \"memorysetup-temp-allocator-size-audio-worker=65536\"\n    \"memorysetup-temp-allocator-size-cloud-worker=32768\"\n    \"memorysetup-bucket-allocator-granularity=16\"\n    \"memorysetup-bucket-allocator-bucket-count=8\"\n    \"memorysetup-bucket-allocator-block-size=4194304\"\n    \"memorysetup-bucket-allocator-block-count=1\"\n    \"memorysetup-main-allocator-block-size=16777216\"\n    \"memorysetup-thread-allocator-block-size=16777216\"\n    \"memorysetup-gfx-main-allocator-block-size=16777216\"\n    \"memorysetup-gfx-thread-allocator-block-size=16777216\"\n    \"memorysetup-cache-allocator-block-size=4194304\"\n    \"memorysetup-typetree-allocator-block-size=2097152\"\n    \"memorysetup-profiler-bucket-allocator-granularity=16\"\n    \"memorysetup-profiler-bucket-allocator-bucket-count=8\"\n    \"memorysetup-profiler-bucket-allocator-block-size=4194304\"\n    \"memorysetup-profiler-bucket-allocator-block-count=1\"\n    \"memorysetup-profiler-allocator-block-size=16777216\"\n    \"memorysetup-profiler-editor-allocator-block-size=1048576\"\n    \"memorysetup-temp-allocator-size-main=4194304\"\n    \"memorysetup-job-temp-allocator-block-size=2097152\"\n    \"memorysetup-job-temp-allocator-block-size-background=1048576\"\n    \"memorysetup-job-temp-allocator-reduction-small-platforms=262144\"\n    \"memorysetup-temp-allocator-size-gfx=262144\"\n"
+      }
+    ]
+  },
+  "godot": {
+    "source_files": 8,
+    "source_bytes": 10299,
+    "scene_count_ok": true,
+    "route_ok": true,
+    "capture_ok": true,
+    "export_ok": true,
+    "export_bytes": 109086024,
+    "total_seconds": 3.952,
+    "steps": [
+      {
+        "name": "import_and_route",
+        "ok": true,
+        "seconds": 0.373,
+        "command": [
+          "C:\\tmp\\khalinos-engine-bakeoff\\godot\\Godot_v4.7.1-stable_win64.exe",
+          "--language",
+          "en",
+          "--headless",
+          "--path",
+          "C:\\tmp\\khalinos-engine-bakeoff\\run6\\godot",
+          "--",
+          "--bakeoff-output=C:\\tmp\\khalinos-engine-bakeoff\\run6\\godot-receipt.json"
+        ],
+        "returncode": 0,
+        "output_tail": "Godot Engine v4.7.1.stable.official.a13da4feb - https://godotengine.org\n\n"
+      },
+      {
+        "name": "capture",
+        "ok": true,
+        "seconds": 0.967,
+        "command": [
+          "C:\\tmp\\khalinos-engine-bakeoff\\godot\\Godot_v4.7.1-stable_win64.exe",
+          "--language",
+          "en",
+          "--path",
+          "C:\\tmp\\khalinos-engine-bakeoff\\run6\\godot",
+          "--position",
+          "-10000,-10000",
+          "--",
+          "--bakeoff-output=C:\\tmp\\khalinos-engine-bakeoff\\run6\\godot-receipt.json",
+          "--capture-dir=C:\\tmp\\khalinos-engine-bakeoff\\run6\\godot-captures"
+        ],
+        "returncode": 0,
+        "output_tail": "Godot Engine v4.7.1.stable.official.a13da4feb - https://godotengine.org\nOpenGL API 3.3.0 Core Profile Context 26.7.1.260713 - Compatibility - Using Device: ATI Technologies Inc. - AMD Radeon RX 6750 XT\n\n"
+      },
+      {
+        "name": "export",
+        "ok": true,
+        "seconds": 2.612,
+        "command": [
+          "C:\\tmp\\khalinos-engine-bakeoff\\godot\\Godot_v4.7.1-stable_win64.exe",
+          "--language",
+          "en",
+          "--headless",
+          "--path",
+          "C:\\tmp\\khalinos-engine-bakeoff\\run6\\godot",
+          "--export-release",
+          "Windows Desktop"
+        ],
+        "returncode": 0,
+        "output_tail": "\u001b[1mfirst_scan_filesystem\u001b[22m | Creating autoload scripts...\u001b[39m\u001b[0m\n[  66% ] \u001b[90m\u001b[1mfirst_scan_filesystem\u001b[22m | Initializing plugins...\u001b[39m\u001b[0m\n[  83% ] \u001b[90m\u001b[1mfirst_scan_filesystem\u001b[22m | Starting file scan...\u001b[39m\u001b[0m\n\u001b[92m[ DONE ]\u001b[39m \u001b[1mfirst_scan_filesystem\u001b[22m\n\u001b[0m\n[   0% ] \u001b[90m\u001b[1msavepack\u001b[22m | Started Packing (102 steps)\u001b[39m\u001b[0m\n[   1% ] \u001b[90m\u001b[1msavepack\u001b[22m | Storing File: res://.godot/exported/133200997/export-f227a171c6e47374f8ab77e274d1724c-chamber_select.scn\u001b[39m\u001b[0m\n[  17% ] \u001b[90m\u001b[1msavepack\u001b[22m | Storing File: res://.godot/exported/133200997/export-073adc752d2c0a165c14d2303ed092c9-gameplay.scn\u001b[39m\u001b[0m\n[  33% ] \u001b[90m\u001b[1msavepack\u001b[22m | Storing File: res://.godot/exported/133200997/export-e8db3832d6a9a11e53cb1b1bf3b4c08a-mission_result.scn\u001b[39m\u001b[0m\n[  50% ] \u001b[90m\u001b[1msavepack\u001b[22m | Storing File: res://.godot/exported/133200997/export-877dd510dd31eb0f29670ab72328164d-pause.scn\u001b[39m\u001b[0m\n[  66% ] \u001b[90m\u001b[1msavepack\u001b[22m | Storing File: res://.godot/exported/133200997/export-1f317455290310368203a73618de45af-title.scn\u001b[39m\u001b[0m\n[  82% ] \u001b[90m\u001b[1msavepack\u001b[22m | Storing File: res://scripts/region.gdc\u001b[39m\u001b[0m\n[  82% ] \u001b[90m\u001b[1msavepack\u001b[22m | Storing File: res://scenes/chamber_select.tscn.remap\u001b[39m\u001b[0m\n[  82% ] \u001b[90m\u001b[1msavepack\u001b[22m | Storing File: res://scenes/gameplay.tscn.remap\u001b[39m\u001b[0m\n[  82% ] \u001b[90m\u001b[1msavepack\u001b[22m | Storing File: res://scenes/mission_result.tscn.remap\u001b[39m\u001b[0m\n[  82% ] \u001b[90m\u001b[1msavepack\u001b[22m | Storing File: res://scenes/pause.tscn.remap\u001b[39m\u001b[0m\n[  82% ] \u001b[90m\u001b[1msavepack\u001b[22m | Storing File: res://scenes/title.tscn.remap\u001b[39m\u001b[0m\n[  82% ] \u001b[90m\u001b[1msavepack\u001b[22m | Storing File: res://scripts/region.gd.remap\u001b[39m\u001b[0m\n[  82% ] \u001b[90m\u001b[1msavepack\u001b[22m | Storing File: res://.godot/global_script_class_cache.cfg\u001b[39m\u001b[0m\n[  82% ] \u001b[90m\u001b[1msavepack\u001b[22m | Storing File: res://.godot/uid_cache.bin\u001b[39m\u001b[0m\n[  82% ] \u001b[90m\u001b[1msavepack\u001b[22m | Storing File: res://project.binary\u001b[39m\u001b[0m\n\u001b[92m[ DONE ]\u001b[39m \u001b[1msavepack\u001b[22m\n\u001b[0m\n"
+      }
+    ]
+  }
+}

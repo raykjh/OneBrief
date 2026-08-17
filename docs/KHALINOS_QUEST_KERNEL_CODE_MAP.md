@@ -9,9 +9,9 @@ It binds an approved outcome, authority envelope, budget, current repository
 checkpoint, and independent verification into one adaptive Quest loop.
 
 It does not promise zero-shot expertise in every artifact domain. The Kernel is
-general; execution and proof capabilities are explicit adapters. The hackathon
-product supports existing software repositories, with the JULPAE Unity client as
-the primary end-to-end demonstration.
+general; execution and proof capabilities are explicit adapters. PUZZLE TELOS on Godot
+is the primary greenfield hackathon demonstration; JULPAE remains an existing-project
+Unity stress case and regression source.
 
 ```text
 Human approval
@@ -103,7 +103,8 @@ dependencies.
 | `safe_apply.py` | delivery boundary | Only verified changes may reach a target repository |
 | `lineage.py` | audit lineage | Connects approval, job, budget, and result digests |
 | `adk_convergence.py` | ADK execution primitive | Retains meaningful Google ADK agent orchestration |
-| Unity evidence/runtime modules | Unity adapter internals | Real compile, layout, PlayMode, screenshot, and semantic observation |
+| Unity evidence/runtime modules | Existing-project Unity adapter internals | Real compile, layout, PlayMode, screenshot, and semantic observation |
+| `godot_topology.py` | Primary greenfield topology compiler | Deterministically materializes declared regions as native scenes plus a headless probe |
 
 ## REDUCE
 
@@ -120,7 +121,7 @@ These modules remain, but their active hackathon responsibility becomes narrower
 | `cloud_continuation.py` | Transport a typed Kernel transition; do not decide product/evidence ownership. |
 | `team_planning.py`, `execution_graph.py` | Use a fixed Project Owner -> Maker -> Verifier path for the demo. Dynamic role selection becomes secondary diagnostics. |
 | `model_policy.py` | Flash by default; Pro only for an explicitly classified semantic decision. No escalation for schema, routing, environment, or repeated-strategy failures. |
-| `capability_packs.py`, `toolpacks.py` | Present one software-development capability and one Unity adapter. Keep the extension interface but hide unused packs. |
+| `capability_packs.py`, `toolpacks.py` | Present one software-development capability, the primary Godot adapter, and the retained Unity existing-project adapter. Hide unused packs. |
 | `sixsense.py`, `assurance.py` | Reduce public choices to Outcome preferences plus `strict`, `balanced`, or `exploratory` assurance. Preserve the non-negotiable truth floor. |
 
 ## REMOVE FROM THE ACTIVE HACKATHON PATH
@@ -284,9 +285,10 @@ Exit: a judge can understand the product without reading logs.
 
 ### Change 6: prove the demo
 
-- Fresh JULPAE snapshot; no prior draft, patch, evidence, or ledger reuse.
-- M01 builds a real new Login -> Lobby vertical slice.
-- Real Unity compile, layout, and PlayMode Receipt.
+- Fresh PUZZLE TELOS Godot snapshot; no prior draft, patch, evidence, or ledger reuse.
+- M01 builds all approved product regions as real runtime-reachable scenes.
+- Real Godot headless topology, runtime screenshot, and Windows export Receipt.
+- Keep the existing Unity compile, layout, and PlayMode regressions green.
 - Kernel issues M02 only after M01 PASS.
 - Record Google Cloud execution and immutable digest chain.
 
@@ -307,9 +309,9 @@ The refocus is successful only if all are true:
 3. Raw verification changes the next Quest without manual normalization.
 4. A false PASS, authority expansion, or repeated strategy is deterministically blocked.
 5. Maker and verifier remain independently attributable.
-6. JULPAE M01 passes real Unity execution and M02 is issued from its Receipt.
+6. PUZZLE TELOS M01 passes real Godot execution and M02 is issued from its Receipt; Unity regressions remain green.
 7. The demo shows Gemini and ADK making typed project decisions, not merely generating text.
-8. Cloud Run execution and local Unity capability handoff share one immutable job lineage.
+8. Cloud Run execution and the approved local engine capability handoff share one immutable job lineage.
 
 ## Explicit non-goals before submission
 

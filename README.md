@@ -30,6 +30,12 @@ goal into a complete work contract in about 30 seconds. See `docs/SIXSENSE.md`.
 - ADK-native Accountable Maker -> Independent Verifier -> original-maker revision loop
 - criterion-scoped repair plans that freeze passing behavior, fingerprint repeated
   failures, decompose the second attempt, and stop blind third retries
+- structural-cause families that require generalization at a second variant and forbid
+  another case patch at a third variant
+- bounded Technical Preflight and Technical Repair contracts that cannot change product
+  meaning, authority, acceptance criteria, or verification
+- a trusted Godot topology compiler that materializes declared product regions as native
+  scenes with a deterministic headless probe
 - standard-first product delivery when no distinctive visual direction is requested
 - criterion-level completion ledger showing pending, failed, revised, and proven work
 - software convergence with isolated ToolPack build/test execution before independent review

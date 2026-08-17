@@ -20,7 +20,7 @@ from onebrief.handoff_protocol import FailureCode, FailureOwner
 
 
 CURRENT_CONVERGENCE_POLICY_REVISION = (
-    "onebrief-convergence-2026-08-14-phase-owned-handoff-v7"
+    "khalinos-convergence-2026-08-17-structural-family-v8"
 )
 LEGACY_CONVERGENCE_POLICY_REVISION = "onebrief-convergence-legacy-v1"
 
@@ -62,6 +62,12 @@ class FailureObservationV2(BaseModel):
     affected_paths: list[str] = Field(default_factory=list, max_length=16)
     failed_criterion_ids: list[str] = Field(default_factory=list, max_length=16)
     symptom_keys: list[str] = Field(default_factory=list, max_length=32)
+    structural_cause_id: str | None = Field(
+        default=None, pattern=r"^SC-[a-f0-9]{16}$"
+    )
+    variant_signature: str | None = Field(
+        default=None, pattern=r"^[a-f0-9]{64}$"
+    )
     strategy_fingerprint: str | None = None
     attempt_number: int = Field(ge=1)
 
@@ -86,6 +92,12 @@ class RepairContract(BaseModel):
     observation_id: str = Field(pattern=r"^FO-[a-f0-9]{16}$")
     progress_kind: ProgressKind
     occurrence: int = Field(ge=1)
+    structural_cause_id: str | None = Field(
+        default=None, pattern=r"^SC-[a-f0-9]{16}$"
+    )
+    variant_count: int = Field(default=1, ge=1)
+    generalization_required: bool = False
+    case_patch_allowed: bool = True
     hypothesis: RepairHypothesis
     permitted_paths: list[str] = Field(default_factory=list, max_length=16)
     preserve_criterion_ids: list[str] = Field(default_factory=list, max_length=16)
@@ -367,10 +379,77 @@ def extract_symptom_keys(
     return sorted(keys)[:32]
 
 
+def structural_cause_key(
+    *,
+    context: str,
+    failure_text: str,
+    layer: FailureLayer,
+    code: FailureCode,
+    symptom_keys: list[str],
+) -> str:
+    """Collapse renamed paths and wrappers into one engineering cause family.
+
+    The key is deliberately coarser than an exact verifier message, but narrower
+    than an entire failure layer. It identifies the mechanism that must change,
+    not the current file name chosen by a maker.
+    """
+
+    text = failure_text.casefold().replace("\\", "/")
+    if any(marker in text for marker in (
+        "whole-product topology contains no actual production scene or prefab",
+        "declares missing scene/prefab path",
+        "maker-authored topology mapping is not evidence",
+        "region enum is not a production scene",
+        "topologybootstrap",
+    )):
+        return "product_topology_not_materialized"
+    if layer in {FailureLayer.EVIDENCE_RUNTIME, FailureLayer.EVIDENCE_TOPOLOGY}:
+        return "evidence_topology_contract_incomplete"
+    if layer == FailureLayer.SOURCE_BINDING:
+        return "source_selector_not_bound_to_snapshot"
+    if layer == FailureLayer.BUILD and any(marker in text for marker in (
+        "module", "assembly", "asmdef", "reference", "package", "namespace",
+    )):
+        return "build_dependency_binding_incomplete"
+    categories = sorted({
+        item.rsplit(":", 1)[-1]
+        for item in symptom_keys
+        if not item.startswith("message:")
+    })
+    visual_categories = {
+        "missing_glyph", "overlap", "clipped", "unreadable",
+        "not_responsive", "blank", "wrong_language",
+    }
+    if layer == FailureLayer.SEMANTIC_PRODUCT and visual_categories.intersection(categories):
+        return "semantic_product_visual_defect"
+    if categories:
+        return f"{layer.value}:{','.join(categories)}"
+    return f"{context}:{layer.value}:{code.value}:{_normalize(failure_text)}"
+
+
+def structural_cause_id(
+    *,
+    context: str,
+    failure_text: str,
+    layer: FailureLayer,
+    code: FailureCode,
+    symptom_keys: list[str],
+) -> str:
+    return _digest("SC", structural_cause_key(
+        context=context,
+        failure_text=failure_text,
+        layer=layer,
+        code=code,
+        symptom_keys=symptom_keys,
+    ))
+
+
 def _same_causal_boundary(
     previous: FailureObservation,
     current: FailureObservation,
 ) -> bool:
+    if previous.structural_cause_id and current.structural_cause_id:
+        return previous.structural_cause_id == current.structural_cause_id
     if previous.layer != current.layer:
         return False
     if current.layer in {
@@ -566,6 +645,21 @@ class ConvergencePolicy:
         evidence_sha = hashlib.sha256(failure_text.encode("utf-8")).hexdigest()
         layer = classify_failure_layer(context, failure_text)
         code = classify_failure_code(context, failure_text, layer)
+        symptoms = extract_symptom_keys(
+            failure_text, failed_criterion_ids=failed_criterion_ids
+        )
+        cause_id = structural_cause_id(
+            context=context,
+            failure_text=failure_text,
+            layer=layer,
+            code=code,
+            symptom_keys=symptoms,
+        )
+        variant_payload = {
+            "symptoms": symptoms,
+            "strategy": strategy_fingerprint or "unidentified-strategy",
+            "paths": sorted(set(affected_paths or [])),
+        }
         # Changed paths describe the attempted strategy, not the trusted
         # failure's identity. A restart can preserve the exact verifier output
         # without reconstructing that optional envelope; binding the ID to the
@@ -581,9 +675,14 @@ class ConvergencePolicy:
             evidence_sha256=evidence_sha,
             affected_paths=list(dict.fromkeys(affected_paths or []))[:16],
             failed_criterion_ids=list(dict.fromkeys(failed_criterion_ids or []))[:16],
-            symptom_keys=extract_symptom_keys(
-                failure_text, failed_criterion_ids=failed_criterion_ids
-            ),
+            symptom_keys=symptoms,
+            structural_cause_id=cause_id,
+            variant_signature=hashlib.sha256(json.dumps(
+                variant_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")).hexdigest(),
             strategy_fingerprint=strategy_fingerprint,
             attempt_number=attempt_number,
         )
@@ -629,6 +728,11 @@ class ConvergencePolicy:
             )
         )
         occurrence = len(matches) + 1
+        variants = {
+            item.variant_signature or item.evidence_sha256
+            for item in [*matches, observation]
+        }
+        variant_count = len(variants)
         current_symptoms = set(observation.symptom_keys)
         prior_symptoms = (
             set(matches[-1].symptom_keys or extract_symptom_keys(
@@ -643,11 +747,7 @@ class ConvergencePolicy:
             and prior_symptoms
             and current_symptoms < prior_symptoms
         )
-        changed_topology_signal = bool(
-            matches
-            and observation.layer == FailureLayer.EVIDENCE_TOPOLOGY
-            and current_symptoms != prior_symptoms
-        )
+        generalization_required = bool(matches and variant_count >= 2 and not narrowed)
         if narrowed:
             progress = ProgressKind.CRITERION_ADVANCE
             allowed = True
@@ -655,13 +755,13 @@ class ConvergencePolicy:
             rationale = (
                 "Trusted evidence removed at least one prior symptom. Continue from the narrower failing boundary."
             )
-        elif changed_topology_signal and occurrence <= 8:
-            progress = ProgressKind.NARROWED_FAILURE
-            allowed = True
-            escalation = False
+        elif variant_count >= 3:
+            progress = ProgressKind.NO_PROGRESS
+            allowed = False
+            escalation = True
             rationale = (
-                "The finite evidence contract exposed a different static blocker. Continue one bounded "
-                "Tests/PlayMode repair and re-run the authoritative checklist."
+                "A third variant reached the same structural cause. Case-specific repairs are blocked; "
+                "only a separately reviewed systemic redesign may continue."
             )
         elif same_strategy:
             progress = ProgressKind.NO_PROGRESS
@@ -677,12 +777,13 @@ class ConvergencePolicy:
             rationale = (
                 "Two materially different repairs reached the same causal boundary; stop and escalate instead of exploring blindly."
             )
-        elif matches:
+        elif generalization_required:
             progress = ProgressKind.NEW_HYPOTHESIS
-            allowed = True
-            escalation = False
+            allowed = False
+            escalation = True
             rationale = (
-                "The previous hypothesis was disproved. One materially different bounded hypothesis may be tested."
+                "A second variant reached the same structural cause. Review a general rule, schema, "
+                "or trusted compiler repair before another execution."
             )
         else:
             progress = ProgressKind.FIRST_OBSERVATION
@@ -736,6 +837,10 @@ class ConvergencePolicy:
             observation_id=observation.observation_id,
             progress_kind=progress,
             occurrence=occurrence,
+            structural_cause_id=observation.structural_cause_id,
+            variant_count=variant_count,
+            generalization_required=generalization_required,
+            case_patch_allowed=not generalization_required and variant_count < 3,
             hypothesis=hypothesis,
             permitted_paths=permitted_paths,
             preserve_criterion_ids=list(dict.fromkeys(preserve_criterion_ids or []))[:16],
