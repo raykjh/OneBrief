@@ -30,6 +30,14 @@ def test_gameplay_compiler_is_deterministic_and_bounded() -> None:
     }
     assert "Node3D" in first.replacements["scenes/gameplay.tscn"]
     assert "guard_next" in first.additions["scripts/khalinos_gameplay.gd"]
+    runtime = first.additions["scripts/khalinos_gameplay.gd"]
+    probe = first.additions["scripts/khalinos_gameplay_probe.gd"]
+    assert "event is InputEventKey" in runtime
+    assert "var keycode: int = int(" in runtime
+    assert "event.physical_keycode" in runtime
+    assert "event.is_key_pressed" not in runtime
+    assert "physical_keyboard_input_not_consumed" in probe
+    assert "keyboard_input_handler_unavailable" in probe
 
 
 def test_gameplay_materialization_requires_exact_verified_predecessor(tmp_path: Path) -> None:

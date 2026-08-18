@@ -23,5 +23,7 @@ def test_product_finish_compiler_is_deterministic_and_complete() -> None:
     assert "KHALINOSReleaseAudit" in first.replacements["project.godot"]
     assert "--release-audit-dir=" in first.additions["scripts/khalinos_release_audit.gd"]
     assert "save_to" in first.replacements["scripts/khalinos_gameplay.gd"]
+    assert "keycode == KEY_F5" in first.replacements["scripts/khalinos_gameplay.gd"]
+    assert "event.is_key_pressed" not in first.replacements["scripts/khalinos_gameplay.gd"]
     assert "THREE" not in first.additions["scripts/khalinos_session.gd"]
     assert first.additions["scripts/khalinos_session.gd"].count("The ") >= 3

@@ -287,8 +287,8 @@ def _finished_gameplay_script() -> str:
         '"red_thread_used": red_thread_used, "red_thread_anchor": [red_thread_anchor.x, red_thread_anchor.y], "state":',
     )
     source = source.replace(
-        'elif event.is_key_pressed(KEY_T): use_red_thread()',
-        'elif event.is_key_pressed(KEY_T): use_red_thread()\n    elif event.is_key_pressed(KEY_F5): save_to("user://puzzle_save.json")\n    elif event.is_key_pressed(KEY_F9): load_from("user://puzzle_save.json")\n    elif event.is_key_pressed(KEY_ESCAPE): get_tree().change_scene_to_file("res://scenes/pause.tscn")',
+        'elif keycode == KEY_T: use_red_thread()',
+        'elif keycode == KEY_T: use_red_thread()\n    elif keycode == KEY_F5: save_to("user://puzzle_save.json")\n    elif keycode == KEY_F9: load_from("user://puzzle_save.json")\n    elif keycode == KEY_ESCAPE: get_tree().change_scene_to_file("res://scenes/pause.tscn")',
     )
     source += '''
 

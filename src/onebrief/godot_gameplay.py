@@ -238,11 +238,13 @@ func debug_run_solution() -> Dictionary:
     return debug_snapshot()
 
 func _unhandled_input(event: InputEvent) -> void:
-    if event.is_action_pressed("ui_up") or event.is_key_pressed(KEY_W): apply_action("up")
-    elif event.is_action_pressed("ui_down") or event.is_key_pressed(KEY_S): apply_action("down")
-    elif event.is_action_pressed("ui_left") or event.is_key_pressed(KEY_A): apply_action("left")
-    elif event.is_action_pressed("ui_right") or event.is_key_pressed(KEY_D): apply_action("right")
-    elif event.is_key_pressed(KEY_SPACE): apply_action("wait")
+    if not event is InputEventKey or not event.pressed or event.echo: return
+    var keycode: int = int(event.physical_keycode if event.physical_keycode != 0 else event.keycode)
+    if event.is_action_pressed("ui_up") or keycode == KEY_W: apply_action("up")
+    elif event.is_action_pressed("ui_down") or keycode == KEY_S: apply_action("down")
+    elif event.is_action_pressed("ui_left") or keycode == KEY_A: apply_action("left")
+    elif event.is_action_pressed("ui_right") or keycode == KEY_D: apply_action("right")
+    elif keycode == KEY_SPACE: apply_action("wait")
 
 func _argument(prefix: String) -> String:
     for argument in OS.get_cmdline_user_args():
@@ -294,6 +296,20 @@ func _probe() -> void:
     elif game != null:
         errors.append("gameplay_script_unavailable")
         game.queue_free()
+    var keyboard_game = packed.instantiate() if packed != null else null
+    if keyboard_game != null and keyboard_game.has_method("_unhandled_input") and keyboard_game.has_method("debug_snapshot"):
+        root.add_child(keyboard_game)
+        await process_frame
+        var key_event := InputEventKey.new()
+        key_event.pressed = true
+        key_event.physical_keycode = KEY_W
+        keyboard_game._unhandled_input(key_event)
+        if keyboard_game.debug_snapshot().turn != 1: errors.append("physical_keyboard_input_not_consumed")
+        keyboard_game.queue_free()
+        await process_frame
+    elif keyboard_game != null:
+        errors.append("keyboard_input_handler_unavailable")
+        keyboard_game.queue_free()
     var solution_game = packed.instantiate() if packed != null else null
     var solved: Dictionary = {}
     if solution_game != null and solution_game.has_method("debug_run_solution"):
@@ -305,7 +321,7 @@ func _probe() -> void:
     elif solution_game != null:
         errors.append("gameplay_solution_unavailable")
         solution_game.queue_free()
-    var receipt := {"schema_version": "khalinos-godot-gameplay-probe-v1", "board": [9, 9], "turn_advanced": errors.find("turn_not_consumed") == -1, "guard_preview": errors.find("guard_preview_not_distinct") == -1, "solution": solved, "errors": errors, "passed": errors.is_empty()}
+    var receipt := {"schema_version": "khalinos-godot-gameplay-probe-v1", "board": [9, 9], "turn_advanced": errors.find("turn_not_consumed") == -1, "physical_keyboard_input": errors.find("physical_keyboard_input_not_consumed") == -1, "guard_preview": errors.find("guard_preview_not_distinct") == -1, "solution": solved, "errors": errors, "passed": errors.is_empty()}
     var file := FileAccess.open(output, FileAccess.WRITE)
     if file == null:
         quit(8)
